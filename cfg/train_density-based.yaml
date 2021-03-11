@@ -1,0 +1,30 @@
+dataset:
+    name        : "perineural_nets"
+    root        : "/mnt/Dati_SSD_2/datasets/perineural_nets"
+    train_frames: ['014', '015', '016', '017', '020', '021', '022', '023', '027', '028', '034', '035', '041', '042', '043', '044', '049', '050', '051', '052']
+    val_frames  : ['019', '026', '036', '048', '053']
+
+
+model:
+    device               : "cpu"    # cpu or cuda
+    cache_folder         : "./model_zoo"
+
+
+training:
+    batch_size          : 1
+    val_batch_size      : 1
+    num_workers         : 1
+    epochs              : 500
+    seed                : 10
+    tensorboard_filename: "perineural_nets"
+    lr                  : 0.00001
+    lr_step_size        : [400, 450, 500]
+    lr_gamma            : 0.1
+    momentum            : 0.95
+    weights_decay       : 0.0005
+    checkpoint          : ""      # checkpoint to resume, useful for starting from an interrupted training
+    pretrained_model    : ""      # pre-trained model to resume
+    loss                : "MeanSquaredError"
+    crop_width          : 2000
+    crop_height         : 2000
+    optimizer           : "Adam"     # can be Adam or SGD

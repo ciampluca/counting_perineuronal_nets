@@ -1,0 +1,37 @@
+dataset:
+    name        : "perineural_nets"
+    root        : "/mnt/Dati_SSD_2/datasets/perineural_nets"
+    train_frames: ['014', '015', '016', '017', '020', '021', '022', '023', '027', '028', '034', '035', '041', '042', '043', '044', '049', '050', '051', '052']
+    val_frames  : ['019', '026', '036', '048', '053']
+
+
+model:
+    device               : "cuda"    # cpu or cuda
+    backbone             : "resnet50"    # resnet50 or resnet101
+    backbone_pretrained  : true   # on ImageNet
+    coco_model_pretrained: true   # on COCO; if true, no need to load the pretrained backbone
+    cache_folder         : "./model_zoo"
+    max_dets_per_image   : 200
+    nms                  : 0.5
+    det_thresh           : 0.05
+
+
+training:
+    batch_size          : 8
+    val_batch_size      : 1
+    num_workers         : 4
+    epochs              : 500
+    seed                : 10
+    checkpoint          : ""      # checkpoint to resume, useful for starting from an interrupted training
+    pretrained_model    : ""      # pre-trained model to resume
+    tensorboard_filename: "faster_rcnn_resnet50_coco_PerineuralNets_640-640_maxDets350_thresh005_batchSize8"
+    lr                  : 0.005
+    momentum            : 0.9
+    weight_decay        : 0.0005
+    lr_gamma            : 0.1
+    lr_step_size        : [400, 450, 500]
+    print_freq          : 10
+    save_freq           : 10
+    log_loss            : 10
+    crop_width: 640
+    crop_height: 640
