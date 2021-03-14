@@ -6,6 +6,7 @@ import sys
 import math
 import copy
 from PIL import ImageDraw
+import tqdm
 
 import torch
 import torchvision
