@@ -5,6 +5,7 @@ from tifffile import imread
 import csv
 import tqdm
 from PIL import Image, ImageDraw
+import albumentations.augmentations.bbox_utils as albumentations_utils
 
 
 ROOT = "/mnt/Dati_SSD_2/datasets/perineural_nets"
@@ -34,17 +35,40 @@ if __name__ == '__main__':
         # Computing bbs from points
         bbs = []
         for x, y in zip(x_coords, y_coords):
-            n_x_center = float(x / img_w)
-            n_y_center = float(y / img_h)
-            n_width = float(BB_W / img_w)
-            n_height = float(BB_H / img_h)
-            bbs.append([n_x_center, n_y_center, n_width, n_height])
+            x_min = x - (BB_W / 2.0)
+            x_max = x_min + BB_W
+            y_min = y - (BB_H / 2.0)
+            y_max = y_min + BB_H
+            bbs.append([x_min, y_min, x_max, y_max])
+
+        # Clipping
+        bbs = [np.clip(np.asarray(bb), [0, 0, 0, 0], [img_w, img_h, img_w, img_h]).tolist()
+                             for bb in bbs]
+        bbs = [tuple(bb) for bb in bbs]
+
+        # Converting to albumentations format and checking validity
+        bbs_alb_format = albumentations_utils.convert_bboxes_to_albumentations(
+            bboxes=bbs,
+            source_format='pascal_voc',
+            rows=img_h,
+            cols=img_w,
+            check_validity=True,
+        )
+
+        # Converting to yolo format and checking validity
+        bbs_yolo_format = albumentations_utils.convert_bboxes_from_albumentations(
+            bboxes=bbs_alb_format,
+            target_format='yolo',
+            rows=img_h,
+            cols=img_w,
+            check_validity=True,
+        )
 
         # Saving bbs coords in a txt file
         bb_txt_file_path = os.path.join(ROOT, 'annotation', 'bbs', img_name.rsplit(".", 1)[0] + ".txt")
         with open(bb_txt_file_path, 'w') as f:
             csv_writer = csv.writer(f, delimiter=' ')
-            csv_writer.writerows(bbs)
+            csv_writer.writerows(bbs_yolo_format)
 
         if SAVE:
             img = Image.open(img_path).convert("RGB")

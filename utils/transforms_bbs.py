@@ -1,4 +1,5 @@
 import albumentations as A
+import albumentations.augmentations.bbox_utils as albumentations_utils
 
 import torch
 import torchvision.transforms.functional as F
@@ -14,7 +15,7 @@ class PadToResizeFactor(object):
 
     def __call__(self, image, target=None):
         if isinstance(image, torch.Tensor):
-            image.permute(1, 2, 0).numpy()
+            image = image.permute(1, 2, 0).cpu().numpy()
 
         if target is not None and target['boxes'].nelement() != 0:
             bboxes = target['boxes'][:, :4].tolist()
@@ -37,7 +38,7 @@ class RandomHorizontalFlip(object):
 
     def __call__(self, image, target=None):
         if isinstance(image, torch.Tensor):
-            image.permute(1, 2, 0).numpy()
+            image = image.permute(1, 2, 0).cpu().numpy()
 
         if target is not None and target['boxes'].nelement() != 0:
             bboxes = target['boxes'][:, :4].tolist()
@@ -46,21 +47,22 @@ class RandomHorizontalFlip(object):
             image, bboxes, labels = transformed['image'], transformed['bboxes'], transformed['class_labels']
             target['boxes'] = torch.tensor(bboxes)
         else:
-            image = self.transform(image=image)
+            transformed = self.transform(image=image, bboxes=[], class_labels=[])
+            image = transformed['image']
 
         return image, target
 
 
 class RandomCrop(object):
 
-    def __init__(self, width, height):
+    def __init__(self, width, height, min_visibility=0.0):
         self.transform = A.Compose([
             A.RandomCrop(width=width, height=height),
-        ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['class_labels']))
+        ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['class_labels'], min_visibility=min_visibility))
 
     def __call__(self, image, target=None):
         if isinstance(image, torch.Tensor):
-            image.permute(1, 2, 0).numpy()
+            image = image.permute(1, 2, 0).cpu().numpy()
 
         if target is not None and target['boxes'].nelement() != 0:
             bboxes = target['boxes'][:, :4].tolist()
@@ -75,22 +77,27 @@ class RandomCrop(object):
                 target['area'] = torch.as_tensor([(bb[2] - bb[0]) * (bb[3] - bb[1])
                                                   for bb in bboxes], dtype=torch.float32)
         else:
-            image = self.transform(image=image)
+            transformed = self.transform(image=image, bboxes=[], class_labels=[])
+            image = transformed['image']
 
         return image, target
 
 
 class CropToFixedSize(object):
 
-    def __call__(self, image, x_min, y_min, x_max, y_max, target=None):
+    def __call__(self, image, x_min, y_min, x_max, y_max, target=None, min_visibility=0):
         image_to_tensor_flag = 0
         if isinstance(image, torch.Tensor):
-            image.permute(1, 2, 0).numpy()
+            if image.is_cuda:
+                device = image.get_device()
+            else:
+                device = torch.device("cpu")
+            image = image.permute(1, 2, 0).cpu().numpy()
             image_to_tensor_flag = 1
 
         transform = A.Compose([
             A.Crop(x_min=x_min, y_min=y_min, x_max=x_max, y_max=y_max),
-        ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['class_labels']))
+        ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['class_labels'], min_visibility=min_visibility))
 
         if target is not None and target['boxes'].nelement() != 0:
             bboxes = target['boxes'][:, :4].tolist()
@@ -105,10 +112,12 @@ class CropToFixedSize(object):
                 target['area'] = torch.as_tensor([(bb[2] - bb[0]) * (bb[3] - bb[1])
                                                   for bb in bboxes], dtype=torch.float32)
         else:
-            image = transform(image=image)
+            transformed = transform(image=image, bboxes=[], class_labels=[])
+            image = transformed['image']
 
         if image_to_tensor_flag:
-            image = F.to_tensor(image)
+            image = F.to_tensor(image).to(device)
+            target = {k: v.to(device) for k, v in target.items()}
 
         return image, target
 

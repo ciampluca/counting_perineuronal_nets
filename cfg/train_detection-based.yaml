@@ -1,8 +1,14 @@
 dataset:
     name        : "perineural_nets"
     root        : "/mnt/Dati_SSD_2/datasets/perineural_nets"
-    train_frames: ['014', '015', '016', '017', '020', '021', '022', '023', '027', '028', '034', '035', '041', '042', '043', '044', '049', '050', '051', '052']
-    val_frames  : ['019', '026', '036', '048', '053']
+    train_frames: ['014', '015', '017', '019', '020', '021', '023', '026', '027', '028', '035', '036', '041', '042', '044', '048', '049', '050', '052', '053']
+    val_frames  : ['016', '022', '034', '043', '051']
+    bbox_discard_min_vis: 0.5
+    load_in_memory: False
+    percentage: null
+    train_with_precomputed_patches: true
+    crop_width: 640
+    crop_height: 640
 
 
 model:
@@ -31,7 +37,6 @@ training:
     lr_gamma            : 0.1
     lr_step_size        : [400, 450, 500]
     print_freq          : 10
-    save_freq           : 10
+    val_freq            : 1
     log_loss            : 10
-    crop_width: 640
-    crop_height: 640
+    debug               : true

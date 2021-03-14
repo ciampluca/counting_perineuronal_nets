@@ -23,12 +23,14 @@ def get_dmap_transforms(train=False, crop_width=1920, crop_height=1080):
     return dmap_custom_T.Compose(transforms)
 
 
-def get_bbox_transforms(train=False, crop_width=1920, crop_height=1080):
+def get_bbox_transforms(train=False, crop_width=640, crop_height=640, resize_factor=640, min_visibility=0.0):
     transforms = []
 
     if train:
         transforms.append(bbox_custom_T.RandomHorizontalFlip())
-        transforms.append(bbox_custom_T.RandomCrop(width=crop_width, height=crop_height))
+        transforms.append(bbox_custom_T.RandomCrop(width=crop_width, height=crop_height, min_visibility=min_visibility))
+    else:
+        transforms.append(bbox_custom_T.PadToResizeFactor(resize_factor=resize_factor))
 
     transforms.append(bbox_custom_T.ToTensor())
 
@@ -274,6 +276,18 @@ def get_world_size():
     if not is_dist_avail_and_initialized():
         return 1
     return dist.get_world_size()
+
+
+def check_empty_images(targets):
+    for target in targets:
+        if target['boxes'].nelement() == 0:
+            target['boxes'] = torch.as_tensor([[0, 1, 2, 3]], dtype=torch.float32, device=target['boxes'].get_device())
+            target['area'] = torch.as_tensor([1], dtype=torch.float32, device=target['boxes'].get_device())
+            target['labels'] = torch.zeros((1,), dtype=torch.int64, device=target['boxes'].get_device())
+            target['iscrowd'] = torch.zeros((1,), dtype=torch.int64, device=target['boxes'].get_device())
+
+    return targets
+
 
 
 

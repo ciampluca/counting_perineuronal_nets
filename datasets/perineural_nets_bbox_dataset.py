@@ -2,6 +2,9 @@ import os
 from tifffile import imread
 import numpy as np
 from PIL import ImageDraw, Image
+import copy
+import tqdm
+import albumentations.augmentations.bbox_utils as albumentations_utils
 
 import torch
 from torchvision.datasets import VisionDataset
@@ -13,63 +16,140 @@ from utils import transforms_bbs as custom_T
 
 class PerineuralNetsBBoxDataset(VisionDataset):
 
-    def __init__(self, data_root, transforms=None, list_frames=None):
+    def __init__(self, data_root, transforms=None, list_frames=None, with_patches=True, load_in_memory=False,
+                 percentage=None, min_visibility=0.0, original_bb_dim=60):
         super().__init__(data_root, transforms)
 
         self.resize_factor = 32
-        self.path_imgs = os.path.join(data_root, 'fullFrames')
-        self.path_targets = os.path.join(data_root, 'annotation', 'bbs')
+        self.load_in_memory = load_in_memory
+        self.min_visibility = min_visibility
+        self.original_bb_dim = original_bb_dim
 
-        self.imgs = sorted([file for file in os.listdir(self.path_imgs) if file.endswith(".tif")])
+        if with_patches:
+            self.path_imgs = os.path.join(data_root, 'patches')
+            self.path_targets = os.path.join(data_root, 'annotation', 'patches_bbs')
+        else:
+            self.path_imgs = os.path.join(data_root, 'fullFrames')
+            self.path_targets = os.path.join(data_root, 'annotation', 'bbs')
+
+        self.image_files = sorted([file for file in os.listdir(self.path_imgs) if file.endswith(".tif")])
         if list_frames is not None:
-            self.imgs = sorted([file for file in self.imgs if file.split("_", 1)[0] in list_frames])
-        self.targets = sorted([file.rsplit(".", 1)[0] + ".txt" for file in self.imgs])
+            self.image_files = sorted([file for file in self.image_files if file.split("_", 1)[0] in list_frames])
 
-    def __len__(self):
-        return len(self.imgs)
+        if percentage is not None:
+            # only keep num images of the provided percentage
+            num_images = int((len(self.image_files) / 100) * percentage)
+            indices = torch.randperm(len(self.image_files)).tolist()
+            indices = indices[-num_images:]
+            self.image_files = [self.image_files[index] for index in indices]
 
-    def __getitem__(self, index):
+        if load_in_memory:
+            print("Loading dataset in memory!")
+            # load all the data into memory
+            self.images, self.targets = [], []
+            for img_f in tqdm.tqdm(self.image_files):
+                img, target = self._load_sample(img_f)
+                self.images.append(img)
+                self.targets.append(target)
+
+    def _load_sample(self, img_f):
         # Loading image
-        img = imread(os.path.join(self.path_imgs, self.imgs[index]))
+        img = imread(os.path.join(self.path_imgs, img_f))
         img_h, img_w = img.shape[:2]
-        # Eventually converting to 3 channels
         img = np.stack((img,) * 3, axis=-1)
 
         # Loading target
-        # load target; from normalized x,y,w,h (x,y of the center) to denormalized xyxy (top left bottom right)
-        target_path = os.path.join(self.path_targets, self.targets[index])
-        bounding_boxes, bounding_boxes_areas = [], []
-        num_bbs = 0
-        with open(target_path, 'r') as bounding_box_file:
+        bounding_boxes_yolo_format = []
+        with open(os.path.join(self.path_targets, img_f.rsplit(".", 1)[0] + ".txt"), 'r') as bounding_box_file:
             for line in bounding_box_file:
-                x_center = float(line.split()[0]) * img_w
-                y_center = float(line.split()[1]) * img_h
-                bb_width = float(line.split()[2]) * img_w
-                bb_height = float(line.split()[3]) * img_h
-                x_min = x_center - (bb_width / 2.0)
-                x_max = x_min + bb_width
-                y_min = y_center - (bb_height / 2.0)
-                y_max = y_min + bb_height
-                bounding_boxes.append([x_min, y_min, x_max, y_max])
-                area = (y_max - y_min) * (x_max - x_min)
-                bounding_boxes_areas.append(area)
-                num_bbs += 1
+                x_center = float(line.split()[0])
+                y_center = float(line.split()[1])
+                bb_width = float(line.split()[2])
+                bb_height = float(line.split()[3])
+                bounding_boxes_yolo_format.append([x_center, y_center, bb_width, bb_height])
+
+        bounding_boxes = self._convert_and_check(bounding_boxes_yolo_format, img_w, img_h)
+        bounding_boxes = self._filter_bbs_by_visibility(bounding_boxes, self.min_visibility, self.original_bb_dim)
+        bounding_boxes_areas = self._compute_bb_areas(bounding_boxes)
 
         # Converting everything related to the target into a torch.Tensor
         bounding_boxes = torch.as_tensor(bounding_boxes, dtype=torch.float32)
         bounding_boxes_areas = torch.as_tensor(bounding_boxes_areas, dtype=torch.float32)
-        labels = torch.ones((num_bbs,), dtype=torch.int64)  # there is only one class
-        image_id = torch.tensor([index])
+        labels = torch.ones((len(bounding_boxes),), dtype=torch.int64)  # there is only one class
         # suppose all instances are not crowd
-        iscrowd = torch.zeros((num_bbs,), dtype=torch.int64)
+        iscrowd = torch.zeros((len(bounding_boxes),), dtype=torch.int64)
 
         # Building target
         target = {}
         target["boxes"] = bounding_boxes
         target["labels"] = labels
-        target["image_id"] = image_id
         target["area"] = bounding_boxes_areas
         target["iscrowd"] = iscrowd
+
+        return img, target
+
+    def _convert_and_check(self, bounding_boxes_yolo_format, img_w, img_h):
+        # Converts from yolo format to xmin, ymin, xmax, ymax and checks validity
+
+        # Converting to albumentations format and checking validity
+        bounding_boxes_yolo_format = [tuple(bb) for bb in bounding_boxes_yolo_format]
+        bounding_boxes_alb_format = albumentations_utils.convert_bboxes_to_albumentations(
+            bboxes=bounding_boxes_yolo_format,
+            source_format='yolo',
+            rows=img_h,
+            cols=img_w,
+            check_validity=True,
+        )
+
+        # Converting to pascal_voc format and checking validity
+        bounding_boxes = albumentations_utils.convert_bboxes_from_albumentations(
+            bboxes=bounding_boxes_alb_format,
+            target_format='pascal_voc',
+            rows=img_h,
+            cols=img_w,
+            check_validity=True,
+        )
+
+        bounding_boxes = [list(elem) for elem in bounding_boxes]
+
+        return bounding_boxes
+
+    def _compute_bb_areas(self, bbs):
+        bb_areas = []
+        for bb in bbs:
+            x_min, y_min, x_max, y_max = bb[:4]
+            bb_areas.append((x_max - x_min) * (y_max - y_min))
+
+        return bb_areas
+
+    def _filter_bbs_by_visibility(self, bounding_boxes, min_visibility, original_bb_dim):
+        if min_visibility == 0.0:
+            return bounding_boxes
+
+        filtered_bbs = []
+        original_area = original_bb_dim*original_bb_dim
+        for bb in bounding_boxes:
+            x_min, y_min, x_max, y_max = bb[:4]
+            area = (x_max - x_min) * (y_max - y_min)
+            if (area / original_area) < min_visibility:
+                continue
+            filtered_bbs.append(bb)
+
+        return filtered_bbs
+
+    def __len__(self):
+        return len(self.image_files)
+
+    def __getitem__(self, index):
+        if self.load_in_memory:
+            img, target = self.images[index], self.targets[index]
+        else:
+            img_f = self.image_files[index]
+            img, target = self._load_sample(img_f)
+
+        # Adding img_id to target
+        image_id = torch.tensor([index])
+        target["image_id"] = image_id
 
         # Applying transforms
         if self.transforms is not None:
@@ -84,27 +164,19 @@ class PerineuralNetsBBoxDataset(VisionDataset):
 # Testing code
 if __name__ == "__main__":
 
-    def crop(img, height, width):
-        imgwidth, imgheight = img.size
-        for i in range(imgheight // height):
-            for j in range(imgwidth // width):
-                box = (j * width, i * height, (j + 1) * width, (i + 1) * height)
-                yield img.crop(box)
-
     NUM_WORKERS = 0
     BATCH_SIZE = 1
     DEVICE = "cpu"
     SHUFFLE = True
     CROP_WIDTH = 640
     CROP_HEIGHT = 640
-    data_root = "/home/luca/luca-cnr/mnt/Dati_SSD_2/datasets/perineural_nets"
-    train_frames = ['014', '015', '016', '017', '020', '021', '022', '023', '027', '028', '034', '035', '041', '042',
-                    '043', '044', '049', '050', '051', '052']
-    val_frames = ['019', '026', '036', '048', '053']
+    data_root = "/mnt/Dati_SSD_2/datasets/perineural_nets"
+    train_frames = ['014', '015', '017', '019', '020', '021', '023', '026', '027', '028', '035', '036', '041', '042', '044', '048', '049', '050', '052', '053']
+    val_frames = ['016', '022', '034', '043', '051']
 
     transforms = custom_T.Compose([
         custom_T.RandomHorizontalFlip(),
-        custom_T.RandomCrop(width=CROP_WIDTH, height=CROP_HEIGHT),
+        custom_T.RandomCrop(width=CROP_WIDTH, height=CROP_HEIGHT, min_visibility=0.5),
         custom_T.ToTensor(),
     ])
 
@@ -113,7 +185,14 @@ if __name__ == "__main__":
         custom_T.ToTensor(),
     ])
 
-    dataset = PerineuralNetsBBoxDataset(data_root=data_root, transforms=transforms)
+    dataset = PerineuralNetsBBoxDataset(
+        data_root=data_root,
+        transforms=transforms,
+        with_patches=True,
+        load_in_memory=False,
+        list_frames=train_frames,
+        min_visibility=0.5,
+    )
 
     data_loader = DataLoader(
         dataset,
@@ -123,7 +202,14 @@ if __name__ == "__main__":
         collate_fn=dataset.standard_collate_fn,
     )
 
-    val_dataset = PerineuralNetsBBoxDataset(data_root=data_root, transforms=val_transforms, list_frames=val_frames)
+    val_dataset = PerineuralNetsBBoxDataset(
+        data_root=data_root,
+        transforms=val_transforms,
+        with_patches=False,
+        load_in_memory=False,
+        list_frames=val_frames,
+        min_visibility=0.5,
+    )
 
     val_data_loader = DataLoader(
         val_dataset,
@@ -140,14 +226,12 @@ if __name__ == "__main__":
 
         for image, target in zip(images, targets):
             img_id = target['image_id'].item()
-            img_name = dataset.imgs[img_id]
+            img_name = dataset.image_files[img_id]
 
             pil_image = to_pil_image(image.cpu())
-            pil_image.save("./output/dataloading/{}.png".format(img_name.rsplit(".", 1)[0]))
-
             draw = ImageDraw.Draw(pil_image)
             for bb in target['boxes']:
-                draw.rectangle([bb[0].item(), bb[1].item(), bb[2].item(), bb[3].item()])
+                draw.rectangle([bb[0].item(), bb[1].item(), bb[2].item(), bb[3].item()], outline='red', width=3)
             pil_image.save("./output/dataloading/{}_withBBs.png".format(img_name.rsplit(".", 1)[0]))
 
     # Validation
@@ -157,7 +241,7 @@ if __name__ == "__main__":
 
         for image, target in zip(images, targets):
             img_id = target['image_id'].item()
-            img_name = val_dataset.imgs[img_id]
+            img_name = val_dataset.image_files[img_id]
             bboxes = target['boxes'].tolist()
 
             pil_image = to_pil_image(image.cpu())
@@ -172,29 +256,21 @@ if __name__ == "__main__":
             counter_patches = 1
             for i in range(0, img_h, CROP_HEIGHT):
                 for j in range(0, img_w, CROP_WIDTH):
-                    img_patch = image[:, i:i + CROP_HEIGHT, j:j + CROP_WIDTH]
-                    img_patch_bbs = []
-                    for bb in bboxes:
-                        bb_w, bb_h = bb[2] - bb[0], bb[3] - bb[1]
-                        x_c, y_c = bb[0] + bb_w / 2, bb[1] + bb_h / 2
-                        if j < x_c < j + CROP_WIDTH and i < y_c < i + CROP_HEIGHT:
-                            x_tl, y_tl, x_br, y_br = bb[0] - j, bb[1] - i, bb[2] - j, bb[3] - i
-                            if x_tl <= 0:
-                                x_tl = 0
-                            if y_tl <= 0:
-                                y_tl = 0
-                            if x_tl >= CROP_WIDTH:
-                                x_tl = CROP_WIDTH
-                            if y_tl >= CROP_HEIGHT:
-                                y_tl = CROP_HEIGHT
-                            img_patch_bbs.append([x_tl, y_tl, x_br, y_br])
-                    output_patches.append(img_patch)
+                    image_patch, target_patch = custom_T.CropToFixedSize()(
+                        image,
+                        x_min=j,
+                        y_min=i,
+                        x_max=j + CROP_WIDTH,
+                        y_max=i + CROP_HEIGHT,
+                        min_visibility=0.5,
+                        target=copy.deepcopy(target)
+                    )
+                    output_patches.append(image_patch)
 
-                    pil_image = to_pil_image(img_patch)
+                    pil_image = to_pil_image(image_patch)
                     draw = ImageDraw.Draw(pil_image)
-                    for bb in img_patch_bbs:
-                        draw.rectangle([bb[0], bb[1], bb[2], bb[3]])
-                    img_patch_bbs = torch.as_tensor(img_patch_bbs, dtype=torch.float32)
+                    for bb in target_patch['boxes']:
+                        draw.rectangle([bb[0].item(), bb[1].item(), bb[2].item(), bb[3].item()], outline='red', width=3)
                     output_patches_withBBs.append(to_tensor(pil_image))
                     pil_image.save(
                         "./output/dataloading/{}_{}_withBBs.png".format(img_name.rsplit(".", 1)[0], counter_patches))

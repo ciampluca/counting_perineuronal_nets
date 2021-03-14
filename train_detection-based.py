@@ -4,15 +4,20 @@ import os
 from shutil import copyfile
 import sys
 import math
+import copy
+from PIL import ImageDraw
 
 import torch
+import torchvision
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torch.utils.data import DataLoader
+from torchvision.transforms.functional import to_pil_image, to_tensor
+from torchvision.models.detection.rpn import AnchorGenerator
 
 from datasets.perineural_nets_bbox_dataset import PerineuralNetsBBoxDataset
 import utils.misc as utils
-from utils.misc import random_seed, get_bbox_transforms
+from utils.misc import random_seed, get_bbox_transforms, save_checkpoint, check_empty_images
 from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet101_fpn
 from utils.transforms_bbs import CropToFixedSize
 
@@ -31,6 +36,19 @@ def get_model_detection(num_classes, cfg, load_custom_model=False):
         model_pretrained = cfg['coco_model_pretrained']
         backbone_pretrained = cfg['backbone_pretrained']
 
+    # anchor generator: these are default values, but maybe we have to change them
+    anchor_sizes = ((32,), (64,), (128,), (256,), (512,))
+    aspect_ratios = ((0.5, 1.0, 2.0),) * len(anchor_sizes)
+    rpn_anchor_generator = AnchorGenerator(
+        anchor_sizes, aspect_ratios
+    )
+
+    # these are default values, but maybe we can change them
+    roi_pooler = torchvision.ops.MultiScaleRoIAlign(
+        featmap_names=['0', '1', '2', '3'],
+        output_size=7,
+        sampling_ratio=2)
+
     # Creating model
     if cfg['backbone'] == "resnet50":
         model = fasterrcnn_resnet50_fpn(
@@ -40,6 +58,8 @@ def get_model_detection(num_classes, cfg, load_custom_model=False):
             box_nms_thresh=cfg["nms"],
             box_score_thresh=cfg["det_thresh"],
             model_dir=cfg["cache_folder"],
+            rpn_anchor_generator=rpn_anchor_generator,
+            box_roi_pool=roi_pooler,
         )
     elif cfg['backbone'] == "resnet101":
         model = fasterrcnn_resnet101_fpn(
@@ -49,6 +69,8 @@ def get_model_detection(num_classes, cfg, load_custom_model=False):
             box_nms_thresh=cfg["nms"],
             box_score_thresh=cfg["det_thresh"],
             model_dir=cfg["cache_folder"],
+            rpn_anchor_generator=rpn_anchor_generator,
+            box_roi_pool=roi_pooler,
         )
     elif cfg['backbone'] == "resnet152":
         print("Model with ResNet152 to be implemented")
@@ -57,25 +79,166 @@ def get_model_detection(num_classes, cfg, load_custom_model=False):
         print("Not supported backbone")
         exit(1)
 
-    detection_model = model
     # get number of input features for the classifier
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     # replace the pre-trained head with a new one
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
-    backbone = model.backbone
 
-    return detection_model, backbone
+    return model
 
 
-def check_empty_images(targets):
-    for target in targets:
-        if target['boxes'].nelement() == 0:
-            target['boxes'] = torch.as_tensor([[0, 1, 2, 3]], dtype=torch.float32, device=target['boxes'].get_device())
-            target['area'] = torch.as_tensor([1], dtype=torch.float32, device=target['boxes'].get_device())
-            target['labels'] = torch.zeros((1,), dtype=torch.int64, device=target['boxes'].get_device())
-            target['iscrowd'] = torch.zeros((1,), dtype=torch.int64, device=target['boxes'].get_device())
+def train_one_epoch(model, optimizer, data_loader, device, epoch, tensorboard_writer, train_cfg):
+    model.train()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+    header = 'Epoch: [{}]'.format(epoch)
 
-    return targets
+    lr_scheduler = None
+    if epoch == 0:
+        warmup_factor = 1. / 1000
+        warmup_iters = min(1000, len(data_loader) - 1)
+
+        lr_scheduler = utils.warmup_lr_scheduler(optimizer, warmup_iters, warmup_factor)
+
+    train_iteration = 0
+    for images, targets in metric_logger.log_every(data_loader, train_cfg['print_freq'], header):
+        train_iteration += 1
+        images = list(image.to(device) for image in images)
+        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+
+        # In case of empty images (i.e, without bbs), we handle them as negative images
+        # (i.e., images with only background and no object), creating a fake object that represent the background
+        # class and does not affect training
+        # https://discuss.pytorch.org/t/torchvision-faster-rcnn-empty-training-images/46935/12
+        targets = check_empty_images(targets)
+
+        loss_dict = model(images, targets)
+
+        losses = sum(loss for loss in loss_dict.values())
+
+        # reduce losses over all GPUs for logging purposes
+        loss_dict_reduced = utils.reduce_dict(loss_dict)
+        losses_reduced = sum(loss for loss in loss_dict_reduced.values())
+
+        loss_value = losses_reduced.item()
+
+        if not math.isfinite(loss_value):
+            print("Loss is {}, stopping training".format(loss_value))
+            print(loss_dict_reduced)
+            sys.exit(1)
+
+        optimizer.zero_grad()
+        losses.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 50)
+        optimizer.step()
+
+        if lr_scheduler is not None:
+            lr_scheduler.step()
+
+        metric_logger.update(loss=losses_reduced, **loss_dict_reduced)
+        metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+
+        if (train_iteration % train_cfg['log_loss'] == 0):
+            tensorboard_writer.add_scalar('Training/Learning Rate', optimizer.param_groups[0]["lr"], (epoch+1)*train_iteration)
+            tensorboard_writer.add_scalar('Training/Reduced Sum Losses', losses_reduced, (epoch+1)*train_iteration)
+            tensorboard_writer.add_scalars('Training/All Losses', loss_dict, (epoch+1)*train_iteration)
+
+
+def validate(model, val_dataloader, device, train_cfg, data_cfg, tensorboard_writer, epoch):
+    # Validation
+    model.eval()
+    with torch.no_grad():
+        print("Validation")
+        epoch_mae, epoch_mse = 0.0, 0.0
+        for images, targets in val_dataloader:
+            images = list(image.to(device) for image in images)
+            targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+
+            # Image is divided in patches
+            img_output_patches_with_bbs = []
+            img_patches_mae, img_patches_mse = 0.0, 0.0
+            for image, target in zip(images, targets):
+                img_id = target['image_id'].item()
+                img_name = val_dataloader.dataset.imgs[img_id]
+                img_w, img_h = image.shape[2], image.shape[1]
+                counter_patches = 0
+                for i in range(0, img_h, data_cfg['crop_height']):
+                    for j in range(0, img_w, data_cfg['crop_width']):
+                        counter_patches += 1
+                        if train_cfg['debug']:
+                            print("Processing Image: {}, Patch: {}".format(img_name, counter_patches))
+                        image_patch, target_patch = CropToFixedSize()(
+                            image,
+                            x_min=j,
+                            y_min=i,
+                            x_max=j + data_cfg['crop_width'],
+                            y_max=i + data_cfg['crop_height'],
+                            min_visibility=train_cfg['bbox_crop_min_vis'],
+                            target=copy.deepcopy(target),
+                        )
+
+                        det_outputs = model(image.unsqueeze(dim=0).to(device))
+
+                        det_outputs = [{k: v for k, v in t.items()} for t in det_outputs]
+
+                        bbs, scores, labels = det_outputs[0]['boxes'].data.cpu().numpy(), \
+                                              det_outputs[0]['scores'].data.cpu().numpy(), \
+                                              det_outputs[0]['labels'].data.cpu().numpy()
+
+                        pred_num = len(bbs)
+                        gt_num = len(target_patch['boxes'].data.cpu().numpy())
+                        img_patches_mae += abs(pred_num - gt_num)
+                        img_patches_mse += (pred_num - gt_num) ** 2
+
+                        if train_cfg['debug']:
+                            # Drawing bbs on the patch and store it
+                            pil_image = to_pil_image(image_patch)
+                            draw = ImageDraw.Draw(pil_image)
+                            for gt_bb in target_patch['boxes']:  # gt bbs
+                                draw.rectangle(
+                                    [gt_bb[0].cpu().item(), gt_bb[1].cpu().item(), gt_bb[2].cpu().item(),
+                                     gt_bb[3].cpu().item()],
+                                    outline='red',
+                                    width=3,
+                                )
+                            for det_bb in bbs:
+                                draw.rectangle(
+                                    [det_bb[0].item(), det_bb[1].item(), det_bb[2].item(), det_bb[3].item()],
+                                    outline='green',
+                                    width=3,
+                                )
+                            img_output_patches_with_bbs.append(to_tensor(pil_image))
+
+                if train_cfg['debug']:
+                    debug_dir = os.path.join(tensorboard_writer.get_logdir(), 'output_debug')
+                    if not os.path.exists(debug_dir):
+                        os.makedirs(debug_dir)
+                    img_output_patches_with_bbs = torch.stack(img_output_patches_with_bbs)
+                    rec_image_with_bbs = img_output_patches_with_bbs.view(
+                        int(img_h / data_cfg['crop_height']),
+                        int(img_w / data_cfg['crop_width']),
+                        *img_output_patches_with_bbs.size()[-3:]
+                    )
+                    permuted_rec_image_with_bbs = rec_image_with_bbs.permute(2, 0, 3, 1, 4).contiguous()
+                    permuted_rec_image_with_bbs = permuted_rec_image_with_bbs.view(
+                         permuted_rec_image_with_bbs.shape[0],
+                         permuted_rec_image_with_bbs.shape[1] *
+                         permuted_rec_image_with_bbs.shape[2],
+                         permuted_rec_image_with_bbs.shape[3] *
+                         permuted_rec_image_with_bbs.shape[4]
+                    )
+                    to_pil_image(permuted_rec_image_with_bbs).save(
+                        os.path.join(debug_dir, "reconstructed_{}_with_bbs_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch)))
+
+                # Updating errors
+                epoch_mae += img_patches_mae
+                epoch_mse += img_patches_mse
+
+        # Computing mean of the errors
+        epoch_mae /= len(val_dataloader.dataset)
+        epoch_mse /= len(val_dataloader.dataset)
+
+        return epoch_mae, epoch_mse
 
 
 def main(args):
@@ -126,7 +289,7 @@ def main(args):
     #####################################
     data_root = data_cfg['root']
     dataset_name = data_cfg['name']
-    crop_width, crop_height = train_cfg['crop_width'], train_cfg['crop_height']
+    crop_width, crop_height = data_cfg['crop_width'], data_cfg['crop_height']
 
     ################################
     # Creating training datasets and dataloader
@@ -134,8 +297,12 @@ def main(args):
 
     train_dataset = PerineuralNetsBBoxDataset(
         data_root=data_root,
-        transforms=get_bbox_transforms(train=True, crop_width=crop_width, crop_height=crop_height),
-        list_frames=data_cfg['train_frames']
+        transforms=get_bbox_transforms(train=True, crop_width=crop_width, crop_height=crop_height, min_visibility=data_cfg['bbox_discard_min_vis']),
+        list_frames=data_cfg['train_frames'],
+        load_in_memory=data_cfg['load_in_memory'],
+        min_visibility=data_cfg['bbox_discard_min_vis'],
+        with_patches=data_cfg['train_with_precomputed_patches'],
+        percentage=data_cfg['percentage']
     )
 
     train_dataloader = DataLoader(
@@ -152,12 +319,15 @@ def main(args):
 
     val_dataset = PerineuralNetsBBoxDataset(
         data_root=data_root,
-        transforms=get_bbox_transforms(train=False, crop_width=crop_width, crop_height=crop_height),
-        list_frames=data_cfg['val_frames']
+        transforms=get_bbox_transforms(train=False, resize_factor=crop_width),
+        list_frames=data_cfg['val_frames'],
+        load_in_memory=False,
+        min_visibility=data_cfg['bbox_discard_min_vis'],
+        with_patches=False,
     )
 
     val_dataloader = DataLoader(
-        train_dataset,
+        val_dataset,
         batch_size=train_cfg['val_batch_size'],
         shuffle=False,
         num_workers=train_cfg['num_workers'],
@@ -167,7 +337,6 @@ def main(args):
     # Initializing best validation ap value
     best_validation_mae = float(sys.maxsize)
     best_validation_mse = float(sys.maxsize)
-    best_validation_are = float(sys.maxsize)
     min_mae_epoch = -1
 
     #######################
@@ -177,11 +346,10 @@ def main(args):
     load_custom_model = False
     if train_cfg['checkpoint'] or train_cfg['pretrained_model']:
         load_custom_model = True
-    model, backbone = get_model_detection(num_classes=1, cfg=model_cfg, load_custom_model=load_custom_model)
+    model = get_model_detection(num_classes=1, cfg=model_cfg, load_custom_model=load_custom_model)
 
-    # Putting model to device and setting train mode
+    # Putting model to device
     model.to(device)
-    model.train()
 
     #######################################
     # Defining optimizer and LR scheduler
@@ -226,7 +394,6 @@ def main(args):
         start_epoch = checkpoint['epoch']
         best_validation_mae = checkpoint['best_mae']
         best_validation_mse = checkpoint['best_mse']
-        best_validation_are = checkpoint['best_are']
         min_mae_epoch = checkpoint['min_mae_epoch']
 
     ################
@@ -234,78 +401,54 @@ def main(args):
     # Training
     print("Start training")
     for epoch in range(start_epoch, train_cfg['epochs']):
-        model.train()
-        metric_logger = utils.MetricLogger(delimiter="  ")
-        metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-        header = 'Epoch: [{}]'.format(epoch)
+        # Training for one epoch
+        train_one_epoch(model, optimizer, train_dataloader, device, epoch, writer, train_cfg)
 
-        for images, targets in metric_logger.log_every(train_dataloader, print_freq=train_cfg['print_freq'], header=header):
-            images = list(image.to(device) for image in images)
-            targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        # Updating lr scheduler
+        lr_scheduler.step()
 
-            # In case of empty images (i.e, without bbs), we handle them as negative images
-            # (i.e., images with only background and no object), creating a fake object that represent the backgound
-            # class and does not affect training
-            # https://discuss.pytorch.org/t/torchvision-faster-rcnn-empty-training-images/46935/12
-            targets = check_empty_images(targets)
+        # Validating
+        if (epoch % train_cfg['val_freq'] == 0):
+            epoch_mae, epoch_mse = validate(model, val_dataloader, device, train_cfg, data_cfg, writer, epoch)
 
-            loss_dict = model(images, targets)
+            # Updating tensorboard
+            writer.add_scalar('Validation on {}/MAE'.format(dataset_name), epoch_mae, epoch)
+            writer.add_scalar('Validation on {}/MSE'.format(dataset_name), epoch_mse, epoch)
 
-            losses = sum(loss for loss in loss_dict.values())
+            # Eventually saving best models
+            if epoch_mae < best_validation_mae:
+                best_validation_mae = epoch_mae
+                min_mae_epoch = epoch
+                save_checkpoint({
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'epoch': epoch,
+                    'best_mae': epoch_mae,
+                }, writer.get_logdir(), best_model=dataset_name + "_mae")
+            if epoch_mse < best_validation_mse:
+                best_validation_mse = epoch_mse
+                save_checkpoint({
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'epoch': epoch,
+                    'best_mse': epoch_mse,
+                }, writer.get_logdir(), best_model=dataset_name + "_mse")
 
-            # reduce losses over all GPUs for logging purposes
-            loss_dict_reduced = utils.reduce_dict(loss_dict)
-            losses_reduced = sum(loss for loss in loss_dict_reduced.values())
+            print('Epoch: ', epoch, ' Dataset: ', dataset_name, ' MAE: ', epoch_mae,
+                  ' Min MAE : ', best_validation_mae, ' Min MAE Epoch: ', min_mae_epoch,
+                  ' MSE: ', epoch_mse)
 
-            loss_value = losses_reduced.item()
-
-            if not math.isfinite(loss_value):
-                for target in targets:
-                    image_id = target['image_id'].item()
-                    print(train_dataset.imgs[image_id])
-                print("Loss is {}, stopping training".format(loss_value))
-                print(loss_dict_reduced)
-                sys.exit(1)
-
-            optimizer.zero_grad()
-            losses.backward()
-            # clip norm
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 50)
-            optimizer.step()
-
-            metric_logger.update(loss=losses_reduced, **loss_dict_reduced)
-            metric_logger.update(lr=optimizer.param_groups[0]["lr"])
-
-            if epoch % train_cfg['log_loss'] == 0:
-                writer.add_scalar('Training/Learning Rate', optimizer.param_groups[0]["lr"], epoch)
-                writer.add_scalar('Training/Reduced Sum Losses', losses_reduced, epoch)
-                writer.add_scalars('Training/All Losses', loss_dict, epoch)
-
-            if (epoch % train_cfg['save_freq'] == 0 and epoch != 0):
-                # Validation
-                model.eval()
-                with torch.no_grad():
-                    print("Validation")
-                    for images, targets in val_dataloader:
-                        images = list(image.to(device) for image in images)
-                        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-
-                        for image, target in zip(images, targets):
-                        # Image is divided in patches
-                            img_w, img_h = image.shape[2], image.shape[1]
-                            for i in range(0, img_h, crop_height):
-                                for j in range(0, img_w, crop_width):
-                                    image, target = CropToFixedSize()(
-                                        image,
-                                        x_min=j,
-                                        y_min=i,
-                                        x_max=j + crop_width,
-                                        y_max=i + crop_height,
-                                        target=target
-                                    )
-
-            # Updating lr scheduler
-            lr_scheduler.step()
+            # Saving last model
+            save_checkpoint({
+                'model': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'lr_scheduler': lr_scheduler.state_dict(),
+                'epoch': epoch,
+                'best_mae': best_validation_mae,
+                'best_mse': best_validation_mse,
+                'min_mae_epoch': min_mae_epoch,
+                'tensorboard_working_dir': writer.get_logdir()
+            }, writer.get_logdir())
 
 
 if __name__ == "__main__":
