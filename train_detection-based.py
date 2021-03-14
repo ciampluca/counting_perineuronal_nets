@@ -150,30 +150,29 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, tensorboard_wri
     with torch.no_grad():
         print("Validation")
         epoch_mae, epoch_mse = 0.0, 0.0
-        for images, targets in val_dataloader:
+        for images, targets in tqdm.tqdm(val_dataloader):
             images = list(image.to(device) for image in images)
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
             # Image is divided in patches
             img_output_patches_with_bbs = []
-            img_patches_mae, img_patches_mse = 0.0, 0.0
             for image, target in zip(images, targets):
+                gt_num = len(target['boxes'])
                 img_id = target['image_id'].item()
-                img_name = val_dataloader.dataset.imgs[img_id]
+                img_name = val_dataloader.dataset.image_files[img_id]
                 img_w, img_h = image.shape[2], image.shape[1]
                 counter_patches = 0
+                det_num = 0
                 for i in range(0, img_h, data_cfg['crop_height']):
                     for j in range(0, img_w, data_cfg['crop_width']):
                         counter_patches += 1
-                        if train_cfg['debug']:
-                            print("Processing Image: {}, Patch: {}".format(img_name, counter_patches))
                         image_patch, target_patch = CropToFixedSize()(
                             image,
                             x_min=j,
                             y_min=i,
                             x_max=j + data_cfg['crop_width'],
                             y_max=i + data_cfg['crop_height'],
-                            min_visibility=train_cfg['bbox_crop_min_vis'],
+                            min_visibility=data_cfg['bbox_discard_min_vis'],
                             target=copy.deepcopy(target),
                         )
 
@@ -185,10 +184,7 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, tensorboard_wri
                                               det_outputs[0]['scores'].data.cpu().numpy(), \
                                               det_outputs[0]['labels'].data.cpu().numpy()
 
-                        pred_num = len(bbs)
-                        gt_num = len(target_patch['boxes'].data.cpu().numpy())
-                        img_patches_mae += abs(pred_num - gt_num)
-                        img_patches_mse += (pred_num - gt_num) ** 2
+                        det_num += len(bbs)
 
                         if train_cfg['debug']:
                             # Drawing bbs on the patch and store it
@@ -231,12 +227,14 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, tensorboard_wri
                         os.path.join(debug_dir, "reconstructed_{}_with_bbs_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch)))
 
                 # Updating errors
-                epoch_mae += img_patches_mae
-                epoch_mse += img_patches_mse
+                img_mae = abs(det_num - gt_num)
+                img_mse = (det_num - gt_num) ** 2
+                epoch_mae += img_mae
+                epoch_mse += img_mse
 
-        # Computing mean of the errors
-        epoch_mae /= len(val_dataloader.dataset)
-        epoch_mse /= len(val_dataloader.dataset)
+            # Computing mean of the errors
+            epoch_mae /= len(val_dataloader.dataset)
+            epoch_mse /= len(val_dataloader.dataset)
 
         return epoch_mae, epoch_mse
 
