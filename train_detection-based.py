@@ -101,9 +101,7 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, tensorboard_wr
 
         lr_scheduler = utils.warmup_lr_scheduler(optimizer, warmup_iters, warmup_factor)
 
-    train_iteration = 0
-    for images, targets in metric_logger.log_every(data_loader, train_cfg['print_freq'], header):
-        train_iteration += 1
+    for train_iteration, (images, targets) in enumerate(metric_logger.log_every(data_loader, train_cfg['print_freq'], header)):
         images = list(image.to(device) for image in images)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
@@ -140,9 +138,9 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, tensorboard_wr
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
 
         if (train_iteration % train_cfg['log_loss'] == 0):
-            tensorboard_writer.add_scalar('Training/Learning Rate', optimizer.param_groups[0]["lr"], (epoch+1)*train_iteration)
-            tensorboard_writer.add_scalar('Training/Reduced Sum Losses', losses_reduced, (epoch+1)*train_iteration)
-            tensorboard_writer.add_scalars('Training/All Losses', loss_dict, (epoch+1)*train_iteration)
+            tensorboard_writer.add_scalar('Training/Learning Rate', optimizer.param_groups[0]["lr"], epoch * len(data_loader) + train_iteration)
+            tensorboard_writer.add_scalar('Training/Reduced Sum Losses', losses_reduced, epoch * len(data_loader) + train_iteration)
+            tensorboard_writer.add_scalars('Training/All Losses', loss_dict, epoch * len(data_loader) + train_iteration)
 
 
 def validate(model, val_dataloader, device, train_cfg, data_cfg, tensorboard_writer, epoch):
@@ -177,7 +175,7 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, tensorboard_wri
                             target=copy.deepcopy(target),
                         )
 
-                        det_outputs = model(image.unsqueeze(dim=0).to(device))
+                        det_outputs = model([image_patch.to(device)])
 
                         det_outputs = [{k: v for k, v in t.items()} for t in det_outputs]
 
@@ -200,7 +198,7 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, tensorboard_wri
                                 )
                             for det_bb in bbs:
                                 draw.rectangle(
-                                    [det_bb[0].item(), det_bb[1].item(), det_bb[2].item(), det_bb[3].item()],
+                                    [det_bb[0], det_bb[1], det_bb[2], det_bb[3]],
                                     outline='green',
                                     width=3,
                                 )
