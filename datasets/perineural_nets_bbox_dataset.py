@@ -17,7 +17,7 @@ from utils import transforms_bbs as custom_T
 class PerineuralNetsBBoxDataset(VisionDataset):
 
     def __init__(self, data_root, transforms=None, list_frames=None, with_patches=True, load_in_memory=False,
-                 percentage=None, min_visibility=0.0, original_bb_dim=60):
+                 percentage=None, min_visibility=0.0, original_bb_dim=60, specular_split=True):
         super().__init__(data_root, transforms)
 
         self.resize_factor = 32
@@ -25,16 +25,37 @@ class PerineuralNetsBBoxDataset(VisionDataset):
         self.min_visibility = min_visibility
         self.original_bb_dim = original_bb_dim
 
-        if with_patches:
-            self.path_imgs = os.path.join(data_root, 'patches')
-            self.path_targets = os.path.join(data_root, 'annotation', 'patches_bbs')
-        else:
+        if with_patches and not specular_split:
+            self.path_imgs = os.path.join(data_root, 'random_patches')
+            self.path_targets = os.path.join(data_root, 'annotation', 'random_patches_bbs')
+        elif with_patches and specular_split:
+            self.path_imgs = os.path.join(data_root, 'specular_patches')
+            self.path_targets = os.path.join(data_root, 'annotation', 'specular_patches_bbs')
+        elif not with_patches and not specular_split:
             self.path_imgs = os.path.join(data_root, 'fullFrames')
             self.path_targets = os.path.join(data_root, 'annotation', 'bbs')
+        elif not with_patches and specular_split:
+            self.path_imgs = os.path.join(data_root, 'specular_fullFrames')
+            self.path_targets = os.path.join(data_root, 'annotation', 'specular_bbs')
 
         self.image_files = sorted([file for file in os.listdir(self.path_imgs) if file.endswith(".tif")])
+
         if list_frames is not None:
             self.image_files = sorted([file for file in self.image_files if file.split("_", 1)[0] in list_frames])
+            if specular_split and with_patches:
+                left_frames, right_frames = list_frames[::2], list_frames[1::2]
+                left_image_files = sorted([file for file in self.image_files
+                                           if file.split("_", 1)[0] in left_frames and file.split("_")[4] == "left"])
+                right_image_files = sorted([file for file in self.image_files
+                                           if file.split("_", 1)[0] in right_frames and file.split("_")[4] == "right"])
+                self.image_files = left_image_files + right_image_files
+            elif specular_split and not with_patches:
+                right_frames, left_frames = list_frames[::2], list_frames[1::2]
+                left_image_files = sorted([file for file in self.image_files
+                                           if file.split("_", 1)[0] in left_frames and file.split("_")[4].rsplit(".", 1)[0] == "left"])
+                right_image_files = sorted([file for file in self.image_files
+                                           if file.split("_", 1)[0] in right_frames and file.split("_")[4].rsplit(".", 1)[0] == "right"])
+                self.image_files = left_image_files + right_image_files
 
         if percentage is not None:
             # only keep num images of the provided percentage
@@ -80,11 +101,12 @@ class PerineuralNetsBBoxDataset(VisionDataset):
         iscrowd = torch.zeros((len(bounding_boxes),), dtype=torch.int64)
 
         # Building target
-        target = {}
-        target["boxes"] = bounding_boxes
-        target["labels"] = labels
-        target["area"] = bounding_boxes_areas
-        target["iscrowd"] = iscrowd
+        target = {
+            "boxes": bounding_boxes,
+            "labels": labels,
+            "area": bounding_boxes_areas,
+            "iscrowd": iscrowd,
+        }
 
         return img, target
 
@@ -170,9 +192,13 @@ if __name__ == "__main__":
     SHUFFLE = True
     CROP_WIDTH = 640
     CROP_HEIGHT = 640
-    data_root = "/mnt/Dati_SSD_2/datasets/perineural_nets"
+    SPECULAR_SPLIT = True
+    data_root = "/home/luca/luca-cnr/mnt/Dati_SSD_2/datasets/perineural_nets"
     train_frames = ['014', '015', '017', '019', '020', '021', '023', '026', '027', '028', '035', '036', '041', '042', '044', '048', '049', '050', '052', '053']
     val_frames = ['016', '022', '034', '043', '051']
+    all_frames = ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
+    if SPECULAR_SPLIT:
+        train_frames = val_frames = all_frames
 
     transforms = custom_T.Compose([
         custom_T.RandomHorizontalFlip(),
@@ -192,6 +218,7 @@ if __name__ == "__main__":
         load_in_memory=False,
         list_frames=train_frames,
         min_visibility=0.5,
+        specular_split=SPECULAR_SPLIT,
     )
 
     data_loader = DataLoader(
@@ -209,6 +236,7 @@ if __name__ == "__main__":
         load_in_memory=False,
         list_frames=val_frames,
         min_visibility=0.5,
+        specular_split=SPECULAR_SPLIT,
     )
 
     val_data_loader = DataLoader(
@@ -276,14 +304,7 @@ if __name__ == "__main__":
                         "./output/dataloading/{}_{}_withBBs.png".format(img_name.rsplit(".", 1)[0], counter_patches))
                     counter_patches += 1
 
-            # Reconstructing image and image with BBs
-            output_patches = torch.stack(output_patches)
-            rec_image = output_patches.view(int(img_h / CROP_HEIGHT), int(img_w / CROP_WIDTH), *output_patches.size()[-3:])
-            permuted_rec_image = rec_image.permute(2, 0, 3, 1, 4).contiguous()
-            permuted_rec_image = permuted_rec_image.view(permuted_rec_image.shape[0], permuted_rec_image.shape[1] * permuted_rec_image.shape[2],
-                                       permuted_rec_image.shape[3] * permuted_rec_image.shape[4])
-            to_pil_image(permuted_rec_image).save("./output/dataloading/reconstructed_{}.png".format(img_name.rsplit(".", 1)[0]))
-
+            # Reconstructing image with BBs
             output_patches_withBBs = torch.stack(output_patches_withBBs)
             rec_image_withBBs = output_patches_withBBs.view(int(img_h / CROP_HEIGHT), int(img_w / CROP_WIDTH),
                                             *output_patches_withBBs.size()[-3:])

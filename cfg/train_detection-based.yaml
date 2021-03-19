@@ -1,25 +1,29 @@
 dataset:
     name        : "perineural_nets"
     root        : "/mnt/Dati_SSD_2/datasets/perineural_nets"
+    all_frames  : ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
+    # Split ttVtt - ttVtt - .... --> used only if specular_split is false
     train_frames: ['014', '015', '017', '019', '020', '021', '023', '026', '027', '028', '035', '036', '041', '042', '044', '048', '049', '050', '052', '053']
     val_frames  : ['016', '022', '034', '043', '051']
     bbox_discard_min_vis: 0.5
     load_in_memory: False
     percentage: null
     train_with_precomputed_patches: true
+    specular_split: true
     crop_width: 640
     crop_height: 640
 
 
 model:
-    device               : "cuda"    # cpu or cuda
-    backbone             : "resnet50"    # resnet50 or resnet101
-    backbone_pretrained  : true   # on ImageNet
-    coco_model_pretrained: true   # on COCO; if true, no need to load the pretrained backbone
-    cache_folder         : "./model_zoo"
-    max_dets_per_image   : 200
-    nms                  : 0.5
-    det_thresh           : 0.05
+    device                 : "cuda"    # cpu or cuda
+    backbone               : "resnet50"    # resnet50 or resnet101
+    backbone_pretrained    : true   # on ImageNet
+    coco_model_pretrained  : true   # on COCO; if true, no need to load the pretrained backbone
+    cache_folder           : "./model_zoo"
+    max_dets_per_image     : 200
+    nms                    : 0.5
+    det_thresh             : 0.05
+    det_thresh_for_counting: 0.3
 
 
 training:
@@ -40,3 +44,4 @@ training:
     val_freq            : 1
     log_loss            : 10
     debug               : true
+    coco_max_dets       : 2000

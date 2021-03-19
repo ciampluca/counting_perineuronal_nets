@@ -3,12 +3,19 @@ import os
 from collections import defaultdict, deque
 import time
 import datetime
+import pickle
+import matplotlib.pyplot as plt
 
 import torch
 import torch.distributed as dist
+import torchvision
 
 import utils.transforms_dmaps as dmap_custom_T
 import utils.transforms_bbs as bbox_custom_T
+from utils.coco_utils import get_coco_api_from_dataset
+from utils.coco_eval import CocoEvaluator
+from mean_average_precision.detection_map import DetectionMAP
+from mean_average_precision.utils.show_frame import show_frame
 
 
 def get_dmap_transforms(train=False, crop_width=1920, crop_height=1080):
@@ -278,15 +285,134 @@ def get_world_size():
     return dist.get_world_size()
 
 
+def all_gather(data):
+    """
+    Run all_gather on arbitrary picklable data (not necessarily tensors)
+    Args:
+        data: any picklable object
+    Returns:
+        list[data]: list of data gathered from each rank
+    """
+    world_size = get_world_size()
+    if world_size == 1:
+        return [data]
+
+    # serialized to a Tensor
+    buffer = pickle.dumps(data)
+    storage = torch.ByteStorage.from_buffer(buffer)
+    tensor = torch.ByteTensor(storage).to("cuda")
+
+    # obtain Tensor size of each rank
+    local_size = torch.tensor([tensor.numel()], device="cuda")
+    size_list = [torch.tensor([0], device="cuda") for _ in range(world_size)]
+    dist.all_gather(size_list, local_size)
+    size_list = [int(size.item()) for size in size_list]
+    max_size = max(size_list)
+
+    # receiving Tensor from all ranks
+    # we pad the tensor because torch all_gather does not support
+    # gathering tensors of different shapes
+    tensor_list = []
+    for _ in size_list:
+        tensor_list.append(torch.empty((max_size,), dtype=torch.uint8, device="cuda"))
+    if local_size != max_size:
+        padding = torch.empty(size=(max_size - local_size,), dtype=torch.uint8, device="cuda")
+        tensor = torch.cat((tensor, padding), dim=0)
+    dist.all_gather(tensor_list, tensor)
+
+    data_list = []
+    for size, tensor in zip(size_list, tensor_list):
+        buffer = tensor.cpu().numpy().tobytes()[:size]
+        data_list.append(pickle.loads(buffer))
+
+    return data_list
+
+
 def check_empty_images(targets):
+    if targets[0]['boxes'].is_cuda:
+        device = targets[0]['boxes'].get_device()
+    else:
+        device = torch.device("cpu")
+
     for target in targets:
         if target['boxes'].nelement() == 0:
-            target['boxes'] = torch.as_tensor([[0, 1, 2, 3]], dtype=torch.float32, device=target['boxes'].get_device())
-            target['area'] = torch.as_tensor([1], dtype=torch.float32, device=target['boxes'].get_device())
-            target['labels'] = torch.zeros((1,), dtype=torch.int64, device=target['boxes'].get_device())
-            target['iscrowd'] = torch.zeros((1,), dtype=torch.int64, device=target['boxes'].get_device())
+            target['boxes'] = torch.as_tensor([[0, 1, 2, 3]], dtype=torch.float32, device=device)
+            target['area'] = torch.as_tensor([1], dtype=torch.float32, device=device)
+            target['labels'] = torch.zeros((1,), dtype=torch.int64, device=device)
+            target['iscrowd'] = torch.zeros((1,), dtype=torch.int64, device=device)
 
     return targets
+
+
+@torch.no_grad()
+def coco_evaluate(data_loader, epoch_outputs, max_dets=None):
+    print("Starting COCO mAP eval")
+    n_threads = torch.get_num_threads()
+    # FIXME remove this and make paste_masks_in_image run on the GPU
+    torch.set_num_threads(1)
+    cpu_device = torch.device("cpu")
+    metric_logger = MetricLogger(delimiter="  ")
+    header = 'Test:'
+
+    coco = get_coco_api_from_dataset(data_loader.dataset)
+    iou_types = ["bbox"]
+    coco_evaluator = CocoEvaluator(coco, iou_types, max_dets=max_dets)
+
+    for i, (_, targets) in enumerate(metric_logger.log_every(data_loader, 100, header)):
+        targets = [{k: v for k, v in t.items()} for t in targets]
+
+        outputs = epoch_outputs[i]
+        outputs = [{k: v.to(cpu_device) for k, v in outputs.items()}]
+
+        res = {target["image_id"].item(): output for target, output in zip(targets, outputs)}
+        evaluator_time = time.time()
+        coco_evaluator.update(res)
+        evaluator_time = time.time() - evaluator_time
+        metric_logger.update(evaluator_time=evaluator_time)
+
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    coco_evaluator.synchronize_between_processes()
+
+    # accumulate predictions from all images
+    coco_evaluator.accumulate()
+    coco_evaluator.summarize()
+    torch.set_num_threads(n_threads)
+
+    return coco_evaluator
+
+
+def compute_map(dets_and_gts_dict):
+    print("Starting mAP Eval")
+    dets_and_gts = []
+
+    for img_id, img_dets_and_gts in dets_and_gts_dict.items():
+        img_w, img_h = img_dets_and_gts['img_dim']
+        pred_bbs = np.array([[bb[0]/img_w, bb[1]/img_h, bb[2]/img_w, bb[3]/img_h] for bb in img_dets_and_gts['pred_bbs']])
+        pred_labels = np.array(img_dets_and_gts['labels'])
+        pred_labels = np.zeros(len(pred_labels), dtype=np.int32)
+        pred_scores = np.array(img_dets_and_gts['scores'])
+        gt_bbs = np.array([[bb[0]/img_w, bb[1]/img_h, bb[2]/img_w, bb[3]/img_h] for bb in img_dets_and_gts['gt_bbs']])
+        gt_labels = np.zeros(len(gt_bbs), dtype=np.int32)
+
+        dets_and_gts.append((pred_bbs, pred_labels, pred_scores, gt_bbs, gt_labels))
+
+    mAP = DetectionMAP(1)
+    for i, frame in enumerate(dets_and_gts):
+        #show_frame(*frame)
+        mAP.evaluate(*frame)
+
+    #mAP.plot()
+    #plt.show()
+    #plt.savefig("./output/training/pr_curve_example.png")
+
+    det_map = mAP.compute_map()
+
+    return det_map
+
+
+def compute_yolo_like_map():
+    pass
 
 
 

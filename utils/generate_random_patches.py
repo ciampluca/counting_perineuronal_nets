@@ -10,15 +10,16 @@ from PIL import Image, ImageDraw
 
 
 ROOT = "/mnt/Dati_SSD_2/datasets/perineural_nets"
+SRC_IMGS = "{}/fullFrames/".format(ROOT)
 
 NUM_PATCHES_PER_IMAGE = 500
-PATCH_WIDTH, PATCH_HEIGHT  = 1024, 1024
+PATCH_WIDTH, PATCH_HEIGHT = 1024, 1024
 BB_W = 60
 BB_H = 60
 
-SRC_PATCHES = "/mnt/Dati_SSD_2/datasets/perineural_nets/patches"
-DST_ANN_CSV_FILE = "/mnt/Dati_SSD_2/datasets/perineural_nets/annotation/patches_annotations.csv"
-DST_BB_ANNS = "/mnt/Dati_SSD_2/datasets/perineural_nets/annotation/patches_bbs"
+DST_PATCHES = "{}/random_patches".format(ROOT)
+DST_ANN_CSV_FILE = "{}/annotation/random_patches_annotations.csv".format(ROOT)
+DST_BB_ANNS = "{}/annotation/random_patches_bbs".format(ROOT)
 
 SAVE = True
 
@@ -28,7 +29,7 @@ if __name__ == "__main__":
     csv_anns = pd.read_csv(csv_anns_file)
 
     img_names = np.unique(np.array(csv_anns['imageName']))
-    img_paths = [ROOT + '/fullFrames/' + img_name for img_name in img_names]
+    img_paths = [SRC_IMGS + img_name for img_name in img_names]
 
     transform = A.Compose([
         A.RandomCrop(width=PATCH_WIDTH, height=PATCH_HEIGHT)],
@@ -55,7 +56,7 @@ if __name__ == "__main__":
 
             img_patch, img_patch_ann_points = transformed['image'], transformed['keypoints']
 
-            imwrite(os.path.join(ROOT, 'patches', img_patch_name), img_patch)
+            imwrite(os.path.join(DST_PATCHES, img_patch_name), img_patch)
 
             names.extend([img_patch_name] * len(img_patch_ann_points))
             ordinate.extend([point[0] for point in img_patch_ann_points])
@@ -94,7 +95,7 @@ if __name__ == "__main__":
             )
 
             # Saving bbs coords in a txt file
-            bb_txt_file_path = os.path.join(ROOT, 'annotation/patches_bbs', img_patch_name.rsplit(".", 1)[0] + ".txt")
+            bb_txt_file_path = os.path.join(DST_BB_ANNS, img_patch_name.rsplit(".", 1)[0] + ".txt")
             img_patch_ann_bbs_yolo_format = [list(elem) for elem in img_patch_ann_bbs_yolo_format]
             with open(bb_txt_file_path, 'w') as f:
                 csv_writer = csv.writer(f, delimiter=' ')
@@ -117,10 +118,10 @@ if __name__ == "__main__":
                     image_draw.rectangle([x_min, y_min, x_max, y_max], outline='red', width=3)
                 pil_img.save(os.path.join("./output/gt/bbs_patches", img_patch_name))
 
-        df = pd.DataFrame({'imageName': names, 'X': ordinate, 'Y': abscissa})
-        df.to_csv(os.path.join(ROOT, 'annotation', 'patches_annotations.csv'), index=False)
+    df = pd.DataFrame({'imageName': names, 'X': ordinate, 'Y': abscissa})
+    df.to_csv(DST_ANN_CSV_FILE, index=False)
 
-        print("Exiting...")
+    print("Exiting...")
 
 
 

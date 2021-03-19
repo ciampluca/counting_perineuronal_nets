@@ -18,7 +18,7 @@ from torchvision.models.detection.rpn import AnchorGenerator
 
 from datasets.perineural_nets_bbox_dataset import PerineuralNetsBBoxDataset
 import utils.misc as utils
-from utils.misc import random_seed, get_bbox_transforms, save_checkpoint, check_empty_images
+from utils.misc import random_seed, get_bbox_transforms, save_checkpoint, check_empty_images, coco_evaluate, compute_map
 from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet101_fpn
 from utils.transforms_bbs import CropToFixedSize
 
@@ -143,99 +143,132 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, tensorboard_wr
             tensorboard_writer.add_scalars('Training/All Losses', loss_dict, epoch * len(data_loader) + train_iteration)
 
 
-def validate(model, val_dataloader, device, train_cfg, data_cfg, tensorboard_writer, epoch):
+@torch.no_grad()
+def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, tensorboard_writer, epoch):
     # Validation
     model.eval()
-    with torch.no_grad():
-        print("Validation")
-        epoch_mae, epoch_mse = 0.0, 0.0
-        for images, targets in tqdm.tqdm(val_dataloader):
-            images = list(image.to(device) for image in images)
-            targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+    print("Validation")
 
-            # Image is divided in patches
-            img_output_patches_with_bbs = []
-            for image, target in zip(images, targets):
-                gt_num = len(target['boxes'])
-                img_id = target['image_id'].item()
-                img_name = val_dataloader.dataset.image_files[img_id]
-                img_w, img_h = image.shape[2], image.shape[1]
-                counter_patches = 0
-                det_num = 0
-                for i in range(0, img_h, data_cfg['crop_height']):
-                    for j in range(0, img_w, data_cfg['crop_width']):
-                        counter_patches += 1
-                        image_patch, target_patch = CropToFixedSize()(
-                            image,
-                            x_min=j,
-                            y_min=i,
-                            x_max=j + data_cfg['crop_width'],
-                            y_max=i + data_cfg['crop_height'],
-                            min_visibility=data_cfg['bbox_discard_min_vis'],
-                            target=copy.deepcopy(target),
-                        )
+    epoch_mae, epoch_mse = 0.0, 0.0
+    epoch_dets_for_coco_eval = []
+    epoch_dets_for_map_eval = {}
 
-                        det_outputs = model([image_patch.to(device)])
+    for images, targets in tqdm.tqdm(val_dataloader):
+        images = list(image.to(device) for image in images)
+        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
-                        det_outputs = [{k: v for k, v in t.items()} for t in det_outputs]
+        # Image is divided in patches
+        img_output_patches_with_bbs = []
+        for image, target in zip(images, targets):
+            img_gt_num = len(target['boxes'])
+            img_id = target['image_id'].item()
+            img_name = val_dataloader.dataset.image_files[img_id]
+            img_w, img_h = image.shape[2], image.shape[1]
+            counter_patches = 0
+            img_det_num = 0
+            img_det_bbs, img_det_scores, img_det_labels = [], [], []
 
-                        bbs, scores, labels = det_outputs[0]['boxes'].data.cpu().numpy(), \
-                                              det_outputs[0]['scores'].data.cpu().numpy(), \
-                                              det_outputs[0]['labels'].data.cpu().numpy()
+            for i in range(0, img_h, data_cfg['crop_height']):
+                for j in range(0, img_w, data_cfg['crop_width']):
+                    counter_patches += 1
+                    image_patch, target_patch = CropToFixedSize()(
+                        image,
+                        x_min=j,
+                        y_min=i,
+                        x_max=j + data_cfg['crop_width'],
+                        y_max=i + data_cfg['crop_height'],
+                        min_visibility=data_cfg['bbox_discard_min_vis'],
+                        target=copy.deepcopy(target),
+                    )
 
-                        det_num += len(bbs)
+                    det_outputs = model([image_patch.to(device)])
 
-                        if train_cfg['debug']:
-                            # Drawing bbs on the patch and store it
-                            pil_image = to_pil_image(image_patch)
-                            draw = ImageDraw.Draw(pil_image)
-                            for gt_bb in target_patch['boxes']:  # gt bbs
-                                draw.rectangle(
-                                    [gt_bb[0].cpu().item(), gt_bb[1].cpu().item(), gt_bb[2].cpu().item(),
-                                     gt_bb[3].cpu().item()],
-                                    outline='red',
-                                    width=3,
-                                )
-                            for det_bb in bbs:
+                    bbs, scores, labels = det_outputs[0]['boxes'].data.cpu().tolist(), \
+                                          det_outputs[0]['scores'].data.cpu().tolist(), \
+                                          det_outputs[0]['labels'].data.cpu().tolist()
+
+                    for det_bb, det_score in zip(bbs, scores):
+                        if float(det_score) > model_cfg['det_thresh_for_counting']:
+                            img_det_num += 1
+
+                    img_det_bbs.extend([[bb[0] + j, bb[1] + i, bb[2] + j, bb[3] + i] for bb in bbs])
+                    img_det_labels.extend(labels)
+                    img_det_scores.extend(scores)
+
+                    if train_cfg['debug']:
+                        # Drawing bbs on the patch and store it
+                        pil_image = to_pil_image(image_patch)
+                        draw = ImageDraw.Draw(pil_image)
+                        for gt_bb in target_patch['boxes']:  # gt bbs
+                            draw.rectangle(
+                                [gt_bb[0].cpu().item(), gt_bb[1].cpu().item(), gt_bb[2].cpu().item(),
+                                 gt_bb[3].cpu().item()],
+                                outline='red',
+                                width=3,
+                            )
+                        for det_bb, det_score in zip(bbs, scores):
+                            if float(det_score) > model_cfg['det_thresh_for_counting']:
                                 draw.rectangle(
                                     [det_bb[0], det_bb[1], det_bb[2], det_bb[3]],
                                     outline='green',
                                     width=3,
                                 )
-                            img_output_patches_with_bbs.append(to_tensor(pil_image))
+                        img_output_patches_with_bbs.append(to_tensor(pil_image))
 
-                if train_cfg['debug']:
-                    debug_dir = os.path.join(tensorboard_writer.get_logdir(), 'output_debug')
-                    if not os.path.exists(debug_dir):
-                        os.makedirs(debug_dir)
-                    img_output_patches_with_bbs = torch.stack(img_output_patches_with_bbs)
-                    rec_image_with_bbs = img_output_patches_with_bbs.view(
-                        int(img_h / data_cfg['crop_height']),
-                        int(img_w / data_cfg['crop_width']),
-                        *img_output_patches_with_bbs.size()[-3:]
-                    )
-                    permuted_rec_image_with_bbs = rec_image_with_bbs.permute(2, 0, 3, 1, 4).contiguous()
-                    permuted_rec_image_with_bbs = permuted_rec_image_with_bbs.view(
-                         permuted_rec_image_with_bbs.shape[0],
-                         permuted_rec_image_with_bbs.shape[1] *
-                         permuted_rec_image_with_bbs.shape[2],
-                         permuted_rec_image_with_bbs.shape[3] *
-                         permuted_rec_image_with_bbs.shape[4]
-                    )
-                    to_pil_image(permuted_rec_image_with_bbs).save(
-                        os.path.join(debug_dir, "reconstructed_{}_with_bbs_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch)))
+            if train_cfg['debug']:
+                debug_dir = os.path.join(tensorboard_writer.get_logdir(), 'output_debug')
+                if not os.path.exists(debug_dir):
+                    os.makedirs(debug_dir)
+                img_output_patches_with_bbs = torch.stack(img_output_patches_with_bbs)
+                rec_image_with_bbs = img_output_patches_with_bbs.view(
+                    int(img_h / data_cfg['crop_height']),
+                    int(img_w / data_cfg['crop_width']),
+                    *img_output_patches_with_bbs.size()[-3:]
+                )
+                permuted_rec_image_with_bbs = rec_image_with_bbs.permute(2, 0, 3, 1, 4).contiguous()
+                permuted_rec_image_with_bbs = permuted_rec_image_with_bbs.view(
+                     permuted_rec_image_with_bbs.shape[0],
+                     permuted_rec_image_with_bbs.shape[1] *
+                     permuted_rec_image_with_bbs.shape[2],
+                     permuted_rec_image_with_bbs.shape[3] *
+                     permuted_rec_image_with_bbs.shape[4]
+                )
+                to_pil_image(permuted_rec_image_with_bbs).save(
+                    os.path.join(debug_dir, "reconstructed_{}_with_bbs_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch)))
 
-                # Updating errors
-                img_mae = abs(det_num - gt_num)
-                img_mse = (det_num - gt_num) ** 2
-                epoch_mae += img_mae
-                epoch_mse += img_mse
+            # Updating errors
+            img_mae = abs(img_det_num - img_gt_num)
+            img_mse = (img_det_num - img_gt_num) ** 2
+            epoch_mae += img_mae
+            epoch_mse += img_mse
 
-            # Computing mean of the errors
-            epoch_mae /= len(val_dataloader.dataset)
-            epoch_mse /= len(val_dataloader.dataset)
+            # Updating list of dets for coco eval
+            epoch_dets_for_coco_eval.append({
+                'boxes': torch.as_tensor(img_det_bbs, dtype=torch.float32),
+                'scores': torch.as_tensor(img_det_scores, dtype=torch.float32),
+                'labels': torch.as_tensor(img_det_labels, dtype=torch.int64),
+            })
 
-        return epoch_mae, epoch_mse
+            # Updating dets for map evaluation
+            epoch_dets_for_map_eval[img_id] = {
+                'pred_bbs': img_det_bbs,
+                'scores': img_det_scores,
+                'labels': img_det_labels,
+                'gt_bbs': target['boxes'].data.cpu().tolist(),
+                'img_dim': (img_w, img_h),
+            }
+
+    # Computing mean of the errors
+    epoch_mae /= len(val_dataloader.dataset)
+    epoch_mse /= len(val_dataloader.dataset)
+
+    # Computing COCO mAP
+    coco_det_map = coco_evaluate(val_dataloader, epoch_dets_for_coco_eval, max_dets=train_cfg['coco_max_dets'])
+
+    # Computing map
+    det_map = compute_map(epoch_dets_for_map_eval)
+
+    return epoch_mae, epoch_mse, coco_det_map, det_map
 
 
 def main(args):
@@ -287,6 +320,10 @@ def main(args):
     data_root = data_cfg['root']
     dataset_name = data_cfg['name']
     crop_width, crop_height = data_cfg['crop_width'], data_cfg['crop_height']
+    list_frames = data_cfg['all_frames']
+    list_train_frames, list_val_frames = data_cfg['train_frames'], data_cfg['val_frames']
+    if data_cfg['specular_split']:
+        list_train_frames = list_val_frames = list_frames
 
     ################################
     # Creating training datasets and dataloader
@@ -295,11 +332,12 @@ def main(args):
     train_dataset = PerineuralNetsBBoxDataset(
         data_root=data_root,
         transforms=get_bbox_transforms(train=True, crop_width=crop_width, crop_height=crop_height, min_visibility=data_cfg['bbox_discard_min_vis']),
-        list_frames=data_cfg['train_frames'],
+        list_frames=list_train_frames,
         load_in_memory=data_cfg['load_in_memory'],
         min_visibility=data_cfg['bbox_discard_min_vis'],
         with_patches=data_cfg['train_with_precomputed_patches'],
-        percentage=data_cfg['percentage']
+        percentage=data_cfg['percentage'],
+        specular_split=data_cfg['specular_split'],
     )
 
     train_dataloader = DataLoader(
@@ -317,10 +355,11 @@ def main(args):
     val_dataset = PerineuralNetsBBoxDataset(
         data_root=data_root,
         transforms=get_bbox_transforms(train=False, resize_factor=crop_width),
-        list_frames=data_cfg['val_frames'],
+        list_frames=list_val_frames,
         load_in_memory=False,
         min_visibility=data_cfg['bbox_discard_min_vis'],
         with_patches=False,
+        specular_split=data_cfg['specular_split'],
     )
 
     val_dataloader = DataLoader(
@@ -334,7 +373,8 @@ def main(args):
     # Initializing best validation ap value
     best_validation_mae = float(sys.maxsize)
     best_validation_mse = float(sys.maxsize)
-    min_mae_epoch = -1
+    best_validation_map, best_validation_coco_map = 0.0, 0.0
+    min_mae_epoch, best_map_epoch, best_coco_map_epoch = -1, -1, -1
 
     #######################
     # Creating model
@@ -391,7 +431,10 @@ def main(args):
         start_epoch = checkpoint['epoch']
         best_validation_mae = checkpoint['best_mae']
         best_validation_mse = checkpoint['best_mse']
+        best_validation_map = checkpoint['best_map']
         min_mae_epoch = checkpoint['min_mae_epoch']
+        best_map_epoch = checkpoint['best_map_epoch']
+        best_coco_map_epoch = checkpoint['best_coco_map_epoch']
 
     ################
     ################
@@ -406,11 +449,15 @@ def main(args):
 
         # Validating
         if (epoch % train_cfg['val_freq'] == 0):
-            epoch_mae, epoch_mse = validate(model, val_dataloader, device, train_cfg, data_cfg, writer, epoch)
+            epoch_mae, epoch_mse, epoch_coco_evaluator, epoch_det_map = \
+                validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, writer, epoch)
 
             # Updating tensorboard
             writer.add_scalar('Validation on {}/MAE'.format(dataset_name), epoch_mae, epoch)
             writer.add_scalar('Validation on {}/MSE'.format(dataset_name), epoch_mse, epoch)
+            epoch_coco_map_05 = epoch_coco_evaluator.coco_eval['bbox'].stats[1]
+            writer.add_scalar('Validation on {}/COCO mAP'.format(dataset_name), epoch_coco_map_05, epoch)
+            writer.add_scalar('Validation on {}/Det mAP'.format(dataset_name), epoch_det_map, epoch)
 
             # Eventually saving best models
             if epoch_mae < best_validation_mae:
@@ -430,9 +477,29 @@ def main(args):
                     'epoch': epoch,
                     'best_mse': epoch_mse,
                 }, writer.get_logdir(), best_model=dataset_name + "_mse")
+            if epoch_det_map >= best_validation_map:
+                best_validation_map = epoch_det_map
+                best_map_epoch = epoch
+                save_checkpoint({
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'epoch': epoch,
+                    'best_map': epoch_det_map,
+                }, writer.get_logdir(), best_model=dataset_name + "_map")
+            if epoch_coco_map_05 >= best_validation_coco_map:
+                best_validation_coco_map = epoch_coco_map_05
+                best_coco_map_epoch = epoch
+                save_checkpoint({
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'epoch': epoch,
+                    'best_map': epoch_coco_map_05,
+                }, writer.get_logdir(), best_model=dataset_name + "_coco_map")
 
             print('Epoch: ', epoch, ' Dataset: ', dataset_name, ' MAE: ', epoch_mae,
-                  ' Min MAE : ', best_validation_mae, ' Min MAE Epoch: ', min_mae_epoch,
+                  ' Min MAE: ', best_validation_mae, ' Min MAE Epoch: ', min_mae_epoch,
+                  ' Best mAP: ', best_validation_map, ' Best mAP Epoch: ', best_map_epoch,
+                  ' Best COCO mAP: ', best_validation_coco_map, ' Best COCO mAP Epoch: ', best_coco_map_epoch,
                   ' MSE: ', epoch_mse)
 
             # Saving last model
@@ -443,7 +510,10 @@ def main(args):
                 'epoch': epoch,
                 'best_mae': best_validation_mae,
                 'best_mse': best_validation_mse,
+                'best_map': best_validation_map,
                 'min_mae_epoch': min_mae_epoch,
+                'best_map_epoch': best_map_epoch,
+                'best_coco_map_epoch': best_coco_map_epoch,
                 'tensorboard_working_dir': writer.get_logdir()
             }, writer.get_logdir())
 
