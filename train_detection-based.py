@@ -18,7 +18,7 @@ from torchvision.models.detection.rpn import AnchorGenerator
 
 from datasets.perineural_nets_bbox_dataset import PerineuralNetsBBoxDataset
 import utils.misc as utils
-from utils.misc import random_seed, get_bbox_transforms, save_checkpoint, check_empty_images, coco_evaluate, compute_map
+from utils.misc import random_seed, get_bbox_transforms, save_checkpoint, check_empty_images, coco_evaluate, compute_map, compute_dice, compute_jaccard
 from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet101_fpn
 from utils.transforms_bbs import CropToFixedSize
 
@@ -263,12 +263,18 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, tens
     epoch_mse /= len(val_dataloader.dataset)
 
     # Computing COCO mAP
-    coco_det_map = coco_evaluate(val_dataloader, epoch_dets_for_coco_eval, max_dets=train_cfg['coco_max_dets'])
+    coco_det_map = coco_evaluate(val_dataloader, epoch_dets_for_coco_eval, max_dets=train_cfg['coco_max_dets'], folder_to_save=tensorboard_writer.get_logdir())
 
     # Computing map
     det_map = compute_map(epoch_dets_for_map_eval)
 
-    return epoch_mae, epoch_mse, coco_det_map, det_map
+    # Computing dice score
+    dice_score = compute_dice(epoch_dets_for_map_eval)
+
+    # Computing jaccard index
+    jaccard_index = compute_jaccard(epoch_dets_for_map_eval)
+
+    return epoch_mae, epoch_mse, coco_det_map, det_map, dice_score, jaccard_index
 
 
 def main(args):
@@ -331,6 +337,7 @@ def main(args):
 
     train_dataset = PerineuralNetsBBoxDataset(
         data_root=data_root,
+        dataset_name=dataset_name,
         transforms=get_bbox_transforms(train=True, crop_width=crop_width, crop_height=crop_height, min_visibility=data_cfg['bbox_discard_min_vis']),
         list_frames=list_train_frames,
         load_in_memory=data_cfg['load_in_memory'],
@@ -354,6 +361,7 @@ def main(args):
 
     val_dataset = PerineuralNetsBBoxDataset(
         data_root=data_root,
+        dataset_name=dataset_name,
         transforms=get_bbox_transforms(train=False, resize_factor=crop_width),
         list_frames=list_val_frames,
         load_in_memory=False,
@@ -373,8 +381,8 @@ def main(args):
     # Initializing best validation ap value
     best_validation_mae = float(sys.maxsize)
     best_validation_mse = float(sys.maxsize)
-    best_validation_map, best_validation_coco_map = 0.0, 0.0
-    min_mae_epoch, best_map_epoch, best_coco_map_epoch = -1, -1, -1
+    best_validation_map, best_validation_coco_map, best_validation_dice, best_validation_jaccard = 0.0, 0.0, 0.0, 0.0
+    min_mae_epoch, min_mse_epoch, best_map_epoch, best_coco_map_epoch, best_dice_epoch, best_jaccard_epoch = -1, -1, -1, -1, -1, -1
 
     #######################
     # Creating model
@@ -432,9 +440,15 @@ def main(args):
         best_validation_mae = checkpoint['best_mae']
         best_validation_mse = checkpoint['best_mse']
         best_validation_map = checkpoint['best_map']
+        best_validation_coco_map = checkpoint['best_coco_map']
+        best_validation_dice = checkpoint['best_dice']
+        best_validation_jaccard = checkpoint['best_jaccard']
         min_mae_epoch = checkpoint['min_mae_epoch']
+        min_mse_epoch = checkpoint['min_mse_epoch']
         best_map_epoch = checkpoint['best_map_epoch']
         best_coco_map_epoch = checkpoint['best_coco_map_epoch']
+        best_dice_epoch = checkpoint['best_dice_epoch']
+        best_jaccard_epoch = checkpoint['best_jaccard_epoch']
 
     ################
     ################
@@ -449,7 +463,7 @@ def main(args):
 
         # Validating
         if (epoch % train_cfg['val_freq'] == 0):
-            epoch_mae, epoch_mse, epoch_coco_evaluator, epoch_det_map = \
+            epoch_mae, epoch_mse, epoch_coco_evaluator, epoch_det_map, epoch_dice, epoch_jaccard = \
                 validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, writer, epoch)
 
             # Updating tensorboard
@@ -458,6 +472,8 @@ def main(args):
             epoch_coco_map_05 = epoch_coco_evaluator.coco_eval['bbox'].stats[1]
             writer.add_scalar('Validation on {}/COCO mAP'.format(dataset_name), epoch_coco_map_05, epoch)
             writer.add_scalar('Validation on {}/Det mAP'.format(dataset_name), epoch_det_map, epoch)
+            writer.add_scalar('Validation on {}/Dice Score'.format(dataset_name), epoch_dice, epoch)
+            writer.add_scalar('Validation on {}/Jaccard Index'.format(dataset_name), epoch_jaccard, epoch)
 
             # Eventually saving best models
             if epoch_mae < best_validation_mae:
@@ -471,6 +487,7 @@ def main(args):
                 }, writer.get_logdir(), best_model=dataset_name + "_mae")
             if epoch_mse < best_validation_mse:
                 best_validation_mse = epoch_mse
+                min_mse_epoch = epoch
                 save_checkpoint({
                     'model': model.state_dict(),
                     'optimizer': optimizer.state_dict(),
@@ -493,14 +510,36 @@ def main(args):
                     'model': model.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'epoch': epoch,
-                    'best_map': epoch_coco_map_05,
-                }, writer.get_logdir(), best_model=dataset_name + "_coco_map")
+                    'best_coco_map': epoch_coco_map_05,
+                }, writer.get_logdir(), best_model=dataset_name + "_coco_map_05")
+            if epoch_dice >= best_validation_dice:
+                best_validation_dice = epoch_dice
+                best_dice_epoch = epoch
+                save_checkpoint({
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'epoch': epoch,
+                    'best_dice': epoch_dice,
+                }, writer.get_logdir(), best_model=dataset_name + "_dice")
+            if epoch_jaccard >= best_validation_jaccard:
+                best_validation_jaccard = epoch_jaccard
+                best_jaccard_epoch = epoch
+                save_checkpoint({
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'epoch': epoch,
+                    'best_jaccard': epoch_jaccard,
+                }, writer.get_logdir(), best_model=dataset_name + "_jaccard")
 
-            print('Epoch: ', epoch, ' Dataset: ', dataset_name, ' MAE: ', epoch_mae,
+            print('Epoch: ', epoch, ' Dataset: ', dataset_name,
+                  ' MAE: ', epoch_mae, ' MSE ', epoch_mse, ' mAP ', epoch_det_map, ' COCO mAP 0.5 ', epoch_coco_map_05,
                   ' Min MAE: ', best_validation_mae, ' Min MAE Epoch: ', min_mae_epoch,
+                  ' Min MSE: ', best_validation_mse, ' Min MSE Epoch ', min_mse_epoch,
                   ' Best mAP: ', best_validation_map, ' Best mAP Epoch: ', best_map_epoch,
                   ' Best COCO mAP: ', best_validation_coco_map, ' Best COCO mAP Epoch: ', best_coco_map_epoch,
-                  ' MSE: ', epoch_mse)
+                  ' Best Dice: ', best_validation_dice, ' Best Dice Epoch: ', best_dice_epoch,
+                  ' Best Jaccard: ', best_validation_jaccard, ' Best Jaccard Epoch: ', best_jaccard_epoch
+                  )
 
             # Saving last model
             save_checkpoint({
@@ -511,9 +550,14 @@ def main(args):
                 'best_mae': best_validation_mae,
                 'best_mse': best_validation_mse,
                 'best_map': best_validation_map,
+                'best_coco_map': best_validation_coco_map,
+                'best_dice': best_validation_dice,
+                'best_jaccard': best_validation_jaccard,
                 'min_mae_epoch': min_mae_epoch,
                 'best_map_epoch': best_map_epoch,
                 'best_coco_map_epoch': best_coco_map_epoch,
+                'best_dice_epoch': best_dice_epoch,
+                'best_jaccard_epoch': best_jaccard_epoch,
                 'tensorboard_working_dir': writer.get_logdir()
             }, writer.get_logdir())
 

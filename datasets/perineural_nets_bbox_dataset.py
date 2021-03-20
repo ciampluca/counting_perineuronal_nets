@@ -17,13 +17,15 @@ from utils import transforms_bbs as custom_T
 class PerineuralNetsBBoxDataset(VisionDataset):
 
     def __init__(self, data_root, transforms=None, list_frames=None, with_patches=True, load_in_memory=False,
-                 percentage=None, min_visibility=0.0, original_bb_dim=60, specular_split=True):
+                 percentage=None, dataset_name=None, min_visibility=0.0, original_bb_dim=60, specular_split=True):
         super().__init__(data_root, transforms)
 
         self.resize_factor = 32
         self.load_in_memory = load_in_memory
         self.min_visibility = min_visibility
         self.original_bb_dim = original_bb_dim
+        if dataset_name:
+            self.dataset_name = dataset_name
 
         if with_patches and not specular_split:
             self.path_imgs = os.path.join(data_root, 'random_patches')

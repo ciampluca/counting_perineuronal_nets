@@ -30,7 +30,7 @@ training:
     batch_size          : 8
     val_batch_size      : 1
     num_workers         : 4
-    epochs              : 500
+    epochs              : 100
     seed                : 10
     checkpoint          : ""      # checkpoint to resume, useful for starting from an interrupted training
     pretrained_model    : ""      # pre-trained model to resume
@@ -39,7 +39,7 @@ training:
     momentum            : 0.9
     weight_decay        : 0.0005
     lr_gamma            : 0.1
-    lr_step_size        : [400, 450, 500]
+    lr_step_size        : [25, 50, 100]
     print_freq          : 10
     val_freq            : 1
     log_loss            : 10
