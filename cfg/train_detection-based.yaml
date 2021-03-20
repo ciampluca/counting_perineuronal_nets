@@ -34,7 +34,7 @@ training:
     seed                : 10
     checkpoint          : ""      # checkpoint to resume, useful for starting from an interrupted training
     pretrained_model    : ""      # pre-trained model to resume
-    tensorboard_filename: "faster_rcnn_resnet50_coco_PerineuralNets_640-640_maxDets350_thresh005_batchSize8"
+    tensorboard_filename: "faster_rcnn_resnet50_coco_PerineuralNets_640-640-specular_bs8"
     lr                  : 0.005
     momentum            : 0.9
     weight_decay        : 0.0005
