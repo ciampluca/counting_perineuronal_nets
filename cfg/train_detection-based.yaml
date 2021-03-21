@@ -44,4 +44,5 @@ training:
     val_freq            : 1
     log_loss            : 10
     debug               : true
+    debug_freq          : 3
     coco_max_dets       : 2000

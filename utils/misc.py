@@ -6,6 +6,8 @@ import datetime
 import pickle
 import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw
+import sys
+import timeit
 
 import torch
 import torch.distributed as dist
@@ -348,6 +350,7 @@ def check_empty_images(targets):
 @torch.no_grad()
 def coco_evaluate(data_loader, epoch_outputs, max_dets=None, folder_to_save=None):
     print("Starting COCO mAP eval")
+    start = timeit.default_timer()
     n_threads = torch.get_num_threads()
     # FIXME remove this and make paste_masks_in_image run on the GPU
     torch.set_num_threads(1)
@@ -382,16 +385,24 @@ def coco_evaluate(data_loader, epoch_outputs, max_dets=None, folder_to_save=None
 
     if folder_to_save:
         dataset_name = data_loader.dataset.dataset_name
-        file_path = os.path.join(folder_to_save, dataset_name)
+        file_path = os.path.join(folder_to_save, dataset_name + ".txt")
         for iou_type, coco_eval in coco_evaluator.coco_eval.items():
             print("IoU metric: {}".format(iou_type), file=open(file_path, 'a+'))
             print(coco_eval.stats, file=open(file_path, 'a+'))
+
+    stop = timeit.default_timer()
+    total_time = stop - start
+
+    mins, secs = divmod(total_time, 60)
+    hours, mins = divmod(mins, 60)
+    sys.stdout.write("COCO mAP Eval ended. Total running time: %d:%d:%d.\n" % (hours, mins, secs))
 
     return coco_evaluator
 
 
 def compute_map(dets_and_gts_dict):
     print("Starting mAP Eval")
+    start = timeit.default_timer()
     dets_and_gts = []
 
     for img_id, img_dets_and_gts in dets_and_gts_dict.items():
@@ -416,6 +427,13 @@ def compute_map(dets_and_gts_dict):
 
     det_map = mAP.compute_map()
 
+    stop = timeit.default_timer()
+    total_time = stop - start
+
+    mins, secs = divmod(total_time, 60)
+    hours, mins = divmod(mins, 60)
+    sys.stdout.write("mAP Eval ended. Total running time: %d:%d:%d.\n" % (hours, mins, secs))
+
     return det_map
 
 
@@ -423,10 +441,11 @@ def compute_yolo_like_map():
     pass
 
 
-def compute_dice(dets_and_gts_dict, smooth=1):
-    print("Starting Dice Score Computation")
+def compute_dice_and_jaccard(dets_and_gts_dict, smooth=1):
+    print("Starting Dice Score and Jaccard Index Computation")
+    start = timeit.default_timer()
 
-    imgs_dice = []
+    imgs_dice, imgs_jaccard = [], []
     for img_id, img_dets_and_gts in dets_and_gts_dict.items():
         img_w, img_h = img_dets_and_gts['img_dim']
 
@@ -439,41 +458,26 @@ def compute_dice(dets_and_gts_dict, smooth=1):
         det_seg_map = np.zeros((img_h, img_w), dtype=np.float32)
         for det_bb, score in zip(img_dets_and_gts['pred_bbs'], img_dets_and_gts['scores']):
             seg_map = np.zeros((img_h, img_w), dtype=np.float32)
-            seg_map[det_bb[1]:det_bb[3], det_bb[0]:det_bb[2]] = score
+            seg_map[int(det_bb[1]):int(det_bb[3])+1, int(det_bb[0]):int(det_bb[2])+1] = score
             det_seg_map = np.where(seg_map > det_seg_map, seg_map, det_seg_map)
 
         intersection = np.sum(gt_seg_map * det_seg_map)
         union = np.sum(gt_seg_map) + np.sum(det_seg_map)
         imgs_dice.append((2 * intersection + smooth) / (union + smooth))
 
-    return sum(imgs_dice) / len(imgs_dice)
-
-
-def compute_jaccard(dets_and_gts_dict, smooth=1):
-    print("Starting Jaccard Index Computation")
-
-    imgs_jaccard = []
-    for img_id, img_dets_and_gts in dets_and_gts_dict.items():
-        img_w, img_h = img_dets_and_gts['img_dim']
-
-        gt_seg_map = Image.new('L', (img_w, img_h), 0)
-        gt_draw = ImageDraw.Draw(gt_seg_map)
-        for gt_bb in img_dets_and_gts['gt_bbs']:
-            gt_draw.rectangle([gt_bb[0], gt_bb[1], gt_bb[2]-1, gt_bb[3]-1], fill=1, width=0)
-        gt_seg_map = np.asarray(gt_seg_map, dtype=np.float32)
-
-        det_seg_map = np.zeros((img_h, img_w), dtype=np.float32)
-        for det_bb, score in zip(img_dets_and_gts['pred_bbs'], img_dets_and_gts['scores']):
-            seg_map = np.zeros((img_h, img_w), dtype=np.float32)
-            seg_map[det_bb[1]:det_bb[3], det_bb[0]:det_bb[2]] = score
-            det_seg_map = np.where(seg_map > det_seg_map, seg_map, det_seg_map)
-
-        intersection = np.sum(gt_seg_map * det_seg_map)
         total = np.sum(gt_seg_map + det_seg_map)
         union = total - intersection
         imgs_jaccard.append((intersection + smooth) / (union + smooth))
 
-    return sum(imgs_jaccard) / len(imgs_jaccard)
+    stop = timeit.default_timer()
+    total_time = stop - start
+
+    mins, secs = divmod(total_time, 60)
+    hours, mins = divmod(mins, 60)
+    sys.stdout.write("Dice score and Jaccard coefficient computation ended. Total running time: %d:%d:%d.\n" % (hours, mins, secs))
+
+    return sum(imgs_dice) / len(imgs_dice), sum(imgs_jaccard) / len(imgs_jaccard)
+
 
 
 

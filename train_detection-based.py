@@ -7,6 +7,7 @@ import math
 import copy
 from PIL import ImageDraw
 import tqdm
+import timeit
 
 import torch
 import torchvision
@@ -18,7 +19,7 @@ from torchvision.models.detection.rpn import AnchorGenerator
 
 from datasets.perineural_nets_bbox_dataset import PerineuralNetsBBoxDataset
 import utils.misc as utils
-from utils.misc import random_seed, get_bbox_transforms, save_checkpoint, check_empty_images, coco_evaluate, compute_map, compute_dice, compute_jaccard
+from utils.misc import random_seed, get_bbox_transforms, save_checkpoint, check_empty_images, coco_evaluate, compute_map, compute_dice_and_jaccard
 from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet101_fpn
 from utils.transforms_bbs import CropToFixedSize
 
@@ -148,6 +149,7 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, tens
     # Validation
     model.eval()
     print("Validation")
+    start = timeit.default_timer()
 
     epoch_mae, epoch_mse = 0.0, 0.0
     epoch_dets_for_coco_eval = []
@@ -215,7 +217,7 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, tens
                                 )
                         img_output_patches_with_bbs.append(to_tensor(pil_image))
 
-            if train_cfg['debug']:
+            if train_cfg['debug'] and epoch % train_cfg['debug_freq'] == 0:
                 debug_dir = os.path.join(tensorboard_writer.get_logdir(), 'output_debug')
                 if not os.path.exists(debug_dir):
                     os.makedirs(debug_dir)
@@ -258,6 +260,13 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, tens
                 'img_dim': (img_w, img_h),
             }
 
+    stop = timeit.default_timer()
+    total_time = stop - start
+    mins, secs = divmod(total_time, 60)
+    hours, mins = divmod(mins, 60)
+    sys.stdout.write("Validation ended. Total running time: %d:%d:%d.\n" % (hours, mins, secs))
+    print("Starting eval metrics computation...")
+
     # Computing mean of the errors
     epoch_mae /= len(val_dataloader.dataset)
     epoch_mse /= len(val_dataloader.dataset)
@@ -268,11 +277,8 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, tens
     # Computing map
     det_map = compute_map(epoch_dets_for_map_eval)
 
-    # Computing dice score
-    dice_score = compute_dice(epoch_dets_for_map_eval)
-
-    # Computing jaccard index
-    jaccard_index = compute_jaccard(epoch_dets_for_map_eval)
+    # Computing dice score and jaccard index
+    dice_score, jaccard_index = compute_dice_and_jaccard(epoch_dets_for_map_eval)
 
     return epoch_mae, epoch_mse, coco_det_map, det_map, dice_score, jaccard_index
 
@@ -533,6 +539,7 @@ def main(args):
 
             print('Epoch: ', epoch, ' Dataset: ', dataset_name,
                   ' MAE: ', epoch_mae, ' MSE ', epoch_mse, ' mAP ', epoch_det_map, ' COCO mAP 0.5 ', epoch_coco_map_05,
+                  ' Dice Score: ', epoch_dice, ' Jaccard Coefficient: ', epoch_jaccard,
                   ' Min MAE: ', best_validation_mae, ' Min MAE Epoch: ', min_mae_epoch,
                   ' Min MSE: ', best_validation_mse, ' Min MSE Epoch ', min_mse_epoch,
                   ' Best mAP: ', best_validation_map, ' Best mAP Epoch: ', best_map_epoch,
