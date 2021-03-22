@@ -27,6 +27,10 @@ def get_dmap_transforms(train=False, crop_width=1920, crop_height=1080):
     if train:
         transforms.append(dmap_custom_T.RandomHorizontalFlip())
         transforms.append(dmap_custom_T.RandomCrop(width=crop_width, height=crop_height))
+        transforms.append(dmap_custom_T.PadToResizeFactor())
+
+    if not train:
+        transforms.append(dmap_custom_T.PadToResizeFactor(resize_factor=crop_width))
 
     transforms.append(dmap_custom_T.ToTensor())
 
@@ -385,7 +389,7 @@ def coco_evaluate(data_loader, epoch_outputs, max_dets=None, folder_to_save=None
 
     if folder_to_save:
         dataset_name = data_loader.dataset.dataset_name
-        file_path = os.path.join(folder_to_save, dataset_name + ".txt")
+        file_path = os.path.join(folder_to_save, dataset_name + "_coco_map.txt")
         for iou_type, coco_eval in coco_evaluator.coco_eval.items():
             print("IoU metric: {}".format(iou_type), file=open(file_path, 'a+'))
             print(coco_eval.stats, file=open(file_path, 'a+'))

@@ -1,8 +1,16 @@
 dataset:
     name        : "perineural_nets"
     root        : "/mnt/Dati_SSD_2/datasets/perineural_nets"
-    train_frames: ['014', '015', '016', '017', '020', '021', '022', '023', '027', '028', '034', '035', '041', '042', '043', '044', '049', '050', '051', '052']
-    val_frames  : ['019', '026', '036', '048', '053']
+    all_frames  : ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
+    # Split ttVtt - ttVtt - .... --> used only if specular_split is false
+    train_frames: ['014', '015', '017', '019', '020', '021', '023', '026', '027', '028', '035', '036', '041', '042', '044', '048', '049', '050', '052', '053']
+    val_frames  : ['016', '022', '034', '043', '051']
+    crop_width: 1024
+    crop_height: 1024
+    load_in_memory: False
+    percentage: null
+    train_with_precomputed_patches: true
+    specular_split: true
 
 
 model:
@@ -25,6 +33,7 @@ training:
     checkpoint          : ""      # checkpoint to resume, useful for starting from an interrupted training
     pretrained_model    : ""      # pre-trained model to resume
     loss                : "MeanSquaredError"
-    crop_width          : 2000
-    crop_height         : 2000
     optimizer           : "Adam"     # can be Adam or SGD
+    val_freq            : 1
+    debug               : true
+    debug_freq          : 3

@@ -5,16 +5,89 @@ from shutil import copyfile
 import tqdm
 import sys
 from PIL import Image
+import timeit
 
 import torch
-import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
-from torchvision.transforms.functional import to_pil_image
 
 from models.CSRNet import CSRNet
 from utils.misc import random_seed, get_dmap_transforms, save_checkpoint, normalize
 from datasets.perineural_nets_dmap_dataset import PerineuralNetsDmapDataset
+
+
+@torch.no_grad()
+def validate(model, val_dataloader, device, train_cfg, data_cfg, epoch):
+    # Validation
+    model.eval()
+    print("Validation")
+    start = timeit.default_timer()
+
+    epoch_mae, epoch_mse, epoch_are, epoch_loss = 0.0, 0.0, 0.0, 0.0
+    for images, targets in tqdm.tqdm(val_dataloader):
+        images = images.to(device)
+        gt_dmaps = targets['dmap'].to(device)
+        img_name = val_dataloader.val_dataset.image_files[targets['img_id']]
+
+        # Image and gt dmap are divided in patches
+        dmap_output_patches = []
+        img_patches = images.data.unfold(1, 3, 3).unfold(2, data_cfg['crop_width'], data_cfg['crop_height']).\
+            unfold(3, data_cfg['crop_width'], data_cfg['crop_height'])
+        gt_dmap_patches = gt_dmaps.data.unfold(1, 1, 1).unfold(2, data_cfg['crop_width'], data_cfg['crop_height']).\
+            unfold(3, data_cfg['crop_width'], data_cfg['crop_height'])
+        counter_patches = 1
+
+        img_loss, img_mae, img_mse, img_are = 0.0, 0.0, 0.0, 0.0
+        for i in range(img_patches.shape[0]):
+            for j in range(img_patches.shape[1]):
+                for r in range(img_patches.shape[2]):
+                    for c in range(img_patches.shape[3]):
+                        img_patch = img_patches[i, j, r, c, ...]
+                        gt_dmap_patch = gt_dmap_patches[i, j, r, c, ...]
+
+                        # Computing dmap for the patch
+                        pred_dmap_patch = model(img_patch.unsqueeze(0).to(device))
+                        dmap_output_patches.append(pred_dmap_patch.squeeze(dim=1))
+
+                        # Computing loss and updating errors for the patch
+                        patch_loss = torch.nn.MSELoss()(pred_dmap_patch, gt_dmap_patch.unsqueeze(1))
+                        img_loss += patch_loss.item()
+                        patch_mae = abs(pred_dmap_patch.sum() - gt_dmap_patch.sum())
+                        patch_mse = (pred_dmap_patch.sum() - gt_dmap_patch.sum()) ** 2
+                        patch_are = abs(pred_dmap_patch.sum() - gt_dmap_patch.sum()) / \
+                                    torch.clamp(gt_dmap_patch.sum(), min=1)
+                        img_mae += patch_mae.item()
+                        img_mse += patch_mse.item()
+                        img_are += patch_are.item()
+
+                        counter_patches += 1
+
+                        if train_cfg['debug'] and epoch % train_cfg['debug_freq'] == 0:
+                            # Reconstructing predicted dmap
+                            dmap_output_patches = torch.stack(dmap_output_patches)
+                            rec_pred_dmap = dmap_output_patches.view(
+                                gt_dmap_patches.shape[2], gt_dmap_patches.shape[3], *gt_dmap_patches.size()[-3:])
+                            rec_pred_dmap = rec_pred_dmap.permute(2, 0, 3, 1, 4).contiguous()
+                            rec_pred_dmap = rec_pred_dmap.view(
+                                rec_pred_dmap.shape[0], rec_pred_dmap.shape[1] * rec_pred_dmap.shape[2],
+                                rec_pred_dmap.shape[3] * rec_pred_dmap.shape[4])
+                            Image.fromarray(normalize(rec_pred_dmap[0].cpu().numpy()).astype('uint8')).save(
+                                os.path.join("./output/training/epoch_{}_reconstructed_{}_pred_dmap.png".
+                                             format(epoch, img_name.rsplit(".", 1)[0])))
+
+        # Updating errors
+        epoch_loss += img_loss
+        epoch_mae += img_mae
+        epoch_mse += img_mse
+        epoch_are += img_are
+
+    # Computing mean of the errors
+    epoch_mae /= len(val_dataloader.val_dataset)
+    epoch_mse /= len(val_dataloader.val_dataset)
+    epoch_are /= len(val_dataloader.val_dataset)
+    epoch_loss /= len(val_dataloader.val_dataset)
+
+    return epoch_mae, epoch_mse, epoch_are, epoch_loss
 
 
 def main(args):
@@ -65,7 +138,12 @@ def main(args):
     #####################################
     data_root = data_cfg['root']
     dataset_name = data_cfg['name']
-    crop_width, crop_height = train_cfg['crop_width'], train_cfg['crop_height']
+    crop_width, crop_height = data_cfg['crop_width'], data_cfg['crop_height']
+    assert crop_width == crop_height, "Crops must be squares"
+    list_frames = data_cfg['all_frames']
+    list_train_frames, list_val_frames = data_cfg['train_frames'], data_cfg['val_frames']
+    if data_cfg['specular_split']:
+        list_train_frames = list_val_frames = list_frames
 
     ################################
     # Creating training datasets and dataloader
@@ -74,7 +152,11 @@ def main(args):
     train_dataset = PerineuralNetsDmapDataset(
         data_root=data_root,
         transforms=get_dmap_transforms(train=True, crop_width=crop_width, crop_height=crop_height),
-        list_frames=data_cfg['train_frames']
+        list_frames=data_cfg['train_frames'],
+        load_in_memory=data_cfg['load_in_memory'],
+        with_patches=data_cfg['train_with_precomputed_patches'],
+        specular_split=data_cfg['specular_split'],
+        percentage=data_cfg['percentage'],
     )
 
     train_dataloader = DataLoader(
@@ -88,11 +170,15 @@ def main(args):
     ################################
     # Creating training datasets and dataloaders
     print("Loading validation data")
+    assert crop_width % 32 == 0 and crop_height % 32 == 0, "In validation mode, crop dim must be multiple of 32"
 
     val_dataset = PerineuralNetsDmapDataset(
         data_root=data_root,
         transforms=get_dmap_transforms(train=False, crop_width=crop_width, crop_height=crop_height),
-        list_frames=data_cfg['val_frames']
+        list_frames=data_cfg['val_frames'],
+        load_in_memory=False,
+        with_patches=False,
+        specular_split=data_cfg['specular_split'],
     )
 
     val_dataloader = DataLoader(
@@ -103,11 +189,11 @@ def main(args):
         collate_fn=val_dataset.custom_collate_fn,
     )
 
-    # Initializing best validation ap value
+    # Initializing validation metrics
     best_validation_mae = float(sys.maxsize)
     best_validation_mse = float(sys.maxsize)
     best_validation_are = float(sys.maxsize)
-    min_mae_epoch = -1
+    min_mae_epoch, min_mse_epoch, min_are_epoch = -1, -1, -1
 
     #######################
     # Creating model
@@ -178,6 +264,8 @@ def main(args):
         best_validation_mse = checkpoint['best_mse']
         best_validation_are = checkpoint['best_are']
         min_mae_epoch = checkpoint['min_mae_epoch']
+        min_mse_epoch = checkpoint['min_mse_epoch']
+        min_are_epoch = checkpoint['min_are_epoch']
 
     ################
     ################
@@ -191,7 +279,7 @@ def main(args):
         for images, targets in tqdm.tqdm(train_dataloader):
             # Retrieving input images and associated gt
             images = images.to(device)
-            gt_dmaps = targets['dmap'].unsqueeze(1).to(device)
+            gt_dmaps = targets['dmap'].to(device)
 
             # Computing pred dmaps
             pred_dmaps = model(images)
@@ -199,6 +287,9 @@ def main(args):
             # Computing loss and backwarding it
             if train_cfg['loss'] == "MeanSquaredError":
                 loss = criterion(pred_dmaps, gt_dmaps)
+            else:
+                print("Loss to be implemented")
+                exit(1)
 
             optimizer.zero_grad()
             loss.backward()
@@ -210,91 +301,12 @@ def main(args):
         writer.add_scalar('Train/Loss Total', epoch_loss / len(train_dataset), epoch)
         writer.add_scalar('Train/Learning Rate', optimizer.param_groups[0]['lr'],  epoch)
 
-        # Validating the epoch
-        model.eval()
-        with torch.no_grad():
-            print("Validation")
-            epoch_mae, epoch_mse, epoch_are, epoch_loss = 0.0, 0.0, 0.0, 0.0
-            for images, targets in tqdm.tqdm(val_dataloader):
-                images = images.to(device)
-                gt_dmaps = targets['dmap'].unsqueeze(1).to(device)
-                img_name = val_dataset.imgs[targets['img_id']]
+        # Updating lr scheduler
+        lr_scheduler.step()
 
-                # Image and gt dmap are divided in patches
-                output_img_patches, output_gt_dmap_patches, output_pred_dmap_patches = [], [], []
-                img_patches = images.data.unfold(1, 3, 3).unfold(2, crop_width, crop_height).\
-                    unfold(3, crop_width, crop_height)
-                gt_dmap_patches = gt_dmaps.data.unfold(1, 1, 1).unfold(2, crop_width, crop_height).\
-                    unfold(3, crop_width, crop_height)
-                counter_patches = 1
-
-                patches_loss, patches_mae, patches_mse, patches_are = 0.0, 0.0, 0.0, 0.0
-                for i in range(img_patches.shape[0]):
-                    for j in range(img_patches.shape[1]):
-                        for r in range(img_patches.shape[2]):
-                            for c in range(img_patches.shape[3]):
-                                print("Patches: {}".format(counter_patches))
-                                img_patch = img_patches[i, j, r, c, ...]
-                                gt_dmap_patch = gt_dmap_patches[i, j, r, c, ...]
-                                output_img_patches.append(img_patch)
-                                output_gt_dmap_patches.append(gt_dmap_patch)
-
-                                # Computing dmap for the patch
-                                pred_dmap_patch = model(img_patch.unsqueeze(0).to(device))
-                                output_pred_dmap_patches.append(pred_dmap_patch.squeeze(dim=1))
-
-                                # Computing loss and updating errors for the patch
-                                patch_loss = criterion(pred_dmap_patch, gt_dmap_patch.unsqueeze(1))
-                                patches_loss += patch_loss.item()
-                                patch_mae = abs(pred_dmap_patch.sum() - gt_dmap_patch.sum())
-                                patch_mse = (pred_dmap_patch.sum() - gt_dmap_patch.sum()) ** 2
-                                patch_are = abs(pred_dmap_patch.sum() - gt_dmap_patch.sum()) / \
-                                            torch.clamp(gt_dmap_patch.sum(), min=1)
-                                patches_mae += patch_mae.item()
-                                patches_mse += patch_mse.item()
-                                patches_are += patch_are.item()
-
-                                counter_patches += 1
-
-                # Reconstructing image, gt and predicted dmap
-                # Not necessary to reconstruct image and gt, just for checking
-                output_img_patches = torch.stack(output_img_patches)
-                rec_image = output_img_patches.view(img_patches.shape[2], img_patches.shape[3], *img_patches.size()[-3:])
-                rec_image = rec_image.permute(2, 0, 3, 1, 4).contiguous()
-                rec_image = rec_image.view(rec_image.shape[0], rec_image.shape[1] * rec_image.shape[2],
-                                           rec_image.shape[3] * rec_image.shape[4])
-                to_pil_image(rec_image).save("./output/training/reconstructed_{}.png".format(img_name.rsplit(".", 1)[0]))
-
-                output_gt_dmap_patches = torch.stack(output_gt_dmap_patches)
-                rec_gt_dmap = output_gt_dmap_patches.view(gt_dmap_patches.shape[2],
-                                                          gt_dmap_patches.shape[3], *gt_dmap_patches.size()[-3:])
-                rec_gt_dmap = rec_gt_dmap.permute(2, 0, 3, 1, 4).contiguous()
-                rec_gt_dmap = rec_gt_dmap.view(rec_gt_dmap.shape[0], rec_gt_dmap.shape[1] * rec_gt_dmap.shape[2],
-                                               rec_gt_dmap.shape[3] * rec_gt_dmap.shape[4])
-                Image.fromarray(normalize(rec_gt_dmap[0].cpu().numpy()).astype('uint8')).save(
-                    os.path.join("./output/training/reconstructed_{}_gt_dmap.png".format(img_name.rsplit(".", 1)[0])))
-
-                output_pred_dmap_patches = torch.stack(output_pred_dmap_patches)
-                rec_pred_dmap = output_pred_dmap_patches.view(gt_dmap_patches.shape[2],
-                                                          gt_dmap_patches.shape[3], *gt_dmap_patches.size()[-3:])
-                rec_pred_dmap = rec_pred_dmap.permute(2, 0, 3, 1, 4).contiguous()
-                rec_pred_dmap = rec_pred_dmap.view(rec_pred_dmap.shape[0], rec_pred_dmap.shape[1] * rec_pred_dmap.shape[2],
-                                               rec_pred_dmap.shape[3] * rec_pred_dmap.shape[4])
-                Image.fromarray(normalize(rec_pred_dmap[0].cpu().numpy()).astype('uint8')).save(
-                    os.path.join("./output/training/epoch_{}_reconstructed_{}_pred_dmap.png".
-                                 format(epoch, img_name.rsplit(".", 1)[0])))
-
-                # Updating errors
-                epoch_loss += patches_loss
-                epoch_mae += patches_mae
-                epoch_mse += patches_mse
-                epoch_are += patches_are
-
-            # Computing mean of the errors
-            epoch_mae /= len(val_dataset)
-            epoch_mse /= len(val_dataset)
-            epoch_are /= len(val_dataset)
-            epoch_loss /= len(val_dataset)
+        # Validating
+        if (epoch % train_cfg['val_freq'] == 0):
+            epoch_mae, epoch_mse, epoch_are, epoch_loss = validate(model, val_dataloader)
 
             # Updating tensorboard
             writer.add_scalar('Validation on {}/MAE'.format(dataset_name), epoch_mae, epoch)
@@ -302,62 +314,55 @@ def main(args):
             writer.add_scalar('Validation on {}/ARE'.format(dataset_name), epoch_are, epoch)
             writer.add_scalar('Validation on {}/Loss'.format(dataset_name), epoch_loss, epoch)
 
-            writer.add_image(
-                "Dataset {} - Image {}".format(dataset_name, img_name), rec_image)
-            writer.add_image(
-                "Epoch {} - Dataset {} - Pred Count: ".format(epoch, dataset_name) + str(
-                    '%.2f' % (rec_pred_dmap.cpu().sum())),
-                abs(rec_pred_dmap) / torch.max(rec_pred_dmap))
-            writer.add_image(
-                "Dataset {} - GT count: ".format(dataset_name) + str('%.2f' % (rec_gt_dmap.cpu().sum())),
-                rec_gt_dmap / torch.max(rec_gt_dmap))
+            # Eventually saving best models
+            if epoch_mae < best_validation_mae:
+                best_validation_mae = epoch_mae
+                min_mae_epoch = epoch
+                save_checkpoint({
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'epoch': epoch,
+                    'best_mae': epoch_mae,
+                }, writer.get_logdir(), best_model=dataset_name + "_mae")
+            if epoch_mse < best_validation_mse:
+                best_validation_mse = epoch_mse
+                min_mse_epoch = epoch
+                save_checkpoint({
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'epoch': epoch,
+                    'best_mse': epoch_mse,
+                }, writer.get_logdir(), best_model=dataset_name + "_mse")
+            if epoch_are < best_validation_are:
+                best_validation_are = epoch_are
+                min_are_epoch = epoch
+                save_checkpoint({
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'epoch': epoch,
+                    'best_are': epoch_are,
+                }, writer.get_logdir(), best_model=dataset_name + "_are")
 
-        # Eventually saving best models
-        if epoch_mae < best_validation_mae:
-            best_validation_mae = epoch_mae
-            min_mae_epoch = epoch
+            print('Epoch: ', epoch, ' Dataset: ', dataset_name, ' MAE: ', epoch_mae, ' MSE: ', epoch_mse, ' ARE: ', epoch_are,
+                  ' Min MAE: ', best_validation_mae, ' Min MAE Epoch: ', min_mae_epoch,
+                  ' Min MSE: ', best_validation_mse, ' Min MSE Epoch: ', min_mse_epoch,
+                  ' Min ARE: ', best_validation_are, ' Min ARE Epoch: ', min_are_epoch
+                  )
+
+            # Saving last model
             save_checkpoint({
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
+                'lr_scheduler': lr_scheduler.state_dict(),
                 'epoch': epoch,
-                'best_mae': epoch_mae,
-            }, writer.get_logdir(), best_model=dataset_name + "_mae")
-        if epoch_mse < best_validation_mse:
-            best_validation_mse = epoch_mse
-            save_checkpoint({
-                'model': model.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'epoch': epoch,
-                'best_mse': epoch_mse,
-            }, writer.get_logdir(), best_model=dataset_name + "_mse")
-        if epoch_are < best_validation_are:
-            best_validation_are = epoch_are
-            save_checkpoint({
-                'model': model.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'epoch': epoch,
-                'best_are': epoch_are,
-            }, writer.get_logdir(), best_model=dataset_name + "_are")
-
-        print('Epoch: ', epoch, ' Dataset: ', dataset_name, ' MAE: ', epoch_mae,
-              ' Min MAE : ', best_validation_mae, ' Min MAE Epoch: ', min_mae_epoch,
-              ' MSE: ', epoch_mse, ' ARE: ', epoch_are)
-
-        # Saving last model
-        save_checkpoint({
-            'model': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'lr_scheduler': lr_scheduler.state_dict(),
-            'epoch': epoch,
-            'best_mae': best_validation_mae,
-            'best_mse': best_validation_mse,
-            'best_are': best_validation_are,
-            'min_mae_epoch': min_mae_epoch,
-            'tensorboard_working_dir': writer.get_logdir()
-        }, writer.get_logdir())
-
-        # Updating lr scheduler
-        lr_scheduler.step()
+                'best_mae': best_validation_mae,
+                'best_mse': best_validation_mse,
+                'best_are': best_validation_are,
+                'min_mae_epoch': min_mae_epoch,
+                'min_mse_epoch': min_mse_epoch,
+                'min_are_epoch': min_are_epoch,
+                'tensorboard_working_dir': writer.get_logdir()
+            }, writer.get_logdir())
 
 
 if __name__ == "__main__":

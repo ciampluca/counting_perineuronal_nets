@@ -9,7 +9,7 @@ from utils.get_density_map_gaussian import get_density_map_gaussian
 from utils.misc import normalize
 
 ROOT = "/mnt/Dati_SSD_2/datasets/perineural_nets"
-KERNEL_SIZE = 71
+KERNEL_SIZE = 61
 SIGMA = 30
 
 SAVE = True
@@ -30,14 +30,14 @@ if __name__ == '__main__':
         # Retrieving gt points coords
         x_coords = np.array(csv_anns.loc[csv_anns['imageName'].isin(["{}".format(img_name)]), "X"])
         y_coords = np.array(csv_anns.loc[csv_anns['imageName'].isin(["{}".format(img_name)]), "Y"])
+
+        # Generating dmaps from points
         ann_points = []
         for x, y in zip(x_coords, y_coords):
-            ann_points.append([y, x])
+            ann_points.append([x, y])
         ann_points = np.asarray(ann_points)
         gt_num = ann_points.shape[0]
-
-        # Generating dmap
-        dmap = get_density_map_gaussian(img, ann_points, KERNEL_SIZE, SIGMA, inverted=True)
+        dmap = get_density_map_gaussian(img, ann_points, KERNEL_SIZE, SIGMA)
 
         # Saving generated dmap
         dmap_path = os.path.join(ROOT, 'annotation', 'dmaps', img_name.rsplit(".", 1)[0] + ".npy")

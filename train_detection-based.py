@@ -197,7 +197,7 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, tens
                     img_det_labels.extend(labels)
                     img_det_scores.extend(scores)
 
-                    if train_cfg['debug']:
+                    if train_cfg['debug'] and epoch % train_cfg['debug_freq'] == 0:
                         # Drawing bbs on the patch and store it
                         pil_image = to_pil_image(image_patch)
                         draw = ImageDraw.Draw(pil_image)
@@ -332,6 +332,7 @@ def main(args):
     data_root = data_cfg['root']
     dataset_name = data_cfg['name']
     crop_width, crop_height = data_cfg['crop_width'], data_cfg['crop_height']
+    assert crop_width == crop_height, "Crops must be squares"
     list_frames = data_cfg['all_frames']
     list_train_frames, list_val_frames = data_cfg['train_frames'], data_cfg['val_frames']
     if data_cfg['specular_split']:
@@ -384,7 +385,7 @@ def main(args):
         collate_fn=val_dataset.standard_collate_fn,
     )
 
-    # Initializing best validation ap value
+    # Initializing validation metrics
     best_validation_mae = float(sys.maxsize)
     best_validation_mse = float(sys.maxsize)
     best_validation_map, best_validation_coco_map, best_validation_dice, best_validation_jaccard = 0.0, 0.0, 0.0, 0.0
