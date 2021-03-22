@@ -17,7 +17,7 @@ from datasets.perineural_nets_dmap_dataset import PerineuralNetsDmapDataset
 
 
 @torch.no_grad()
-def validate(model, val_dataloader, device, train_cfg, data_cfg, epoch):
+def validate(model, val_dataloader, device, train_cfg, data_cfg, epoch, tensorboard_writer):
     # Validation
     model.eval()
     print("Validation")
@@ -27,7 +27,7 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, epoch):
     for images, targets in tqdm.tqdm(val_dataloader):
         images = images.to(device)
         gt_dmaps = targets['dmap'].to(device)
-        img_name = val_dataloader.val_dataset.image_files[targets['img_id']]
+        img_name = val_dataloader.dataset.image_files[targets['img_id']]
 
         # Image and gt dmap are divided in patches
         dmap_output_patches = []
@@ -62,18 +62,18 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, epoch):
 
                         counter_patches += 1
 
-                        if train_cfg['debug'] and epoch % train_cfg['debug_freq'] == 0:
-                            # Reconstructing predicted dmap
-                            dmap_output_patches = torch.stack(dmap_output_patches)
-                            rec_pred_dmap = dmap_output_patches.view(
-                                gt_dmap_patches.shape[2], gt_dmap_patches.shape[3], *gt_dmap_patches.size()[-3:])
-                            rec_pred_dmap = rec_pred_dmap.permute(2, 0, 3, 1, 4).contiguous()
-                            rec_pred_dmap = rec_pred_dmap.view(
-                                rec_pred_dmap.shape[0], rec_pred_dmap.shape[1] * rec_pred_dmap.shape[2],
-                                rec_pred_dmap.shape[3] * rec_pred_dmap.shape[4])
-                            Image.fromarray(normalize(rec_pred_dmap[0].cpu().numpy()).astype('uint8')).save(
-                                os.path.join("./output/training/epoch_{}_reconstructed_{}_pred_dmap.png".
-                                             format(epoch, img_name.rsplit(".", 1)[0])))
+        if train_cfg['debug'] and epoch % train_cfg['debug_freq'] == 0:
+            debug_dir = os.path.join(tensorboard_writer.get_logdir(), 'output_debug')
+            # Reconstructing predicted dmap
+            dmap_output_patches = torch.stack(dmap_output_patches)
+            rec_pred_dmap = dmap_output_patches.view(
+                gt_dmap_patches.shape[2], gt_dmap_patches.shape[3], *gt_dmap_patches.size()[-3:])
+            rec_pred_dmap = rec_pred_dmap.permute(2, 0, 3, 1, 4).contiguous()
+            rec_pred_dmap = rec_pred_dmap.view(
+                rec_pred_dmap.shape[0], rec_pred_dmap.shape[1] * rec_pred_dmap.shape[2],
+                rec_pred_dmap.shape[3] * rec_pred_dmap.shape[4])
+            Image.fromarray(normalize(rec_pred_dmap[0].cpu().numpy()).astype('uint8')).save(
+                os.path.join(debug_dir, "reconstructed_{}_dmap_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch)))
 
         # Updating errors
         epoch_loss += img_loss
@@ -82,10 +82,10 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, epoch):
         epoch_are += img_are
 
     # Computing mean of the errors
-    epoch_mae /= len(val_dataloader.val_dataset)
-    epoch_mse /= len(val_dataloader.val_dataset)
-    epoch_are /= len(val_dataloader.val_dataset)
-    epoch_loss /= len(val_dataloader.val_dataset)
+    epoch_mae /= len(val_dataloader.dataset)
+    epoch_mse /= len(val_dataloader.dataset)
+    epoch_are /= len(val_dataloader.dataset)
+    epoch_loss /= len(val_dataloader.dataset)
 
     return epoch_mae, epoch_mse, epoch_are, epoch_loss
 
@@ -276,7 +276,7 @@ def main(args):
         epoch_loss = 0.0
 
         # Training for one epoch
-        for images, targets in tqdm.tqdm(train_dataloader):
+        for train_iteration, (images, targets) in enumerate(tqdm.tqdm(train_dataloader)):
             # Retrieving input images and associated gt
             images = images.to(device)
             gt_dmaps = targets['dmap'].to(device)
@@ -298,15 +298,19 @@ def main(args):
             # Updating loss
             epoch_loss += loss.item()
 
-        writer.add_scalar('Train/Loss Total', epoch_loss / len(train_dataset), epoch)
-        writer.add_scalar('Train/Learning Rate', optimizer.param_groups[0]['lr'],  epoch)
+            if (train_iteration % train_cfg['log_loss'] == 0):
+                writer.add_scalar('Train/Loss Total', epoch_loss / train_iteration, epoch * len(train_dataloader) + train_iteration)
+                writer.add_scalar('Train/Learning Rate', optimizer.param_groups[0]['lr'],  epoch * len(train_dataloader) + train_iteration)
+
+        # writer.add_scalar('Train/Loss Total', epoch_loss / len(train_dataset), epoch)
+        # writer.add_scalar('Train/Learning Rate', optimizer.param_groups[0]['lr'],  epoch)
 
         # Updating lr scheduler
         lr_scheduler.step()
 
         # Validating
         if (epoch % train_cfg['val_freq'] == 0):
-            epoch_mae, epoch_mse, epoch_are, epoch_loss = validate(model, val_dataloader)
+            epoch_mae, epoch_mse, epoch_are, epoch_loss = validate(model, val_dataloader, device, train_cfg, data_cfg, epoch, writer)
 
             # Updating tensorboard
             writer.add_scalar('Validation on {}/MAE'.format(dataset_name), epoch_mae, epoch)

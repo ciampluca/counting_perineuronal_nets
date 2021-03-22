@@ -14,19 +14,19 @@ dataset:
 
 
 model:
-    device               : "cpu"    # cpu or cuda
+    device               : "cuda"    # cpu or cuda
     cache_folder         : "./model_zoo"
 
 
 training:
-    batch_size          : 1
+    batch_size          : 4
     val_batch_size      : 1
-    num_workers         : 1
-    epochs              : 500
+    num_workers         : 4
+    epochs              : 100
     seed                : 10
-    tensorboard_filename: "perineural_nets"
+    tensorboard_filename: "CSRNet_PerineuralNets_1024-1024-specular_bs4"
     lr                  : 0.00001
-    lr_step_size        : [400, 450, 500]
+    lr_step_size        : [25, 50, 100]
     lr_gamma            : 0.1
     momentum            : 0.95
     weights_decay       : 0.0005
@@ -37,3 +37,4 @@ training:
     val_freq            : 1
     debug               : true
     debug_freq          : 3
+    log_loss            : 20
