@@ -152,7 +152,7 @@ def main(args):
     train_dataset = PerineuralNetsDmapDataset(
         data_root=data_root,
         transforms=get_dmap_transforms(train=True, crop_width=crop_width, crop_height=crop_height),
-        list_frames=data_cfg['train_frames'],
+        list_frames=list_train_frames,
         load_in_memory=data_cfg['load_in_memory'],
         with_patches=data_cfg['train_with_precomputed_patches'],
         specular_split=data_cfg['specular_split'],
@@ -175,7 +175,7 @@ def main(args):
     val_dataset = PerineuralNetsDmapDataset(
         data_root=data_root,
         transforms=get_dmap_transforms(train=False, crop_width=crop_width, crop_height=crop_height),
-        list_frames=data_cfg['val_frames'],
+        list_frames=list_val_frames,
         load_in_memory=False,
         with_patches=False,
         specular_split=data_cfg['specular_split'],
