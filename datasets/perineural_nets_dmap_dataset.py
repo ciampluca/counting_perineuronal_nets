@@ -160,9 +160,9 @@ if __name__ == "__main__":
     assert CROP_WIDTH % 32 == 0 and CROP_HEIGHT % 32 == 0, "In validation mode, crop dim must be multiple of 32"
 
     train_transforms = custom_T.Compose([
-            custom_T.RandomHorizontalFlip(),
-            # custom_T.RandomCrop(width=CROP_WIDTH, height=CROP_HEIGHT),
-            custom_T.PadToResizeFactor(),
+            #custom_T.RandomHorizontalFlip(),
+            #custom_T.RandomCrop(width=CROP_WIDTH, height=CROP_HEIGHT),
+            #custom_T.PadToResizeFactor(),
             custom_T.ToTensor(),
     ])
 
@@ -206,16 +206,16 @@ if __name__ == "__main__":
     )
 
     # Training
-    for images, targets in data_loader:
-        images = list(image.to(DEVICE) for image in images)
-        gt_dmaps = list(dmap.to(DEVICE) for dmap in targets['dmap'])
-        img_names = list(dataset.image_files[img_id] for img_id in targets['img_id'])
-
-        for img, dmap, img_name in zip(images, gt_dmaps, img_names):
-            pil_image = to_pil_image(img.cpu())
-            pil_image.save("./output/dataloading/{}.png".format(img_name.rsplit(".", 1)[0]))
-            pil_dmap = Image.fromarray(normalize(dmap.squeeze(dim=0).cpu().numpy()).astype('uint8'))
-            pil_dmap.save("./output/dataloading/{}_dmap.png".format(img_name.rsplit(".", 1)[0]))
+    # for images, targets in data_loader:
+    #     images = list(image.to(DEVICE) for image in images)
+    #     gt_dmaps = list(dmap.to(DEVICE) for dmap in targets['dmap'])
+    #     img_names = list(dataset.image_files[img_id] for img_id in targets['img_id'])
+    #
+    #     for img, dmap, img_name in zip(images, gt_dmaps, img_names):
+    #         pil_image = to_pil_image(img.cpu())
+    #         pil_image.save("./output/dataloading/{}.png".format(img_name.rsplit(".", 1)[0]))
+    #         pil_dmap = Image.fromarray(normalize(dmap.squeeze(dim=0).cpu().numpy()).astype('uint8'))
+    #         pil_dmap.save("./output/dataloading/{}_dmap.png".format(img_name.rsplit(".", 1)[0]))
 
     # Validation
     for images, targets in val_data_loader:
@@ -226,6 +226,7 @@ if __name__ == "__main__":
 
         # Image is divided in patches
         output_patches = []
+
         patches = images.data.unfold(1, 3, 3).unfold(2, CROP_WIDTH, CROP_HEIGHT).unfold(3, CROP_WIDTH, CROP_HEIGHT)
         counter_patches = 1
         for i in range(patches.shape[0]):
@@ -258,6 +259,7 @@ if __name__ == "__main__":
                             "./output/dataloading/{}_{}_dmap.png".format(img_name.rsplit(".", 1)[0], counter_patches)
                         )
                         counter_patches += 1
+                        print("Patch Sum: {}".format(target_patch.sum()))
 
         output_patches = torch.stack(output_patches)
         rec_target = output_patches.view(patches.shape[2], patches.shape[3], *patches.size()[-3:])

@@ -201,6 +201,7 @@ if __name__ == "__main__":
     all_frames = ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
     if SPECULAR_SPLIT:
         train_frames = val_frames = all_frames
+    OVERLAP_VAL_PATCHES = 120
 
     transforms = custom_T.Compose([
         custom_T.RandomHorizontalFlip(),
@@ -250,19 +251,19 @@ if __name__ == "__main__":
     )
 
     # Training
-    for images, targets in data_loader:
-        images = list(image.to(DEVICE) for image in images)
-        targets = [{k: v.to(DEVICE) for k, v in t.items()} for t in targets]
-
-        for image, target in zip(images, targets):
-            img_id = target['image_id'].item()
-            img_name = dataset.image_files[img_id]
-
-            pil_image = to_pil_image(image.cpu())
-            draw = ImageDraw.Draw(pil_image)
-            for bb in target['boxes']:
-                draw.rectangle([bb[0].item(), bb[1].item(), bb[2].item(), bb[3].item()], outline='red', width=3)
-            pil_image.save("./output/dataloading/{}_withBBs.png".format(img_name.rsplit(".", 1)[0]))
+    # for images, targets in data_loader:
+    #     images = list(image.to(DEVICE) for image in images)
+    #     targets = [{k: v.to(DEVICE) for k, v in t.items()} for t in targets]
+    #
+    #     for image, target in zip(images, targets):
+    #         img_id = target['image_id'].item()
+    #         img_name = dataset.image_files[img_id]
+    #
+    #         pil_image = to_pil_image(image.cpu())
+    #         draw = ImageDraw.Draw(pil_image)
+    #         for bb in target['boxes']:
+    #             draw.rectangle([bb[0].item(), bb[1].item(), bb[2].item(), bb[3].item()], outline='red', width=3)
+    #         pil_image.save("./output/dataloading/{}_withBBs.png".format(img_name.rsplit(".", 1)[0]))
 
     # Validation
     for images, targets in val_data_loader:

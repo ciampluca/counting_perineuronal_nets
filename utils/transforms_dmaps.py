@@ -53,10 +53,14 @@ class RandomCrop(object):
         self.transform = A.Compose([
             A.RandomCrop(width=width, height=height),
         ], additional_targets={'dmap': 'image'})
+        self.crop_width, self.crop_height = width, height
 
     def __call__(self, image, dmap=None):
         if isinstance(image, torch.Tensor):
             image = image.permute(1, 2, 0).cpu().numpy()
+
+        if image.shape[0] == self.crop_height and image.shape[1] == self.crop_width:
+            return image, dmap
 
         if dmap is not None:
             transformed = self.transform(image=image, dmap=dmap)

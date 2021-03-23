@@ -8,6 +8,7 @@ import albumentations.augmentations.bbox_utils as albumentations_utils
 import csv
 from PIL import Image, ImageDraw
 from utils.misc import normalize
+import copy
 
 
 ROOT = "/mnt/Dati_SSD_2/datasets/perineural_nets"
@@ -57,7 +58,7 @@ if __name__ == "__main__":
         for i in range(NUM_PATCHES_PER_IMAGE):
             img_patch_name = "{}_{}.tif".format(img_name.rsplit(".", 1)[0], i)
 
-            transformed = transform(image=img, keypoints=img_ann_points, dmap=dmap)
+            transformed = transform(image=img, keypoints=img_ann_points, dmap=copy.deepcopy(dmap))
 
             img_patch, img_patch_ann_points, dmap_patch = \
                 transformed['image'], transformed['keypoints'], transformed['dmap']

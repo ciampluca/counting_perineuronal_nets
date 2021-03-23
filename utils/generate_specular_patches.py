@@ -8,6 +8,7 @@ import csv
 from PIL import Image, ImageDraw
 import os
 from utils.misc import normalize
+import copy
 
 
 ROOT = "/mnt/Dati_SSD_2/datasets/perineural_nets"
@@ -73,7 +74,7 @@ if __name__ == "__main__":
             # Left region
             img_patch_name = "{}_left_{}.tif".format(img_name.rsplit(".", 1)[0], i)
 
-            transformed = transform(image=img_left_region, keypoints=img_left_ann_points, dmap=dmap_left_region)
+            transformed = transform(image=img_left_region, keypoints=img_left_ann_points, dmap=copy.deepcopy(dmap_left_region))
 
             img_left_patch, img_left_patch_ann_points, dmap_left_patch = \
                 transformed['image'], transformed['keypoints'], transformed['dmap']
@@ -149,7 +150,7 @@ if __name__ == "__main__":
             # Right region
             img_patch_name = "{}_right_{}.tif".format(img_name.rsplit(".", 1)[0], i)
 
-            transformed = transform(image=img_right_region, keypoints=img_right_ann_points, dmap=dmap_right_region)
+            transformed = transform(image=img_right_region, keypoints=img_right_ann_points, dmap=copy.deepcopy(dmap_right_region))
 
             img_right_patch, img_right_patch_ann_points, dmap_right_patch = \
                 transformed['image'], transformed['keypoints'], transformed['dmap']

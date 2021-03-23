@@ -6,6 +6,7 @@ import tqdm
 import sys
 from PIL import Image
 import timeit
+import ssim
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -23,7 +24,7 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, epoch, tensorbo
     print("Validation")
     start = timeit.default_timer()
 
-    epoch_mae, epoch_mse, epoch_are, epoch_loss = 0.0, 0.0, 0.0, 0.0
+    epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim = 0.0, 0.0, 0.0, 0.0, 0.0
     for images, targets in tqdm.tqdm(val_dataloader):
         images = images.to(device)
         gt_dmaps = targets['dmap'].to(device)
@@ -35,9 +36,9 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, epoch, tensorbo
             unfold(3, data_cfg['crop_width'], data_cfg['crop_height'])
         gt_dmap_patches = gt_dmaps.data.unfold(1, 1, 1).unfold(2, data_cfg['crop_width'], data_cfg['crop_height']).\
             unfold(3, data_cfg['crop_width'], data_cfg['crop_height'])
-        counter_patches = 1
+        counter_patches = 0
 
-        img_loss, img_mae, img_mse, img_are = 0.0, 0.0, 0.0, 0.0
+        img_loss, img_mae, img_mse, img_are, img_ssim = 0.0, 0.0, 0.0, 0.0, 0.0
         for i in range(img_patches.shape[0]):
             for j in range(img_patches.shape[1]):
                 for r in range(img_patches.shape[2]):
@@ -46,11 +47,11 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, epoch, tensorbo
                         gt_dmap_patch = gt_dmap_patches[i, j, r, c, ...]
 
                         # Computing dmap for the patch
-                        pred_dmap_patch = model(img_patch.unsqueeze(0).to(device))
-                        dmap_output_patches.append(pred_dmap_patch.squeeze(dim=1))
+                        pred_dmap_patch = model(img_patch.unsqueeze(dim=0).to(device))
+                        dmap_output_patches.append(pred_dmap_patch.squeeze(dim=0))
 
-                        # Computing loss and updating errors for the patch
-                        patch_loss = torch.nn.MSELoss()(pred_dmap_patch, gt_dmap_patch.unsqueeze(1))
+                        # Updating metrics for the patch
+                        patch_loss = torch.nn.MSELoss()(pred_dmap_patch, gt_dmap_patch.unsqueeze(dim=0))
                         img_loss += patch_loss.item()
                         patch_mae = abs(pred_dmap_patch.sum() - gt_dmap_patch.sum())
                         patch_mse = (pred_dmap_patch.sum() - gt_dmap_patch.sum()) ** 2
@@ -59,11 +60,18 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, epoch, tensorbo
                         img_mae += patch_mae.item()
                         img_mse += patch_mse.item()
                         img_are += patch_are.item()
+                        patch_ssim = ssim.ssim(gt_dmap_patch.unsqueeze(dim=0), pred_dmap_patch).item()
+                        img_ssim += patch_ssim
 
                         counter_patches += 1
 
+        img_are /= counter_patches
+        img_ssim /= counter_patches
+
         if train_cfg['debug'] and epoch % train_cfg['debug_freq'] == 0:
             debug_dir = os.path.join(tensorboard_writer.get_logdir(), 'output_debug')
+            if not os.path.exists(debug_dir):
+                os.makedirs(debug_dir)
             # Reconstructing predicted dmap
             dmap_output_patches = torch.stack(dmap_output_patches)
             rec_pred_dmap = dmap_output_patches.view(
@@ -80,14 +88,16 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, epoch, tensorbo
         epoch_mae += img_mae
         epoch_mse += img_mse
         epoch_are += img_are
+        epoch_ssim += img_ssim
 
     # Computing mean of the errors
     epoch_mae /= len(val_dataloader.dataset)
     epoch_mse /= len(val_dataloader.dataset)
     epoch_are /= len(val_dataloader.dataset)
     epoch_loss /= len(val_dataloader.dataset)
+    epoch_ssim /= len(val_dataloader.dataset)
 
-    return epoch_mae, epoch_mse, epoch_are, epoch_loss
+    return epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim
 
 
 def main(args):
@@ -193,7 +203,8 @@ def main(args):
     best_validation_mae = float(sys.maxsize)
     best_validation_mse = float(sys.maxsize)
     best_validation_are = float(sys.maxsize)
-    min_mae_epoch, min_mse_epoch, min_are_epoch = -1, -1, -1
+    best_validation_ssim = float(sys.maxsize)
+    min_mae_epoch, min_mse_epoch, min_are_epoch, best_ssim_epoch = -1, -1, -1, -1
 
     #######################
     # Creating model
@@ -231,6 +242,9 @@ def main(args):
     else:
         print("Not implemented loss")
         exit(1)
+    aux_criterion = None
+    if train_cfg['aux_loss'] == "SSIM":
+        aux_criterion = ssim.SSIM(window_size=11)
 
     # Constructing lr scheduler
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
@@ -263,9 +277,11 @@ def main(args):
         best_validation_mae = checkpoint['best_mae']
         best_validation_mse = checkpoint['best_mse']
         best_validation_are = checkpoint['best_are']
+        best_validation_ssim = checkpoint['best_ssim']
         min_mae_epoch = checkpoint['min_mae_epoch']
         min_mse_epoch = checkpoint['min_mse_epoch']
         min_are_epoch = checkpoint['min_are_epoch']
+        best_ssim_epoch = checkpoint['best_ssim_epoch']
 
     ################
     ################
@@ -290,6 +306,11 @@ def main(args):
             else:
                 print("Loss to be implemented")
                 exit(1)
+            if train_cfg['aux_loss'] == "SSIM":
+                aux_loss = -aux_criterion(gt_dmaps, pred_dmaps)
+                ssim_value = - aux_loss.item()
+                print("SSIM value: {}".format(ssim_value))
+                loss += train_cfg['lambda_aux_loss'] * aux_loss
 
             optimizer.zero_grad()
             loss.backward()
@@ -302,21 +323,20 @@ def main(args):
                 writer.add_scalar('Train/Loss Total', epoch_loss / train_iteration, epoch * len(train_dataloader) + train_iteration)
                 writer.add_scalar('Train/Learning Rate', optimizer.param_groups[0]['lr'],  epoch * len(train_dataloader) + train_iteration)
 
-        # writer.add_scalar('Train/Loss Total', epoch_loss / len(train_dataset), epoch)
-        # writer.add_scalar('Train/Learning Rate', optimizer.param_groups[0]['lr'],  epoch)
-
         # Updating lr scheduler
         lr_scheduler.step()
 
         # Validating
         if (epoch % train_cfg['val_freq'] == 0):
-            epoch_mae, epoch_mse, epoch_are, epoch_loss = validate(model, val_dataloader, device, train_cfg, data_cfg, epoch, writer)
+            epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim = \
+                validate(model, val_dataloader, device, train_cfg, data_cfg, epoch, writer)
 
             # Updating tensorboard
             writer.add_scalar('Validation on {}/MAE'.format(dataset_name), epoch_mae, epoch)
             writer.add_scalar('Validation on {}/MSE'.format(dataset_name), epoch_mse, epoch)
             writer.add_scalar('Validation on {}/ARE'.format(dataset_name), epoch_are, epoch)
             writer.add_scalar('Validation on {}/Loss'.format(dataset_name), epoch_loss, epoch)
+            writer.add_scalar('Validation on {}/SSIM'.format(dataset_name), epoch_ssim, epoch)
 
             # Eventually saving best models
             if epoch_mae < best_validation_mae:
@@ -346,11 +366,21 @@ def main(args):
                     'epoch': epoch,
                     'best_are': epoch_are,
                 }, writer.get_logdir(), best_model=dataset_name + "_are")
+            if epoch_ssim < best_validation_ssim:
+                best_validation_ssim = epoch_ssim
+                best_ssim_epoch = epoch
+                save_checkpoint({
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'epoch': epoch,
+                    'best_ssim': epoch_ssim,
+                }, writer.get_logdir(), best_model=dataset_name + "_ssim")
 
-            print('Epoch: ', epoch, ' Dataset: ', dataset_name, ' MAE: ', epoch_mae, ' MSE: ', epoch_mse, ' ARE: ', epoch_are,
+            print('Epoch: ', epoch, ' Dataset: ', dataset_name, ' MAE: ', epoch_mae, ' MSE: ', epoch_mse, ' ARE: ', epoch_are, ' SSIM: ', epoch_ssim,
                   ' Min MAE: ', best_validation_mae, ' Min MAE Epoch: ', min_mae_epoch,
                   ' Min MSE: ', best_validation_mse, ' Min MSE Epoch: ', min_mse_epoch,
-                  ' Min ARE: ', best_validation_are, ' Min ARE Epoch: ', min_are_epoch
+                  ' Min ARE: ', best_validation_are, ' Min ARE Epoch: ', min_are_epoch,
+                  ' Best SSIM: ', best_validation_ssim, ' Best SSIM Epoch: ', best_ssim_epoch
                   )
 
             # Saving last model
@@ -362,9 +392,11 @@ def main(args):
                 'best_mae': best_validation_mae,
                 'best_mse': best_validation_mse,
                 'best_are': best_validation_are,
+                'best_ssim': best_validation_ssim,
                 'min_mae_epoch': min_mae_epoch,
                 'min_mse_epoch': min_mse_epoch,
                 'min_are_epoch': min_are_epoch,
+                'best_ssim_epoch': best_ssim_epoch,
                 'tensorboard_working_dir': writer.get_logdir()
             }, writer.get_logdir())
 

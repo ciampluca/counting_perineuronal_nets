@@ -12,6 +12,7 @@ dataset:
     specular_split: true
     crop_width: 640
     crop_height: 640
+    overlap_val_patches: 120    # in pixel
 
 
 model:
