@@ -320,8 +320,8 @@ def main(args):
             epoch_loss += loss.item()
 
             if train_iteration % train_cfg['log_loss'] == 0 and train_iteration != 0:
-                writer.add_scalar('Train/Loss Total', epoch_loss / train_iteration, epoch * len(train_dataloader) + train_iteration)
-                writer.add_scalar('Train/Learning Rate', optimizer.param_groups[0]['lr'],  epoch * len(train_dataloader) + train_iteration)
+                writer.add_scalar('Training/Loss Total', epoch_loss / train_iteration, epoch * len(train_dataloader) + train_iteration)
+                writer.add_scalar('Training/Learning Rate', optimizer.param_groups[0]['lr'],  epoch * len(train_dataloader) + train_iteration)
 
         # Updating lr scheduler
         lr_scheduler.step()

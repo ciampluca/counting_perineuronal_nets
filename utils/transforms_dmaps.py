@@ -47,6 +47,46 @@ class PadToResizeFactor(object):
         return image, dmap
 
 
+class PadToSize(object):
+
+    def __call__(self, image, min_height, min_width, dmap=None):
+        image_to_tensor_flag = 0
+        if isinstance(image, torch.Tensor):
+            if image.is_cuda:
+                device = image.get_device()
+            else:
+                device = torch.device("cpu")
+            image = image.permute(1, 2, 0).cpu().numpy()
+            image_to_tensor_flag = 1
+
+        dmap_to_tensor_flag = 0
+        if dmap is not None and isinstance(dmap, torch.Tensor):
+            if dmap.is_cuda:
+                device = dmap.get_device()
+            else:
+                device = torch.device("cpu")
+            dmap = dmap.permute(1, 2, 0).cpu().numpy()
+            dmap_to_tensor_flag = 1
+
+        transform = A.Compose([
+            A.PadIfNeeded(min_height=min_height, min_width=min_width, pad_height_divisor=None, pad_width_divisor=None, value=0),
+        ], additional_targets={'dmap': 'image'})
+
+        if dmap is not None:
+            transformed = transform(image=image, dmap=dmap)
+            image, dmap = transformed['image'], transformed['dmap']
+        else:
+            transformed = transform(image=image)
+            image = transformed['image']
+
+        if image_to_tensor_flag:
+            image = F.to_tensor(image).to(device)
+        if dmap_to_tensor_flag:
+            dmap = torch.as_tensor(dmap, dtype=torch.float32).permute(2, 0, 1).to(device)
+
+        return image, dmap
+
+
 class RandomCrop(object):
 
     def __init__(self, width, height):
@@ -107,7 +147,7 @@ class CropToFixedSize(object):
         if image_to_tensor_flag:
             image = F.to_tensor(image).to(device)
         if dmap_to_tensor_flag:
-            dmap = torch.as_tensor(dmap, dtype=torch.float32).to(device)
+            dmap = torch.as_tensor(dmap, dtype=torch.float32).permute(2, 0, 1).to(device)
 
         return image, dmap
 

@@ -3,6 +3,7 @@ from tifffile import imread
 import numpy as np
 from PIL import Image
 import tqdm
+import math
 
 import torch
 from torchvision.datasets import VisionDataset
@@ -153,21 +154,25 @@ if __name__ == "__main__":
     all_frames = ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
     if SPECULAR_SPLIT:
         train_frames = val_frames = all_frames
-    data_root = "/home/luca/luca-cnr/mnt/Dati_SSD_2/datasets/perineural_nets"
+    data_root = "/mnt/Dati_SSD_2/datasets/perineural_nets"
     CROP_WIDTH = 1024
     CROP_HEIGHT = 1024
+    STRIDE_W, STRIDE_H = CROP_WIDTH, CROP_HEIGHT
+    OVERLAPPING_PATCHES = True
+    if OVERLAPPING_PATCHES:
+        STRIDE_W, STRIDE_H = CROP_WIDTH - 120, CROP_HEIGHT - 120
 
     assert CROP_WIDTH % 32 == 0 and CROP_HEIGHT % 32 == 0, "In validation mode, crop dim must be multiple of 32"
 
     train_transforms = custom_T.Compose([
-            #custom_T.RandomHorizontalFlip(),
-            #custom_T.RandomCrop(width=CROP_WIDTH, height=CROP_HEIGHT),
-            #custom_T.PadToResizeFactor(),
+            custom_T.RandomHorizontalFlip(),
+            custom_T.RandomCrop(width=CROP_WIDTH, height=CROP_HEIGHT),
+            custom_T.PadToResizeFactor(),
             custom_T.ToTensor(),
     ])
 
     val_transforms = custom_T.Compose([
-        custom_T.PadToResizeFactor(resize_factor=CROP_WIDTH),
+        # custom_T.PadToResizeFactor(resize_factor=CROP_WIDTH),
         custom_T.ToTensor(),
     ])
 
@@ -223,31 +228,57 @@ if __name__ == "__main__":
         gt_dmaps = targets['dmap'].to(DEVICE)
         img_name = val_dataset.image_files[targets['img_id']]
         print(img_name)
+        to_pil_image(images.squeeze(dim=0)).save("./output/dataloading/original_{}.png".format(img_name.rsplit(".", 1)[0]))
 
         # Image is divided in patches
-        output_patches = []
+        output_patches, output_normalization_map_patches = [], []
 
-        patches = images.data.unfold(1, 3, 3).unfold(2, CROP_WIDTH, CROP_HEIGHT).unfold(3, CROP_WIDTH, CROP_HEIGHT)
+        img_w, img_h = images.shape[3], images.shape[2]
+        num_h_patches, num_v_patches = math.ceil(img_w / STRIDE_W), math.ceil(img_h / STRIDE_H)
+        img_w_padded = (num_h_patches - math.floor(img_w / STRIDE_W)) * (STRIDE_W * num_h_patches + (CROP_WIDTH-STRIDE_W))
+        img_h_padded = (num_v_patches - math.floor(img_h / STRIDE_H)) * (STRIDE_H * num_v_patches + (CROP_HEIGHT-STRIDE_H))
+        padded_images, padded_gt_dmaps = custom_T.PadToSize()(
+            image=images.squeeze(dim=0),
+            min_width=img_w_padded,
+            min_height=img_h_padded,
+            dmap=gt_dmaps.squeeze(dim=0)
+        )
+
+        normalization_map = torch.ones_like(padded_images)
+        patches = padded_images.unsqueeze(dim=0).data.unfold(1, 3, 3).unfold(2, CROP_HEIGHT, STRIDE_H).unfold(3, CROP_WIDTH, STRIDE_W)
+        normalization_map_patches = normalization_map.unsqueeze(dim=0).data.unfold(1, 3, 3).unfold(2, CROP_HEIGHT, STRIDE_H).unfold(3, CROP_WIDTH, STRIDE_W)
         counter_patches = 1
         for i in range(patches.shape[0]):
             for j in range(patches.shape[1]):
                 for r in range(patches.shape[2]):
                     for c in range(patches.shape[3]):
                         img_patch = patches[i, j, r, c, ...]
+                        n_map_patch = normalization_map_patches[i, j, r, c, ...]
                         output_patches.append(img_patch)
+                        output_normalization_map_patches.append(n_map_patch)
                         to_pil_image(img_patch).save(
                             "./output/dataloading/{}_{}.png".format(img_name.rsplit(".", 1)[0], counter_patches))
                         counter_patches += 1
         # Reconstructing image
         output_patches = torch.stack(output_patches)
-        rec_image = output_patches.view(patches.shape[2], patches.shape[3], *patches.size()[-3:])
-        rec_image = rec_image.permute(2, 0, 3, 1, 4).contiguous()
-        rec_image = rec_image.view(rec_image.shape[0], rec_image.shape[1]*rec_image.shape[2], rec_image.shape[3]*rec_image.shape[4])
-        to_pil_image(rec_image).save("./output/dataloading/reconstructed_{}.png".format(img_name.rsplit(".", 1)[0]))
+        output_normalization_map_patches = torch.stack(output_normalization_map_patches)
+        rec_image = output_patches.view(patches.shape[0], patches.shape[2], patches.shape[3], *patches.size()[-3:])
+        rec_image = rec_image.permute(0, 3, 4, 5, 1, 2).contiguous()
+        rec_image = rec_image.view(rec_image.shape[0], rec_image.shape[1], rec_image.shape[2] * rec_image.shape[3],
+                                   rec_image.shape[4] * rec_image.shape[5])
+        rec_image = rec_image.view(rec_image.shape[0], rec_image.shape[1] * rec_image.shape[2], -1)
+        rec_image = nnf.fold(
+            rec_image, output_size=(img_h_padded, img_w_padded), kernel_size=(CROP_WIDTH, CROP_HEIGHT), stride=(STRIDE_W, STRIDE_H))
+
+        norm_map = nnf.fold(nnf.unfold(torch.ones_like(padded_images).unsqueeze(dim=0), CROP_WIDTH, stride=STRIDE_W), padded_images.shape[-2:],
+                          CROP_WIDTH, stride=STRIDE_W)
+        rec_image /= norm_map
+
+        to_pil_image(rec_image.squeeze(dim=0)).save("./output/dataloading/reconstructed_{}.png".format(img_name.rsplit(".", 1)[0]))
 
         # The same for the target...
         output_patches = []
-        patches = gt_dmaps.data.unfold(1, 1, 1).unfold(2, CROP_WIDTH, CROP_HEIGHT).unfold(3, CROP_WIDTH, CROP_HEIGHT)
+        patches = padded_gt_dmaps.unsqueeze(dim=0).data.unfold(1, 1, 1).unfold(2, CROP_WIDTH, STRIDE_W).unfold(3, CROP_HEIGHT, STRIDE_H)
         counter_patches = 1
         for i in range(patches.shape[0]):
             for j in range(patches.shape[1]):
@@ -259,15 +290,18 @@ if __name__ == "__main__":
                             "./output/dataloading/{}_{}_dmap.png".format(img_name.rsplit(".", 1)[0], counter_patches)
                         )
                         counter_patches += 1
-                        print("Patch Sum: {}".format(target_patch.sum()))
 
         output_patches = torch.stack(output_patches)
-        rec_target = output_patches.view(patches.shape[2], patches.shape[3], *patches.size()[-3:])
-        rec_target = rec_target.permute(2, 0, 3, 1, 4).contiguous()
-        rec_target = rec_target.view(rec_target.shape[0], rec_target.shape[1] * rec_target.shape[2],
-                                   rec_target.shape[3] * rec_target.shape[4])
+        rec_target = output_patches.view(patches.shape[0], patches.shape[2], patches.shape[3], *patches.size()[-3:])
+        rec_target = rec_target.permute(0, 3, 4, 5, 1, 2).contiguous()
+        rec_target = rec_target.view(rec_target.shape[0], rec_target.shape[1],
+                                     rec_target.shape[2] * rec_target.shape[3], rec_target.shape[4] * rec_target.shape[5])
+        rec_target = rec_target.view(rec_target.shape[0], rec_target.shape[1] * rec_target.shape[2], -1)
+        rec_target = nnf.fold(
+            rec_target, output_size=(img_h_padded, img_w_padded), kernel_size=(CROP_WIDTH, CROP_HEIGHT),
+            stride=(STRIDE_W, STRIDE_H))
 
-        Image.fromarray(normalize(rec_target[0].cpu().numpy()).astype('uint8')). \
+        Image.fromarray(normalize(rec_target.squeeze(dim=0).squeeze(dim=0).cpu().numpy()).astype('uint8')). \
             save(os.path.join("./output/dataloading", "reconstructed_" + img_name.rsplit(".", 1)[0] + "_dmap.png"))
 
 
