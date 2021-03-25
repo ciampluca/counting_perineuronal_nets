@@ -453,11 +453,9 @@ def compute_dice_and_jaccard(dets_and_gts_dict, smooth=1):
     for img_id, img_dets_and_gts in dets_and_gts_dict.items():
         img_w, img_h = img_dets_and_gts['img_dim']
 
-        gt_seg_map = Image.new('L', (img_w, img_h), 0)
-        gt_draw = ImageDraw.Draw(gt_seg_map)
+        gt_seg_map = np.zeros((img_h, img_w), dtype=np.float32)
         for gt_bb in img_dets_and_gts['gt_bbs']:
-            gt_draw.rectangle([gt_bb[0], gt_bb[1], gt_bb[2]-1, gt_bb[3]-1], fill=1, width=0)
-        gt_seg_map = np.asarray(gt_seg_map, dtype=np.float32)
+            gt_seg_map[int(gt_bb[1]):int(gt_bb[3])+1, int(gt_bb[0]):int(gt_bb[2])+1] = 1.0
 
         det_seg_map = np.zeros((img_h, img_w), dtype=np.float32)
         for det_bb, score in zip(img_dets_and_gts['pred_bbs'], img_dets_and_gts['scores']):
