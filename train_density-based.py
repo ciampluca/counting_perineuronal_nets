@@ -13,8 +13,14 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 
 from models.CSRNet import CSRNet
+from models.UNet_nobias import UNet
 from utils.misc import random_seed, get_dmap_transforms, save_checkpoint, normalize
 from datasets.perineural_nets_dmap_dataset import PerineuralNetsDmapDataset
+
+available_models = {
+    'CSRNet': CSRNet,
+    'UNet': UNet,
+}
 
 
 @torch.no_grad()
@@ -210,8 +216,13 @@ def main(args):
     # Creating model
     #######################
     print("Creating model")
-    load_initial_weights = True if train_cfg['pretrained_model'] or train_cfg['checkpoint'] else False
-    model = CSRNet(load_weights=load_initial_weights)
+    model_name = model_cfg['name']
+    assert model_name in available_models, "Not implemented model"
+    if model_name == "UNet":
+        model = available_models.get(model_cfg['name'])(in_channels=3, n_classes=1, padding=True, batch_norm=True)
+    elif model_name == "CSRNet":
+        load_initial_weights = True if train_cfg['pretrained_model'] or train_cfg['checkpoint'] else False
+        model = available_models.get(model_cfg['name'])(load_weights=load_initial_weights)
 
     # Putting model to device and setting train mode
     model.to(device)
