@@ -43,8 +43,8 @@ def get_bbox_transforms(train=False, crop_width=640, crop_height=640, resize_fac
     if train:
         transforms.append(bbox_custom_T.RandomHorizontalFlip())
         transforms.append(bbox_custom_T.RandomCrop(width=crop_width, height=crop_height, min_visibility=min_visibility))
-    else:
-        transforms.append(bbox_custom_T.PadToResizeFactor(resize_factor=resize_factor))
+    # else:
+    #     transforms.append(bbox_custom_T.PadToResizeFactor(resize_factor=resize_factor))
 
     transforms.append(bbox_custom_T.ToTensor())
 
@@ -459,9 +459,8 @@ def compute_dice_and_jaccard(dets_and_gts_dict, smooth=1):
 
         det_seg_map = np.zeros((img_h, img_w), dtype=np.float32)
         for det_bb, score in zip(img_dets_and_gts['pred_bbs'], img_dets_and_gts['scores']):
-            seg_map = np.zeros((img_h, img_w), dtype=np.float32)
-            seg_map[int(det_bb[1]):int(det_bb[3])+1, int(det_bb[0]):int(det_bb[2])+1] = score
-            det_seg_map = np.where(seg_map > det_seg_map, seg_map, det_seg_map)
+            x0, y0, x1, y1 = det_bb.astype(int)
+            det_seg_map[y0:y1 + 1, x0:x1 + 1] = np.maximum(det_seg_map[y0:y1 + 1, x0:x1 + 1], score)
 
         intersection = np.sum(gt_seg_map * det_seg_map)
         union = np.sum(gt_seg_map) + np.sum(det_seg_map)

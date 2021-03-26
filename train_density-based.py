@@ -4,9 +4,11 @@ import os
 from shutil import copyfile
 import tqdm
 import sys
-from PIL import Image
+from PIL import Image, ImageFont, ImageDraw
 import timeit
 import ssim
+import math
+import copy
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -16,6 +18,7 @@ from models.CSRNet import CSRNet
 from models.UNet_nobias import UNet
 from utils.misc import random_seed, get_dmap_transforms, save_checkpoint, normalize
 from datasets.perineural_nets_dmap_dataset import PerineuralNetsDmapDataset
+from utils.transforms_dmaps import PadToSize, CropToFixedSize
 
 available_models = {
     'CSRNet': CSRNet,
@@ -24,11 +27,16 @@ available_models = {
 
 
 @torch.no_grad()
-def validate(model, val_dataloader, device, train_cfg, data_cfg, epoch, tensorboard_writer):
+def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, epoch, tensorboard_writer):
     # Validation
     model.eval()
     print("Validation")
     start = timeit.default_timer()
+
+    stride_w, stride_h = data_cfg['crop_width'], data_cfg['crop_height']
+    if data_cfg['overlap_val_patches']:
+        stride_w, stride_h = data_cfg['crop_width'] - data_cfg['overlap_val_patches'], data_cfg['crop_height'] - \
+                             data_cfg['overlap_val_patches']
 
     epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim = 0.0, 0.0, 0.0, 0.0, 0.0
     for images, targets in tqdm.tqdm(val_dataloader):
@@ -36,58 +44,76 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, epoch, tensorbo
         gt_dmaps = targets['dmap'].to(device)
         img_name = val_dataloader.dataset.image_files[targets['img_id']]
 
-        # Image and gt dmap are divided in patches
-        dmap_output_patches = []
-        img_patches = images.data.unfold(1, 3, 3).unfold(2, data_cfg['crop_width'], data_cfg['crop_height']).\
-            unfold(3, data_cfg['crop_width'], data_cfg['crop_height'])
-        gt_dmap_patches = gt_dmaps.data.unfold(1, 1, 1).unfold(2, data_cfg['crop_width'], data_cfg['crop_height']).\
-            unfold(3, data_cfg['crop_width'], data_cfg['crop_height'])
-        counter_patches = 0
+        # Batch size in val mode is always 1
+        image = images.squeeze(dim=0)
+        gt_dmap = gt_dmaps.squeeze(dim=0)
 
-        img_loss, img_mae, img_mse, img_are, img_ssim = 0.0, 0.0, 0.0, 0.0, 0.0
-        for i in range(img_patches.shape[0]):
-            for j in range(img_patches.shape[1]):
-                for r in range(img_patches.shape[2]):
-                    for c in range(img_patches.shape[3]):
-                        img_patch = img_patches[i, j, r, c, ...]
-                        gt_dmap_patch = gt_dmap_patches[i, j, r, c, ...]
+        # Image and dmap are divided in patches
+        img_w, img_h = image.shape[2], image.shape[1]
+        num_h_patches, num_v_patches = math.ceil(img_w / stride_w), math.ceil(img_h / stride_h)
+        img_w_padded = (num_h_patches - math.floor(img_w / stride_w)) * (
+                    stride_w * num_h_patches + (data_cfg['crop_width'] - stride_w))
+        img_h_padded = (num_v_patches - math.floor(img_h / stride_h)) * (
+                    stride_h * num_v_patches + (data_cfg['crop_height'] - stride_h))
+        padded_image, padded_gt_dmap = PadToSize()(
+            image=image,
+            min_width=img_w_padded,
+            min_height=img_h_padded,
+            dmap=gt_dmap
+        )
 
-                        # Computing dmap for the patch
-                        pred_dmap_patch = model(img_patch.unsqueeze(dim=0).to(device))
-                        dmap_output_patches.append(pred_dmap_patch.squeeze(dim=0))
+        normalization_map = torch.zeros_like(padded_image)
+        reconstructed_image = torch.zeros_like(padded_image)
+        reconstructed_dmap = torch.zeros_like(padded_gt_dmap)
 
-                        # Updating metrics for the patch
-                        patch_loss = torch.nn.MSELoss()(pred_dmap_patch, gt_dmap_patch.unsqueeze(dim=0))
-                        img_loss += patch_loss.item()
-                        patch_mae = abs(pred_dmap_patch.sum() - gt_dmap_patch.sum())
-                        patch_mse = (pred_dmap_patch.sum() - gt_dmap_patch.sum()) ** 2
-                        patch_are = abs(pred_dmap_patch.sum() - gt_dmap_patch.sum()) / \
-                                    torch.clamp(gt_dmap_patch.sum(), min=1)
-                        img_mae += patch_mae.item()
-                        img_mse += patch_mse.item()
-                        img_are += patch_are.item()
-                        patch_ssim = ssim.ssim(gt_dmap_patch.unsqueeze(dim=0), pred_dmap_patch).item()
-                        img_ssim += patch_ssim
+        for i in range(0, img_h, stride_h):
+            for j in range(0, img_w, stride_w):
+                image_patch, gt_dmap_patch = CropToFixedSize()(
+                    padded_image,
+                    x_min=j,
+                    y_min=i,
+                    x_max=j + data_cfg['crop_width'],
+                    y_max=i + data_cfg['crop_height'],
+                    dmap=copy.deepcopy(padded_gt_dmap)
+                )
 
-                        counter_patches += 1
+                reconstructed_image[:, i:i + data_cfg['crop_height'], j:j + data_cfg['crop_width']] += image_patch
+                normalization_map[:, i:i + data_cfg['crop_height'], j:j + data_cfg['crop_width']] += 1.0
 
-        img_are /= counter_patches
-        img_ssim /= counter_patches
+                # Computing dmap for the patch
+                pred_dmap_patch = model(image_patch.unsqueeze(dim=0).to(device))
+                if model_cfg['name'] == "UNet":
+                    pred_dmap_patch /= 1000
+
+                reconstructed_dmap[:, i:i + data_cfg['crop_height'], j:j + data_cfg['crop_width']] += pred_dmap_patch.squeeze(dim=0)
+
+        reconstructed_image /= normalization_map
+        reconstructed_dmap /= normalization_map[0].unsqueeze(dim=0)
+
+        # Updating metrics
+        loss = torch.nn.MSELoss()(reconstructed_dmap.unsqueeze(dim=0), padded_gt_dmap.unsqueeze(dim=0))
+        img_loss = loss.item()
+        img_mae = abs(reconstructed_dmap.sum() - padded_gt_dmap.sum()).item()
+        img_mse = ((reconstructed_dmap.sum() - padded_gt_dmap.sum()) ** 2).item()
+        img_are = (abs(reconstructed_dmap.sum() - padded_gt_dmap.sum()) / torch.clamp(padded_gt_dmap.sum(), min=1)).item()
+        img_ssim = ssim.ssim(padded_gt_dmap.unsqueeze(dim=0), reconstructed_dmap.unsqueeze(dim=0)).item()
 
         if train_cfg['debug'] and epoch % train_cfg['debug_freq'] == 0:
             debug_dir = os.path.join(tensorboard_writer.get_logdir(), 'output_debug')
             if not os.path.exists(debug_dir):
                 os.makedirs(debug_dir)
-            # Reconstructing predicted dmap
-            dmap_output_patches = torch.stack(dmap_output_patches)
-            rec_pred_dmap = dmap_output_patches.view(
-                gt_dmap_patches.shape[2], gt_dmap_patches.shape[3], *gt_dmap_patches.size()[-3:])
-            rec_pred_dmap = rec_pred_dmap.permute(2, 0, 3, 1, 4).contiguous()
-            rec_pred_dmap = rec_pred_dmap.view(
-                rec_pred_dmap.shape[0], rec_pred_dmap.shape[1] * rec_pred_dmap.shape[2],
-                rec_pred_dmap.shape[3] * rec_pred_dmap.shape[4])
-            Image.fromarray(normalize(rec_pred_dmap[0].cpu().numpy()).astype('uint8')).save(
-                os.path.join(debug_dir, "reconstructed_{}_dmap_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch)))
+            num_nets = torch.sum(reconstructed_dmap)
+            pil_reconstructed_dmap = Image.fromarray(
+                normalize(reconstructed_dmap.squeeze(dim=0).cpu().numpy()).astype('uint8'))
+            draw = ImageDraw.Draw(pil_reconstructed_dmap)
+            # Add text to image
+            text = "Num of Nets: {}".format(num_nets)
+            font_path = "./font/LEMONMILK-RegularItalic.otf"
+            font = ImageFont.truetype(font_path, 100)
+            draw.text((75, 75), text=text, font=font, fill=191)
+            pil_reconstructed_dmap.save(
+                os.path.join(debug_dir, "reconstructed_{}_dmap_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch))
+            )
 
         # Updating errors
         epoch_loss += img_loss
@@ -209,7 +235,7 @@ def main(args):
     best_validation_mae = float(sys.maxsize)
     best_validation_mse = float(sys.maxsize)
     best_validation_are = float(sys.maxsize)
-    best_validation_ssim = float(sys.maxsize)
+    best_validation_ssim = 0.0
     min_mae_epoch, min_mse_epoch, min_are_epoch, best_ssim_epoch = -1, -1, -1, -1
 
     #######################
@@ -310,6 +336,8 @@ def main(args):
 
             # Computing pred dmaps
             pred_dmaps = model(images)
+            if model_name == "UNet":
+                pred_dmaps /= 1000
 
             # Computing loss and backwarding it
             if train_cfg['loss'] == "MeanSquaredError":
@@ -340,7 +368,7 @@ def main(args):
         # Validating
         if (epoch % train_cfg['val_freq'] == 0):
             epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim = \
-                validate(model, val_dataloader, device, train_cfg, data_cfg, epoch, writer)
+                validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, epoch, writer)
 
             # Updating tensorboard
             writer.add_scalar('Validation on {}/MAE'.format(dataset_name), epoch_mae, epoch)
@@ -377,7 +405,7 @@ def main(args):
                     'epoch': epoch,
                     'best_are': epoch_are,
                 }, writer.get_logdir(), best_model=dataset_name + "_are")
-            if epoch_ssim < best_validation_ssim:
+            if epoch_ssim > best_validation_ssim:
                 best_validation_ssim = epoch_ssim
                 best_ssim_epoch = epoch
                 save_checkpoint({

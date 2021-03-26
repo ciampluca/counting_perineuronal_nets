@@ -22,7 +22,7 @@ model:
     coco_model_pretrained  : true   # on COCO; if true, no need to load the pretrained backbone
     cache_folder           : "./model_zoo"
     max_dets_per_image     : 200
-    nms                    : 0.7
+    nms                    : 0.3
     det_thresh             : 0.05
     det_thresh_for_counting: 0.3
 
@@ -35,7 +35,7 @@ training:
     seed                : 10
     checkpoint          : ""      # checkpoint to resume, useful for starting from an interrupted training
     pretrained_model    : ""      # pre-trained model to resume
-    tensorboard_filename: "faster_rcnn_resnet50_coco_PerineuralNets_640-640-specular_nms07_detThresh4Counting-03_bs8"
+    tensorboard_filename: "faster_rcnn_resnet50_coco_PerineuralNets_640-640-specular_nms03_detThresh4Counting-03_bs8"
     lr                  : 0.005
     momentum            : 0.9
     weight_decay        : 0.0005

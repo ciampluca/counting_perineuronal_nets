@@ -1,9 +1,10 @@
 import os
 from tifffile import imread
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import tqdm
 import math
+import copy
 
 import torch
 from torchvision.datasets import VisionDataset
@@ -154,7 +155,7 @@ if __name__ == "__main__":
     all_frames = ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
     if SPECULAR_SPLIT:
         train_frames = val_frames = all_frames
-    data_root = "/mnt/Dati_SSD_2/datasets/perineural_nets"
+    data_root = "/home/luca/luca-cnr/mnt/Dati_SSD_2/datasets/perineural_nets"
     CROP_WIDTH = 1024
     CROP_HEIGHT = 1024
     STRIDE_W, STRIDE_H = CROP_WIDTH, CROP_HEIGHT
@@ -228,80 +229,71 @@ if __name__ == "__main__":
         gt_dmaps = targets['dmap'].to(DEVICE)
         img_name = val_dataset.image_files[targets['img_id']]
         print(img_name)
-        to_pil_image(images.squeeze(dim=0)).save("./output/dataloading/original_{}.png".format(img_name.rsplit(".", 1)[0]))
+        # Batch size in val mode is always 1
+        image = images.squeeze(dim=0)
+        gt_dmap = gt_dmaps.squeeze(dim=0)
+        to_pil_image(image).save("./output/dataloading/original_{}.png".format(img_name.rsplit(".", 1)[0]))
+        num_nets = torch.sum(gt_dmap)
+        pil_den_map = Image.fromarray(normalize(copy.deepcopy(gt_dmap).squeeze(dim=0).cpu().numpy()).astype('uint8'))
+        draw = ImageDraw.Draw(pil_den_map)
+        # Add text to image
+        text = "Num of Nets: {}".format(num_nets)
+        font_path = "./font/LEMONMILK-RegularItalic.otf"
+        font = ImageFont.truetype(font_path, 100)
+        draw.text((75, 75), text=text, font=font, fill=191)
+        pil_den_map.save(
+            "./output/dataloading/original_{}_dmap.png".format(img_name.rsplit(".", 1)[0])
+        )
 
-        # Image is divided in patches
-        output_patches, output_normalization_map_patches = [], []
-
-        img_w, img_h = images.shape[3], images.shape[2]
+        # Image and dmap are divided in patches
+        img_w, img_h = image.shape[2], image.shape[1]
         num_h_patches, num_v_patches = math.ceil(img_w / STRIDE_W), math.ceil(img_h / STRIDE_H)
         img_w_padded = (num_h_patches - math.floor(img_w / STRIDE_W)) * (STRIDE_W * num_h_patches + (CROP_WIDTH-STRIDE_W))
         img_h_padded = (num_v_patches - math.floor(img_h / STRIDE_H)) * (STRIDE_H * num_v_patches + (CROP_HEIGHT-STRIDE_H))
-        padded_images, padded_gt_dmaps = custom_T.PadToSize()(
-            image=images.squeeze(dim=0),
+        padded_image, padded_gt_dmap = custom_T.PadToSize()(
+            image=image,
             min_width=img_w_padded,
             min_height=img_h_padded,
-            dmap=gt_dmaps.squeeze(dim=0)
+            dmap=gt_dmap
         )
 
-        normalization_map = torch.ones_like(padded_images)
-        patches = padded_images.unsqueeze(dim=0).data.unfold(1, 3, 3).unfold(2, CROP_HEIGHT, STRIDE_H).unfold(3, CROP_WIDTH, STRIDE_W)
-        normalization_map_patches = normalization_map.unsqueeze(dim=0).data.unfold(1, 3, 3).unfold(2, CROP_HEIGHT, STRIDE_H).unfold(3, CROP_WIDTH, STRIDE_W)
-        counter_patches = 1
-        for i in range(patches.shape[0]):
-            for j in range(patches.shape[1]):
-                for r in range(patches.shape[2]):
-                    for c in range(patches.shape[3]):
-                        img_patch = patches[i, j, r, c, ...]
-                        n_map_patch = normalization_map_patches[i, j, r, c, ...]
-                        output_patches.append(img_patch)
-                        output_normalization_map_patches.append(n_map_patch)
-                        to_pil_image(img_patch).save(
-                            "./output/dataloading/{}_{}.png".format(img_name.rsplit(".", 1)[0], counter_patches))
-                        counter_patches += 1
-        # Reconstructing image
-        output_patches = torch.stack(output_patches)
-        output_normalization_map_patches = torch.stack(output_normalization_map_patches)
-        rec_image = output_patches.view(patches.shape[0], patches.shape[2], patches.shape[3], *patches.size()[-3:])
-        rec_image = rec_image.permute(0, 3, 4, 5, 1, 2).contiguous()
-        rec_image = rec_image.view(rec_image.shape[0], rec_image.shape[1], rec_image.shape[2] * rec_image.shape[3],
-                                   rec_image.shape[4] * rec_image.shape[5])
-        rec_image = rec_image.view(rec_image.shape[0], rec_image.shape[1] * rec_image.shape[2], -1)
-        rec_image = nnf.fold(
-            rec_image, output_size=(img_h_padded, img_w_padded), kernel_size=(CROP_WIDTH, CROP_HEIGHT), stride=(STRIDE_W, STRIDE_H))
+        normalization_map = torch.zeros_like(padded_image)
+        reconstructed_image = torch.zeros_like(padded_image)
+        reconstructed_dmap = torch.zeros_like(padded_gt_dmap)
 
-        norm_map = nnf.fold(nnf.unfold(torch.ones_like(padded_images).unsqueeze(dim=0), CROP_WIDTH, stride=STRIDE_W), padded_images.shape[-2:],
-                          CROP_WIDTH, stride=STRIDE_W)
-        rec_image /= norm_map
+        for i in range(0, img_h, STRIDE_H):
+            for j in range(0, img_w, STRIDE_W):
+                image_patch, dmap_patch = custom_T.CropToFixedSize()(
+                    padded_image,
+                    x_min=j,
+                    y_min=i,
+                    x_max=j + CROP_WIDTH,
+                    y_max=i + CROP_HEIGHT,
+                    dmap=copy.deepcopy(padded_gt_dmap)
+                )
 
-        to_pil_image(rec_image.squeeze(dim=0)).save("./output/dataloading/reconstructed_{}.png".format(img_name.rsplit(".", 1)[0]))
+                reconstructed_image[:, i:i + CROP_HEIGHT, j:j + CROP_WIDTH] += image_patch
+                reconstructed_dmap[:, i:i + CROP_HEIGHT, j:j + CROP_WIDTH] += dmap_patch
+                normalization_map[:, i:i + CROP_HEIGHT, j:j + CROP_WIDTH] += 1.0
 
-        # The same for the target...
-        output_patches = []
-        patches = padded_gt_dmaps.unsqueeze(dim=0).data.unfold(1, 1, 1).unfold(2, CROP_WIDTH, STRIDE_W).unfold(3, CROP_HEIGHT, STRIDE_H)
-        counter_patches = 1
-        for i in range(patches.shape[0]):
-            for j in range(patches.shape[1]):
-                for r in range(patches.shape[2]):
-                    for c in range(patches.shape[3]):
-                        target_patch = patches[i, j, r, c, ...]
-                        output_patches.append(target_patch)
-                        Image.fromarray(normalize(target_patch[0].cpu().numpy()).astype('uint8')).save(
-                            "./output/dataloading/{}_{}_dmap.png".format(img_name.rsplit(".", 1)[0], counter_patches)
-                        )
-                        counter_patches += 1
+        reconstructed_image /= normalization_map
+        reconstructed_dmap /= normalization_map[0].unsqueeze(dim=0)
 
-        output_patches = torch.stack(output_patches)
-        rec_target = output_patches.view(patches.shape[0], patches.shape[2], patches.shape[3], *patches.size()[-3:])
-        rec_target = rec_target.permute(0, 3, 4, 5, 1, 2).contiguous()
-        rec_target = rec_target.view(rec_target.shape[0], rec_target.shape[1],
-                                     rec_target.shape[2] * rec_target.shape[3], rec_target.shape[4] * rec_target.shape[5])
-        rec_target = rec_target.view(rec_target.shape[0], rec_target.shape[1] * rec_target.shape[2], -1)
-        rec_target = nnf.fold(
-            rec_target, output_size=(img_h_padded, img_w_padded), kernel_size=(CROP_WIDTH, CROP_HEIGHT),
-            stride=(STRIDE_W, STRIDE_H))
+        to_pil_image(reconstructed_image).save(
+            "./output/dataloading/reconstructed_{}.png".format(img_name.rsplit(".", 1)[0]))
+        num_nets = torch.sum(reconstructed_dmap)
+        pil_reconstructed_dmap = Image.fromarray(normalize(reconstructed_dmap.squeeze(dim=0).cpu().numpy()).astype('uint8'))
+        draw = ImageDraw.Draw(pil_reconstructed_dmap)
+        # Add text to image
+        text = "Num of Nets: {}".format(num_nets)
+        font_path = "./font/LEMONMILK-RegularItalic.otf"
+        font = ImageFont.truetype(font_path, 100)
+        draw.text((75, 75), text=text, font=font, fill=191)
+        pil_reconstructed_dmap.save(
+            "./output/dataloading/reconstructed_{}_dmap.png".format(img_name.rsplit(".", 1)[0])
+        )
 
-        Image.fromarray(normalize(rec_target.squeeze(dim=0).squeeze(dim=0).cpu().numpy()).astype('uint8')). \
-            save(os.path.join("./output/dataloading", "reconstructed_" + img_name.rsplit(".", 1)[0] + "_dmap.png"))
+
+
 
 

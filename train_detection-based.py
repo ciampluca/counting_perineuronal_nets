@@ -5,23 +5,25 @@ from shutil import copyfile
 import sys
 import math
 import copy
-from PIL import ImageDraw
+from PIL import ImageDraw, Image, ImageFont
 import tqdm
 import timeit
+import numpy as np
 
 import torch
 import torchvision
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torch.utils.data import DataLoader
-from torchvision.transforms.functional import to_pil_image, to_tensor
+from torchvision.transforms.functional import to_pil_image
 from torchvision.models.detection.rpn import AnchorGenerator
+from torchvision.ops import boxes as box_ops
 
 from datasets.perineural_nets_bbox_dataset import PerineuralNetsBBoxDataset
 import utils.misc as utils
 from utils.misc import random_seed, get_bbox_transforms, save_checkpoint, check_empty_images, coco_evaluate, compute_map, compute_dice_and_jaccard
 from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet101_fpn
-from utils.transforms_bbs import CropToFixedSize
+from utils.transforms_bbs import CropToFixedSize, PadToSize
 
 
 def get_model_detection(num_classes, cfg, load_custom_model=False):
@@ -155,33 +157,54 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, tens
     epoch_dets_for_coco_eval = []
     epoch_dets_for_map_eval = {}
 
+    stride_w, stride_h = data_cfg['crop_width'], data_cfg['crop_height']
+    if data_cfg['overlap_val_patches']:
+        stride_w, stride_h = data_cfg['crop_width'] - data_cfg['overlap_val_patches'], data_cfg['crop_height'] - data_cfg['overlap_val_patches']
+
     for images, targets in tqdm.tqdm(val_dataloader):
         images = list(image.to(device) for image in images)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
-        # Image is divided in patches
-        img_output_patches_with_bbs = []
         for image, target in zip(images, targets):
             img_gt_num = len(target['boxes'])
             img_id = target['image_id'].item()
             img_name = val_dataloader.dataset.image_files[img_id]
+
+            # Image is divided in patches
             img_w, img_h = image.shape[2], image.shape[1]
-            counter_patches = 0
             img_det_num = 0
             img_det_bbs, img_det_scores, img_det_labels = [], [], []
 
-            for i in range(0, img_h, data_cfg['crop_height']):
-                for j in range(0, img_w, data_cfg['crop_width']):
-                    counter_patches += 1
+            num_h_patches, num_v_patches = math.ceil(img_w / stride_w), math.ceil(img_h / stride_h)
+            img_w_padded = (num_h_patches - math.floor(img_w / stride_w)) * (
+                    stride_w * num_h_patches + (data_cfg['crop_width'] - stride_w))
+            img_h_padded = (num_v_patches - math.floor(img_h / stride_h)) * (
+                    stride_h * num_v_patches + (data_cfg['crop_height'] - stride_h))
+
+            padded_image, padded_target = PadToSize()(
+                image=image,
+                min_width=img_w_padded,
+                min_height=img_h_padded,
+                target=copy.deepcopy(target)
+            )
+
+            normalization_map = torch.zeros_like(padded_image)
+            reconstructed_image = torch.zeros_like(padded_image)
+
+            for i in range(0, img_h, stride_h):
+                for j in range(0, img_w, stride_w):
                     image_patch, target_patch = CropToFixedSize()(
-                        image,
+                        padded_image,
                         x_min=j,
                         y_min=i,
                         x_max=j + data_cfg['crop_width'],
                         y_max=i + data_cfg['crop_height'],
                         min_visibility=data_cfg['bbox_discard_min_vis'],
-                        target=copy.deepcopy(target),
+                        target=copy.deepcopy(padded_target),
                     )
+
+                    reconstructed_image[:, i:i + data_cfg['crop_height'], j:j + data_cfg['crop_width']] += image_patch
+                    normalization_map[:, i:i + data_cfg['crop_height'], j:j + data_cfg['crop_width']] += 1.0
 
                     det_outputs = model([image_patch.to(device)])
 
@@ -189,53 +212,61 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, tens
                                           det_outputs[0]['scores'].data.cpu().tolist(), \
                                           det_outputs[0]['labels'].data.cpu().tolist()
 
-                    for det_bb, det_score in zip(bbs, scores):
-                        if float(det_score) > model_cfg['det_thresh_for_counting']:
-                            img_det_num += 1
-
                     img_det_bbs.extend([[bb[0] + j, bb[1] + i, bb[2] + j, bb[3] + i] for bb in bbs])
                     img_det_labels.extend(labels)
                     img_det_scores.extend(scores)
 
-                    if train_cfg['debug'] and epoch % train_cfg['debug_freq'] == 0:
-                        # Drawing bbs on the patch and store it
-                        pil_image = to_pil_image(image_patch)
-                        draw = ImageDraw.Draw(pil_image)
-                        for gt_bb in target_patch['boxes']:  # gt bbs
-                            draw.rectangle(
-                                [gt_bb[0].cpu().item(), gt_bb[1].cpu().item(), gt_bb[2].cpu().item(),
-                                 gt_bb[3].cpu().item()],
-                                outline='red',
-                                width=3,
-                            )
-                        for det_bb, det_score in zip(bbs, scores):
-                            if float(det_score) > model_cfg['det_thresh_for_counting']:
-                                draw.rectangle(
-                                    [det_bb[0], det_bb[1], det_bb[2], det_bb[3]],
-                                    outline='green',
-                                    width=3,
-                                )
-                        img_output_patches_with_bbs.append(to_tensor(pil_image))
+            reconstructed_image /= normalization_map
+            overlapping_map = np.where(normalization_map[0].cpu().numpy() != 1.0, 1, 0)
+
+            # Performing filtering of the bbs in the overlapped areas using nms
+            keep_overlap = []
+            for i, det_bb in enumerate(img_det_bbs):
+                bb_w, bb_h = det_bb[2] - det_bb[0], det_bb[3] - det_bb[1]
+                x_c, y_c = int(det_bb[0] + (bb_w/2)), int(det_bb[1] + (bb_h/2))
+                if overlapping_map[y_c, x_c] == 1:
+                    keep_overlap.append(i)
+
+            bbs_in_overlapped_areas = [img_det_bbs[i] for i in keep_overlap]
+            scores_in_overlapped_areas = [img_det_scores[i] for i in keep_overlap]
+            labels_in_overlapped_areas = [img_det_labels[i] for i in keep_overlap]
+            final_bbs = [bb for i, bb in enumerate(img_det_bbs) if i not in keep_overlap]
+            final_scores = [score for i, score in enumerate(img_det_scores) if i not in keep_overlap]
+            final_labels = [label for i, label in enumerate(img_det_labels) if i not in keep_overlap]
+
+            # non-maximum suppression
+            keep_overlap = box_ops.nms(
+                torch.as_tensor(bbs_in_overlapped_areas, dtype=torch.float32),
+                torch.as_tensor(scores_in_overlapped_areas, dtype=torch.float32),
+                iou_threshold=model_cfg['nms']
+            )
+
+            bbs_in_overlapped_areas = [bbs_in_overlapped_areas[i] for i in keep_overlap]
+            final_bbs.extend(bbs_in_overlapped_areas)
+            scores_in_overlapped_areas = [scores_in_overlapped_areas[i] for i in keep_overlap]
+            final_scores.extend(scores_in_overlapped_areas)
+            labels_in_overlapped_areas = [labels_in_overlapped_areas[i] for i in keep_overlap]
+            final_labels.extend(labels_in_overlapped_areas)
+
+            for det_bb, det_score in zip(final_bbs, final_scores):
+                if float(det_score) > model_cfg['det_thresh_for_counting']:
+                    img_det_num += 1
 
             if train_cfg['debug'] and epoch % train_cfg['debug_freq'] == 0:
                 debug_dir = os.path.join(tensorboard_writer.get_logdir(), 'output_debug')
                 if not os.path.exists(debug_dir):
                     os.makedirs(debug_dir)
-                img_output_patches_with_bbs = torch.stack(img_output_patches_with_bbs)
-                rec_image_with_bbs = img_output_patches_with_bbs.view(
-                    int(img_h / data_cfg['crop_height']),
-                    int(img_w / data_cfg['crop_width']),
-                    *img_output_patches_with_bbs.size()[-3:]
-                )
-                permuted_rec_image_with_bbs = rec_image_with_bbs.permute(2, 0, 3, 1, 4).contiguous()
-                permuted_rec_image_with_bbs = permuted_rec_image_with_bbs.view(
-                     permuted_rec_image_with_bbs.shape[0],
-                     permuted_rec_image_with_bbs.shape[1] *
-                     permuted_rec_image_with_bbs.shape[2],
-                     permuted_rec_image_with_bbs.shape[3] *
-                     permuted_rec_image_with_bbs.shape[4]
-                )
-                to_pil_image(permuted_rec_image_with_bbs).save(
+                # Drawing det bbs
+                pil_reconstructed_image = to_pil_image(reconstructed_image)
+                draw = ImageDraw.Draw(pil_reconstructed_image)
+                for bb in final_bbs:
+                    draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='red', width=3)
+                # Add text to image
+                text = "Num of Nets: {}".format(img_det_num)
+                font_path = "./font/LEMONMILK-RegularItalic.otf"
+                font = ImageFont.truetype(font_path, 100)
+                draw.text((75, 75), text=text, font=font, fill=(0, 191, 255))
+                pil_reconstructed_image.save(
                     os.path.join(debug_dir, "reconstructed_{}_with_bbs_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch)))
 
             # Updating errors

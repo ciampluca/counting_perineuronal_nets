@@ -1,15 +1,17 @@
 import os
 from tifffile import imread
 import numpy as np
-from PIL import ImageDraw, Image
+from PIL import ImageDraw, Image, ImageFont
 import copy
 import tqdm
 import albumentations.augmentations.bbox_utils as albumentations_utils
+import math
 
 import torch
 from torchvision.datasets import VisionDataset
 from torch.utils.data import DataLoader
-from torchvision.transforms.functional import to_pil_image, to_tensor
+from torchvision.transforms.functional import to_pil_image
+from torchvision.ops import boxes as box_ops
 
 from utils import transforms_bbs as custom_T
 
@@ -98,9 +100,9 @@ class PerineuralNetsBBoxDataset(VisionDataset):
         # Converting everything related to the target into a torch.Tensor
         bounding_boxes = torch.as_tensor(bounding_boxes, dtype=torch.float32)
         bounding_boxes_areas = torch.as_tensor(bounding_boxes_areas, dtype=torch.float32)
-        labels = torch.ones((len(bounding_boxes),), dtype=torch.int64)  # there is only one class
+        labels = torch.ones((len(bounding_boxes),), dtype=torch.int16)  # there is only one class
         # suppose all instances are not crowd
-        iscrowd = torch.zeros((len(bounding_boxes),), dtype=torch.int64)
+        iscrowd = torch.zeros((len(bounding_boxes),), dtype=torch.int16)
 
         # Building target
         target = {
@@ -201,7 +203,10 @@ if __name__ == "__main__":
     all_frames = ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
     if SPECULAR_SPLIT:
         train_frames = val_frames = all_frames
-    OVERLAP_VAL_PATCHES = 120
+    STRIDE_W, STRIDE_H = CROP_WIDTH, CROP_HEIGHT
+    OVERLAPPING_PATCHES = True
+    if OVERLAPPING_PATCHES:
+        STRIDE_W, STRIDE_H = CROP_WIDTH - 120, CROP_HEIGHT - 120
 
     transforms = custom_T.Compose([
         custom_T.RandomHorizontalFlip(),
@@ -210,7 +215,7 @@ if __name__ == "__main__":
     ])
 
     val_transforms = custom_T.Compose([
-        custom_T.PadToResizeFactor(resize_factor=CROP_WIDTH),
+        # custom_T.PadToResizeFactor(resize_factor=CROP_WIDTH),
         custom_T.ToTensor(),
     ])
 
@@ -278,45 +283,81 @@ if __name__ == "__main__":
             pil_image = to_pil_image(image.cpu())
             draw = ImageDraw.Draw(pil_image)
             for bb in bboxes:
-                draw.rectangle([bb[0], bb[1], bb[2], bb[3]])
-            pil_image.save("./output/dataloading/{}_withBBs.png".format(img_name.rsplit(".", 1)[0]))
+                draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='red', width=3)
+            pil_image.save("./output/dataloading/original_{}_withBBs.png".format(img_name.rsplit(".", 1)[0]))
 
             # Image is divided in patches
             img_w, img_h = image.shape[2], image.shape[1]
-            output_patches, output_patches_withBBs = [], []
-            counter_patches = 1
-            for i in range(0, img_h, CROP_HEIGHT):
-                for j in range(0, img_w, CROP_WIDTH):
+
+            num_h_patches, num_v_patches = math.ceil(img_w / STRIDE_W), math.ceil(img_h / STRIDE_H)
+            img_w_padded = (num_h_patches - math.floor(img_w / STRIDE_W)) * (
+                        STRIDE_W * num_h_patches + (CROP_WIDTH - STRIDE_W))
+            img_h_padded = (num_v_patches - math.floor(img_h / STRIDE_H)) * (
+                        STRIDE_H * num_v_patches + (CROP_HEIGHT - STRIDE_H))
+            padded_image, padded_target = custom_T.PadToSize()(
+                image=image,
+                min_width=img_w_padded,
+                min_height=img_h_padded,
+                target=copy.deepcopy(target)
+            )
+
+            normalization_map = torch.zeros_like(padded_image)
+            overlapping_map = np.zeros((normalization_map.shape[1], normalization_map.shape[2]), dtype=np.uint8)
+            reconstructed_image = torch.zeros_like(padded_image)
+
+            for i in range(0, img_h, STRIDE_H):
+                for j in range(0, img_w, STRIDE_W):
                     image_patch, target_patch = custom_T.CropToFixedSize()(
-                        image,
+                        padded_image,
                         x_min=j,
                         y_min=i,
                         x_max=j + CROP_WIDTH,
                         y_max=i + CROP_HEIGHT,
                         min_visibility=0.5,
-                        target=copy.deepcopy(target)
+                        target=copy.deepcopy(padded_target)
                     )
-                    output_patches.append(image_patch)
 
-                    pil_image = to_pil_image(image_patch)
-                    draw = ImageDraw.Draw(pil_image)
-                    for bb in target_patch['boxes']:
-                        draw.rectangle([bb[0].item(), bb[1].item(), bb[2].item(), bb[3].item()], outline='red', width=3)
-                    output_patches_withBBs.append(to_tensor(pil_image))
-                    pil_image.save(
-                        "./output/dataloading/{}_{}_withBBs.png".format(img_name.rsplit(".", 1)[0], counter_patches))
-                    counter_patches += 1
+                    reconstructed_image[:, i:i+CROP_HEIGHT, j:j+CROP_WIDTH] += image_patch
+                    normalization_map[:, i:i+CROP_HEIGHT, j:j+CROP_WIDTH] += 1.0
 
-            # Reconstructing image with BBs
-            output_patches_withBBs = torch.stack(output_patches_withBBs)
-            rec_image_withBBs = output_patches_withBBs.view(int(img_h / CROP_HEIGHT), int(img_w / CROP_WIDTH),
-                                            *output_patches_withBBs.size()[-3:])
-            permuted_rec_image_withBBs = rec_image_withBBs.permute(2, 0, 3, 1, 4).contiguous()
-            permuted_rec_image_withBBs = permuted_rec_image_withBBs.view(permuted_rec_image_withBBs.shape[0],
-                                                         permuted_rec_image_withBBs.shape[1] * permuted_rec_image_withBBs.shape[2],
-                                                         permuted_rec_image_withBBs.shape[3] * permuted_rec_image_withBBs.shape[4])
-            to_pil_image(permuted_rec_image_withBBs).save(
-                "./output/dataloading/reconstructed_{}_withBBS.png".format(img_name.rsplit(".", 1)[0]))
+            reconstructed_image /= normalization_map
+            overlapping_map = np.where(normalization_map[0].cpu().numpy() != 1.0, 1, 0)
+
+            gt_bbs = padded_target['boxes'].cpu().tolist()
+
+            # Perform filtering of the bbs in the overlapped areas, for example nms
+            # in this case we are using gt bbs, just for testing
+            keep = []
+            for i, gt_bb in enumerate(gt_bbs):
+                bb_w, bb_h = gt_bb[2] - gt_bb[0], gt_bb[3] - gt_bb[1]
+                x_c, y_c = int(gt_bb[0] + (bb_w/2)), int(gt_bb[1] + (bb_h/2))
+                if overlapping_map[y_c, x_c] == 1:
+                    keep.append(i)
+            bbs_in_overlapped_areas = [gt_bbs[i] for i in keep]
+            final_bbs = [bb for i, bb in enumerate(gt_bbs) if i not in keep]
+
+            fake_scores = torch.ones(len(bbs_in_overlapped_areas), dtype=torch.float32)
+            keep = box_ops.nms(
+                torch.as_tensor(bbs_in_overlapped_areas, dtype=torch.float32),
+                fake_scores,
+                iou_threshold=0.001,
+            )
+            bbs_in_overlapped_areas = [bbs_in_overlapped_areas[i] for i in keep]
+            final_bbs.extend(bbs_in_overlapped_areas)
+
+            pil_reconstructed_image = to_pil_image(reconstructed_image)
+            draw = ImageDraw.Draw(pil_reconstructed_image)
+            for bb in final_bbs:
+                draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='red', width=3)
+            # Add text to image
+            text = "Num of Nets: {}".format(len(final_bbs))
+            font_path = "./font/LEMONMILK-RegularItalic.otf"
+            font = ImageFont.truetype(font_path, 100)
+            draw.text((75, 75), text=text, font=font, fill=(0, 191, 255))
+            pil_reconstructed_image.save(
+                "./output/dataloading/reconstructed_{}_witBBs.png".format(img_name.rsplit(".", 1)[0]))
+
+
 
 
 
