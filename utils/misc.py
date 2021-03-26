@@ -29,8 +29,8 @@ def get_dmap_transforms(train=False, crop_width=1920, crop_height=1080):
         transforms.append(dmap_custom_T.RandomCrop(width=crop_width, height=crop_height))
         transforms.append(dmap_custom_T.PadToResizeFactor())
 
-    if not train:
-        transforms.append(dmap_custom_T.PadToResizeFactor(resize_factor=crop_width))
+    # if not train:
+    #     transforms.append(dmap_custom_T.PadToResizeFactor(resize_factor=crop_width))
 
     transforms.append(dmap_custom_T.ToTensor())
 
