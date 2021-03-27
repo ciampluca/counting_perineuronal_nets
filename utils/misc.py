@@ -459,7 +459,7 @@ def compute_dice_and_jaccard(dets_and_gts_dict, smooth=1):
 
         det_seg_map = np.zeros((img_h, img_w), dtype=np.float32)
         for det_bb, score in zip(img_dets_and_gts['pred_bbs'], img_dets_and_gts['scores']):
-            x0, y0, x1, y1 = det_bb.astype(int)
+            x0, y0, x1, y1 = int(det_bb[0]), int(det_bb[1]), int(det_bb[2]), int(det_bb[3])
             det_seg_map[y0:y1 + 1, x0:x1 + 1] = np.maximum(det_seg_map[y0:y1 + 1, x0:x1 + 1], score)
 
         intersection = np.sum(gt_seg_map * det_seg_map)
