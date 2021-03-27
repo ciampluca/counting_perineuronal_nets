@@ -11,11 +11,11 @@ dataset:
     percentage: null
     train_with_precomputed_patches: true
     specular_split: true
-    overlap_val_patches: 120    # in pixel
+    overlap_val_patches: 0    # in pixel
 
 
 model:
-    name                 : "UNet"   # can be UNet or CSRNet
+    name                 : "CSRNet"   # can be UNet or CSRNet
     device               : "cuda"    # cpu or cuda
     cache_folder         : "./model_zoo"
 
@@ -24,11 +24,11 @@ training:
     batch_size          : 2
     val_batch_size      : 1
     num_workers         : 4
-    epochs              : 300
+    epochs              : 100
     seed                : 10
-    tensorboard_filename: "UNet_PerineuralNets_640-640-specular_MSE_bs2"
+    tensorboard_filename: "CSRNet_PerineuralNets_640-640-specular_valPatchesOverlap-0_MSE_bs2"
     lr                  : 0.00001
-    lr_step_size        : [100, 200, 300]
+    lr_step_size        : [50, 75, 100]
     lr_gamma            : 0.1
     momentum            : 0.95
     weights_decay       : 0.0005

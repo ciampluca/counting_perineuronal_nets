@@ -12,7 +12,7 @@ dataset:
     specular_split: true
     crop_width: 640
     crop_height: 640
-    overlap_val_patches: 120    # in pixel
+    overlap_val_patches: 0    # in pixel
 
 
 model:
@@ -35,7 +35,7 @@ training:
     seed                : 10
     checkpoint          : ""      # checkpoint to resume, useful for starting from an interrupted training
     pretrained_model    : ""      # pre-trained model to resume
-    tensorboard_filename: "faster_rcnn_resnet50_coco_PerineuralNets_640-640-specular_nms03_detThresh4Counting-03_bs8"
+    tensorboard_filename: "faster_rcnn_resnet50_coco_PerineuralNets_640-640-specular_nms-07_detThresh4Counting-03_valPatchesOverlap-0_bs8"
     lr                  : 0.005
     momentum            : 0.9
     weight_decay        : 0.0005

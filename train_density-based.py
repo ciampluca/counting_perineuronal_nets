@@ -129,6 +129,12 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, epoc
     epoch_loss /= len(val_dataloader.dataset)
     epoch_ssim /= len(val_dataloader.dataset)
 
+    stop = timeit.default_timer()
+    total_time = stop - start
+    mins, secs = divmod(total_time, 60)
+    hours, mins = divmod(mins, 60)
+    sys.stdout.write("Validation ended. Total running time: %d:%d:%d.\n" % (hours, mins, secs))
+
     return epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim
 
 
