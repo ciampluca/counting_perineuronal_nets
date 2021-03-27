@@ -366,11 +366,18 @@ def coco_evaluate(data_loader, epoch_outputs, max_dets=None, folder_to_save=None
     iou_types = ["bbox"]
     coco_evaluator = CocoEvaluator(coco, iou_types, max_dets=max_dets)
 
-    for i, (_, targets) in enumerate(metric_logger.log_every(data_loader, 100, header)):
+    for i, (images, targets) in enumerate(metric_logger.log_every(data_loader, 100, header)):
+        images = list(image for image in images)
         targets = [{k: v for k, v in t.items()} for t in targets]
 
         outputs = epoch_outputs[i]
+        img_w, img_h = images[0].shape[2], images[0].shape[1]
         outputs = [{k: v.to(cpu_device) for k, v in outputs.items()}]
+        if outputs[0]['boxes'].nelements() != 0:
+            outputs[0]['boxes'][:, 0] *= img_w
+            outputs[0]['boxes'][:, 1] *= img_h
+            outputs[0]['boxes'][:, 2] *= img_w
+            outputs[0]['boxes'][:, 3] *= img_h
 
         res = {target["image_id"].item(): output for target, output in zip(targets, outputs)}
         evaluator_time = time.time()
