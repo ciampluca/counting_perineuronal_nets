@@ -373,11 +373,14 @@ def coco_evaluate(data_loader, epoch_outputs, max_dets=None, folder_to_save=None
         outputs = epoch_outputs[i]
         img_w, img_h = images[0].shape[2], images[0].shape[1]
         outputs = [{k: v.to(cpu_device) for k, v in outputs.items()}]
+        print(outputs[0]['boxes'])
         if outputs[0]['boxes'].nelement() != 0:
             outputs[0]['boxes'][:, 0] *= img_w
             outputs[0]['boxes'][:, 1] *= img_h
             outputs[0]['boxes'][:, 2] *= img_w
             outputs[0]['boxes'][:, 3] *= img_h
+        print(outputs[0]['boxes'])
+        exit(1)
 
         res = {target["image_id"].item(): output for target, output in zip(targets, outputs)}
         evaluator_time = time.time()

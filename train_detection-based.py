@@ -277,8 +277,9 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, tens
             epoch_mse += img_mse
 
             # Updating list of dets for coco eval
+            final_bbs_for_coco = [[bb[0]/img_w_padded, bb[1]/img_h_padded, bb[2]/img_w_padded, bb[3]/img_h_padded] for bb in final_bbs]
             epoch_dets_for_coco_eval.append({
-                'boxes': torch.as_tensor([[bb[0]/img_w_padded, bb[1]/img_h_padded, bb[2]/img_w_padded, bb[3]/img_h_padded] for bb in final_bbs], dtype=torch.float32),
+                'boxes': torch.as_tensor(final_bbs_for_coco, dtype=torch.float32),
                 'scores': torch.as_tensor(final_scores, dtype=torch.float32),
                 'labels': torch.as_tensor(final_labels, dtype=torch.int64),
             })
