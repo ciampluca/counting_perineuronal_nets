@@ -278,18 +278,18 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, tens
 
             # Updating list of dets for coco eval
             epoch_dets_for_coco_eval.append({
-                'boxes': torch.as_tensor(img_det_bbs, dtype=torch.float32),
-                'scores': torch.as_tensor(img_det_scores, dtype=torch.float32),
-                'labels': torch.as_tensor(img_det_labels, dtype=torch.int64),
+                'boxes': torch.as_tensor(final_bbs, dtype=torch.float32),
+                'scores': torch.as_tensor(final_scores, dtype=torch.float32),
+                'labels': torch.as_tensor(final_labels, dtype=torch.int64),
             })
 
             # Updating dets for map evaluation
             epoch_dets_for_map_eval[img_id] = {
-                'pred_bbs': img_det_bbs,
-                'scores': img_det_scores,
-                'labels': img_det_labels,
-                'gt_bbs': target['boxes'].data.cpu().tolist(),
-                'img_dim': (img_w, img_h),
+                'pred_bbs': final_bbs,
+                'scores': final_scores,
+                'labels': final_labels,
+                'gt_bbs': padded_target['boxes'].data.cpu().tolist(),
+                'img_dim': (img_w_padded, img_h_padded),
             }
 
     stop = timeit.default_timer()
