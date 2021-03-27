@@ -235,11 +235,12 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, tens
             final_labels = [label for i, label in enumerate(img_det_labels) if i not in keep_overlap]
 
             # non-maximum suppression
-            keep_overlap = box_ops.nms(
-                torch.as_tensor(bbs_in_overlapped_areas, dtype=torch.float32),
-                torch.as_tensor(scores_in_overlapped_areas, dtype=torch.float32),
-                iou_threshold=model_cfg['nms']
-            )
+            if keep_overlap:
+                keep_overlap = box_ops.nms(
+                    torch.as_tensor(bbs_in_overlapped_areas, dtype=torch.float32),
+                    torch.as_tensor(scores_in_overlapped_areas, dtype=torch.float32),
+                    iou_threshold=model_cfg['nms']
+                )
 
             bbs_in_overlapped_areas = [bbs_in_overlapped_areas[i] for i in keep_overlap]
             final_bbs.extend(bbs_in_overlapped_areas)
