@@ -141,9 +141,9 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, tensorboard_wr
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
 
         if (train_iteration % train_cfg['log_loss'] == 0):
-            tensorboard_writer.add_scalar('Training/Learning Rate', optimizer.param_groups[0]["lr"], epoch * len(data_loader) + train_iteration)
-            tensorboard_writer.add_scalar('Training/Reduced Sum Losses', losses_reduced, epoch * len(data_loader) + train_iteration)
-            tensorboard_writer.add_scalars('Training/All Losses', loss_dict, epoch * len(data_loader) + train_iteration)
+            tensorboard_writer.add_scalar('Training/Detection-based Learning Rate', optimizer.param_groups[0]["lr"], epoch * len(data_loader) + train_iteration)
+            tensorboard_writer.add_scalar('Training/Detection-based Reduced Sum Losses', losses_reduced, epoch * len(data_loader) + train_iteration)
+            tensorboard_writer.add_scalars('Training/Detection-based All Losses', loss_dict, epoch * len(data_loader) + train_iteration)
 
 
 @torch.no_grad()
