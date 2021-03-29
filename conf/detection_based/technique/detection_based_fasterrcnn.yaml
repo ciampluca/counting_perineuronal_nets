@@ -2,74 +2,69 @@
 dataset:
     training:
         name: "perineural_nets"
-        root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
+        root: "/home/modro/datino/perineural_nets"
         params:
-            all_frames  : ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
+            all_frames: ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
             # Split ttVtt - ttVtt - .... --> used only if specular_split is false
             train_frames: ['014', '015', '017', '019', '020', '021', '023', '026', '027', '028', '035', '036', '041', '042', '044', '048', '049', '050', '052', '053']
-            input_size: [640, 640]
+            input_size: [640, 640]      # w, h
             load_in_memory: False
             percentage: null
     validation:
         name: "perineural_nets"
-        root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
+        root: "/home/modro/datino/perineural_nets"
         params:
             all_frames  : ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
             # Split ttVtt - ttVtt - .... --> used only if specular_split is false
             val_frames  : ['016', '022', '034', '043', '051']
-            input_size: [640, 640]
+            input_size: [640, 640]      # w, h
             load_in_memory: False
             percentage: null
             patches_overlap: 0      # in pixels
 
 
 model:
-    name: CSRNet        # can be CSRNet or UNet
+    name: "faster_rcnn"
+    backbone: "resnet50"    # resnet50 or resnet101
+    backbone_pretrained: true   # on ImageNet
+    coco_model_pretrained: true   # on COCO; if true, no need to load the pretrained backbone
     cache_folder: ./model_zoo
     pretrained: null     # path to pretrained weights, optimizer states will not restored
     resume: null    # path to last trained model, will restore optimizer states
-    loss:
-        name:
-            MSELoss
-    aux_loss:
-        name: null      # can be "SSIM" or null
-        params:
-            windows_size: 11
-        lambda_multiplier: 10
-    params:
-        load_weights: False
+    max_dets_per_image: 200
+    nms: 0.3
+    det_thresh: 0.05
 
 
 optimizer:
-    name: Adam
+    name: SGD
     params:
-        lr: 0.00001
+        lr: 0.005
+        momentum: 0.9
+        weight_decay: 0.0005
     scheduler:
         name: MultiStepLR
         params:
-            milestones: [50, 75, 100]
+            milestones: [25, 50, 100]
             gamma: 0.1
 
 
 training:
-    batch_size          : 8
-    val_batch_size      : 1
-    num_workers         : 4
-    epochs              : 100
-    val_freq            : 1
-    debug               : true
-    debug_freq          : 3
-    log_loss            : 20
+    batch_size: 8
+    val_batch_size: 1
+    num_workers: 4
+    epochs: 100
+    print_freq: 10
+    val_freq: 1
+    log_loss: 10
+    debug: true
+    debug_freq: 3
+    coco_max_dets: 2000
+    bbox_discard_min_vis: 0.5
+    det_thresh_for_counting: 0.3
     precomputed_patches: true
     specular_split: true
 
 
 seed: 10
 gpu : 0      # index of the gpu you want to use, null for cpu
-
-
-experiment_name: "${technique.model.name}_${technique.dataset.training.name}_specular_split-${technique.training.specular_split}_
-input_size-${technique.dataset.training.params.input_size}_loss-${technique.model.loss.name}_aux_loss-${technique.model.aux_loss.name}
-_val_patches_overlap-${technique.dataset.validation.params.patches_overlap}_batch_size-${technique.training.batch_size}"
-
-

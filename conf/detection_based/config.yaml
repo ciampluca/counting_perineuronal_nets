@@ -1,0 +1,2 @@
+defaults:
+  - technique: detection_based_fasterrcnn

@@ -1,0 +1,14 @@
+# @package _global_
+defaults:
+  - override /technique: density_based_csrnet
+
+
+density_based_csrnet:
+  dataset:
+    training:
+      params:
+        input_size: [640, 640]
+    validation:
+      params:
+        input_size: [640, 640]
+        patches_overlap: 120

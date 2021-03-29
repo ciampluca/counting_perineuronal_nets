@@ -4,21 +4,18 @@ from collections import defaultdict, deque
 import time
 import datetime
 import pickle
-import matplotlib.pyplot as plt
-from PIL import Image, ImageDraw
 import sys
 import timeit
+import collections.abc
 
 import torch
 import torch.distributed as dist
-import torchvision
 
 import utils.transforms_dmaps as dmap_custom_T
 import utils.transforms_bbs as bbox_custom_T
 from utils.coco_utils import get_coco_api_from_dataset
 from utils.coco_eval import CocoEvaluator
 from mean_average_precision.detection_map import DetectionMAP
-from mean_average_precision.utils.show_frame import show_frame
 
 
 def get_dmap_transforms(train=False, crop_width=1920, crop_height=1080):
@@ -29,22 +26,17 @@ def get_dmap_transforms(train=False, crop_width=1920, crop_height=1080):
         transforms.append(dmap_custom_T.RandomCrop(width=crop_width, height=crop_height))
         transforms.append(dmap_custom_T.PadToResizeFactor())
 
-    # if not train:
-    #     transforms.append(dmap_custom_T.PadToResizeFactor(resize_factor=crop_width))
-
     transforms.append(dmap_custom_T.ToTensor())
 
     return dmap_custom_T.Compose(transforms)
 
 
-def get_bbox_transforms(train=False, crop_width=640, crop_height=640, resize_factor=640, min_visibility=0.0):
+def get_bbox_transforms(train=False, crop_width=640, crop_height=640, min_visibility=0.0):
     transforms = []
 
     if train:
         transforms.append(bbox_custom_T.RandomHorizontalFlip())
         transforms.append(bbox_custom_T.RandomCrop(width=crop_width, height=crop_height, min_visibility=min_visibility))
-    # else:
-    #     transforms.append(bbox_custom_T.PadToResizeFactor(resize_factor=resize_factor))
 
     transforms.append(bbox_custom_T.ToTensor())
 
@@ -480,6 +472,12 @@ def compute_dice_and_jaccard(dets_and_gts_dict, smooth=1):
     return sum(imgs_dice) / len(imgs_dice), sum(imgs_jaccard) / len(imgs_jaccard)
 
 
-
+def update_dict(d, u):
+    for k, v in u.items():
+        if isinstance(v, collections.abc.Mapping):
+            d[k] = update_dict(d.get(k, {}), v)
+        else:
+            d[k] = v
+    return d
 
 

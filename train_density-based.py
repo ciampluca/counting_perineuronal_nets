@@ -15,7 +15,7 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 
-from utils.misc import random_seed, get_dmap_transforms, save_checkpoint, normalize
+from utils.misc import random_seed, get_dmap_transforms, save_checkpoint, normalize, update_dict
 from datasets.perineural_nets_dmap_dataset import PerineuralNetsDmapDataset
 from utils.transforms_dmaps import PadToSize, CropToFixedSize
 
@@ -58,8 +58,12 @@ def validate(model, val_dataloader, device, cfg, epoch):
             dmap=gt_dmap
         )
 
+        h_pad_top = int((img_h_padded - img_h) / 2.0)
+        h_pad_bottom = img_h_padded - img_h - h_pad_top
+        w_pad_left = int((img_w_padded - img_w) / 2.0)
+        w_pad_right = img_w_padded - img_w - w_pad_left
+
         normalization_map = torch.zeros_like(padded_image)
-        reconstructed_image = torch.zeros_like(padded_image)
         reconstructed_dmap = torch.zeros_like(padded_gt_dmap)
 
         for i in range(0, img_h, stride_h):
@@ -73,7 +77,6 @@ def validate(model, val_dataloader, device, cfg, epoch):
                     dmap=copy.deepcopy(padded_gt_dmap)
                 )
 
-                reconstructed_image[:, i:i + crop_height, j:j + crop_width] += image_patch
                 normalization_map[:, i:i + crop_height, j:j + crop_width] += 1.0
 
                 # Computing dmap for the patch
@@ -83,8 +86,9 @@ def validate(model, val_dataloader, device, cfg, epoch):
 
                 reconstructed_dmap[:, i:i + crop_height, j:j + crop_width] += pred_dmap_patch.squeeze(dim=0)
 
-        reconstructed_image /= normalization_map
         reconstructed_dmap /= normalization_map[0].unsqueeze(dim=0)
+        reconstructed_dmap = reconstructed_dmap[:, h_pad_top:img_h_padded - h_pad_bottom,
+                             w_pad_left:img_w_padded - w_pad_right]
 
         # Updating metrics
         loss = torch.nn.MSELoss()(reconstructed_dmap.unsqueeze(dim=0), padded_gt_dmap.unsqueeze(dim=0))
@@ -134,9 +138,15 @@ def validate(model, val_dataloader, device, cfg, epoch):
     return epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim
 
 
-@hydra.main(config_path="conf", config_name="config")
-def main(cfg: DictConfig) -> None:
-    cfg = copy.deepcopy(cfg.technique)
+@hydra.main(config_path="conf/density_based", config_name="config")
+def main(hydra_cfg: DictConfig) -> None:
+    cfg = copy.deepcopy(hydra_cfg.technique)
+    for _, v in hydra_cfg.items():
+        update_dict(cfg, v)
+    experiment_name = f"{cfg.model.name}_{cfg.dataset.training.name}_specular_split-{cfg.training.specular_split}" \
+               f"_input_size-{cfg.dataset.training.params.input_size}_loss-${cfg.model.loss.name}" \
+               f"_aux_loss-${cfg.model.aux_loss.name}_val_patches_overlap-${cfg.dataset.validation.params.patches_overlap}" \
+               f"_batch_size-${cfg.training.batch_size}"
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(cfg.gpu)
     device = torch.device(f'cuda' if cfg.gpu is not None else 'cpu')
@@ -164,7 +174,7 @@ def main(cfg: DictConfig) -> None:
         checkpoint = torch.load(cfg.model.resume)
         writer = SummaryWriter(log_dir=checkpoint['tensorboard_working_dir'])
     else:
-        writer = SummaryWriter(comment="_" + cfg.experiment_name)
+        writer = SummaryWriter(comment="_" + experiment_name)
 
     # Creating training dataset and dataloader
     log.info(f"Loading training data")
@@ -210,7 +220,7 @@ def main(cfg: DictConfig) -> None:
 
     val_dataset = PerineuralNetsDmapDataset(
         data_root=cfg.dataset.validation.root,
-        transforms=get_dmap_transforms(train=False, crop_width=val_crop_width, crop_height=val_crop_height),
+        transforms=get_dmap_transforms(train=False),
         list_frames=list_val_frames,
         load_in_memory=False,
         with_patches=False,
@@ -241,9 +251,8 @@ def main(cfg: DictConfig) -> None:
     model = hydra.utils.get_class(f"models.{cfg.model.name}.{cfg.model.name}")
     model = model(**cfg.model.params)
 
-    # Putting model to device and setting train mode
+    # Putting model to device
     model.to(device)
-    model.train()
 
     # Constructing an optimizer
     optimizer = hydra.utils.get_class(f"torch.optim.{cfg.optimizer.name}")
@@ -269,7 +278,6 @@ def main(cfg: DictConfig) -> None:
             **
             {**cfg.model.aux_loss.params})
 
-    # Resuming a model
     start_epoch = 0
     # Eventually resuming a pre-trained model
     if cfg.model.pretrained:
@@ -287,7 +295,8 @@ def main(cfg: DictConfig) -> None:
         checkpoint = torch.load(cfg.model.resume)
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
-        scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        if scheduler is not None:
+            scheduler.load_state_dict(checkpoint['lr_scheduler'])
         start_epoch = checkpoint['epoch']
         best_validation_mae = checkpoint['best_mae']
         best_validation_mse = checkpoint['best_mse']
@@ -391,7 +400,7 @@ def main(cfg: DictConfig) -> None:
             log.info(f"Epoch: {epoch}, Dataset: {cfg.dataset.validation.name}, MAE: {epoch_mae}, MSE: {epoch_mse}, "
                      f"ARE: {epoch_are}, SSIM: {epoch_ssim}, {nl}, "
                      f"Min MAE: {best_validation_mae}, Min MAE Epoch: {min_mae_epoch}, {nl}, "
-                     f"Min MSE: {best_validation_mse}, Min MAE Epoch: {min_mse_epoch}, {nl}, "
+                     f"Min MSE: {best_validation_mse}, Min MSE Epoch: {min_mse_epoch}, {nl}, "
                      f"Min ARE: {best_validation_are}, Min ARE Epoch: {min_are_epoch}, {nl}, "
                      f"Best SSIM: {best_validation_ssim}, Best SSIM Epoch: {best_ssim_epoch}")
 

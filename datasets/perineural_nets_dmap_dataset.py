@@ -155,9 +155,9 @@ if __name__ == "__main__":
     all_frames = ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
     if SPECULAR_SPLIT:
         train_frames = val_frames = all_frames
-    data_root = "/home/luca/luca-cnr/mnt/Dati_SSD_2/datasets/perineural_nets"
-    CROP_WIDTH = 1024
-    CROP_HEIGHT = 1024
+    data_root = "/mnt/Dati_SSD_2/datasets/perineural_nets"
+    CROP_WIDTH = 640
+    CROP_HEIGHT = 640
     STRIDE_W, STRIDE_H = CROP_WIDTH, CROP_HEIGHT
     OVERLAPPING_PATCHES = True
     if OVERLAPPING_PATCHES:
@@ -257,6 +257,11 @@ if __name__ == "__main__":
             dmap=gt_dmap
         )
 
+        h_pad_top = int((img_h_padded - img_h) / 2.0)
+        h_pad_bottom = img_h_padded - img_h - h_pad_top
+        w_pad_left = int((img_w_padded - img_w) / 2.0)
+        w_pad_right = img_w_padded - img_w - w_pad_left
+
         normalization_map = torch.zeros_like(padded_image)
         reconstructed_image = torch.zeros_like(padded_image)
         reconstructed_dmap = torch.zeros_like(padded_gt_dmap)
@@ -278,6 +283,9 @@ if __name__ == "__main__":
 
         reconstructed_image /= normalization_map
         reconstructed_dmap /= normalization_map[0].unsqueeze(dim=0)
+
+        reconstructed_image = reconstructed_image[:, h_pad_top:img_h_padded-h_pad_bottom, w_pad_left:img_w_padded-w_pad_right]
+        reconstructed_dmap = reconstructed_dmap[:, h_pad_top:img_h_padded-h_pad_bottom, w_pad_left:img_w_padded-w_pad_right]
 
         to_pil_image(reconstructed_image).save(
             "./output/dataloading/reconstructed_{}.png".format(img_name.rsplit(".", 1)[0]))

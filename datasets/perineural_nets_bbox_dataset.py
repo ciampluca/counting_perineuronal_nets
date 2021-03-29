@@ -197,7 +197,7 @@ if __name__ == "__main__":
     CROP_WIDTH = 640
     CROP_HEIGHT = 640
     SPECULAR_SPLIT = True
-    data_root = "/home/luca/luca-cnr/mnt/Dati_SSD_2/datasets/perineural_nets"
+    data_root = "/mnt/Dati_SSD_2/datasets/perineural_nets"
     train_frames = ['014', '015', '017', '019', '020', '021', '023', '026', '027', '028', '035', '036', '041', '042', '044', '048', '049', '050', '052', '053']
     val_frames = ['016', '022', '034', '043', '051']
     all_frames = ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
@@ -344,6 +344,18 @@ if __name__ == "__main__":
             )
             bbs_in_overlapped_areas = [bbs_in_overlapped_areas[i] for i in keep]
             final_bbs.extend(bbs_in_overlapped_areas)
+
+            h_pad_top = int((img_h_padded - img_h) / 2.0)
+            h_pad_bottom = img_h_padded - img_h - h_pad_top
+            w_pad_left = int((img_w_padded - img_w) / 2.0)
+            w_pad_right = img_w_padded - img_w - w_pad_left
+
+            final_bbs = [
+                [bb[0] - w_pad_left, bb[1] - h_pad_top, bb[2] - w_pad_left, bb[3] - h_pad_top] for
+                bb in final_bbs]
+
+            reconstructed_image = reconstructed_image[:, h_pad_top:img_h_padded - h_pad_bottom,
+                                 w_pad_left:img_w_padded - w_pad_right]
 
             pil_reconstructed_image = to_pil_image(reconstructed_image)
             draw = ImageDraw.Draw(pil_reconstructed_image)
