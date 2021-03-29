@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
-import yaml
 import os
-from shutil import copyfile
 import tqdm
 import sys
 from PIL import Image, ImageFont, ImageDraw
@@ -9,34 +7,32 @@ import timeit
 import ssim
 import math
 import copy
+import logging
+from omegaconf import DictConfig
+import hydra
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 
-from models.CSRNet import CSRNet
-from models.UNet_nobias import UNet
 from utils.misc import random_seed, get_dmap_transforms, save_checkpoint, normalize
 from datasets.perineural_nets_dmap_dataset import PerineuralNetsDmapDataset
 from utils.transforms_dmaps import PadToSize, CropToFixedSize
 
-available_models = {
-    'CSRNet': CSRNet,
-    'UNet': UNet,
-}
+# Creating logger
+log = logging.getLogger("Counting Nets")
 
 
 @torch.no_grad()
-def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, epoch, tensorboard_writer):
+def validate(model, val_dataloader, device, cfg, epoch):
     # Validation
     model.eval()
-    print("Validation")
+    log.info(f"Start validation of the epoch {epoch}")
     start = timeit.default_timer()
 
-    stride_w, stride_h = data_cfg['crop_width'], data_cfg['crop_height']
-    if data_cfg['overlap_val_patches']:
-        stride_w, stride_h = data_cfg['crop_width'] - data_cfg['overlap_val_patches'], data_cfg['crop_height'] - \
-                             data_cfg['overlap_val_patches']
+    crop_width, crop_height = cfg.dataset.validation.params.input_size
+    stride_w = crop_width - cfg.dataset.validation.params.patches_overlap
+    stride_h = crop_height - cfg.dataset.validation.params.patches_overlap
 
     epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim = 0.0, 0.0, 0.0, 0.0, 0.0
     for images, targets in tqdm.tqdm(val_dataloader):
@@ -52,9 +48,9 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, epoc
         img_w, img_h = image.shape[2], image.shape[1]
         num_h_patches, num_v_patches = math.ceil(img_w / stride_w), math.ceil(img_h / stride_h)
         img_w_padded = (num_h_patches - math.floor(img_w / stride_w)) * (
-                    stride_w * num_h_patches + (data_cfg['crop_width'] - stride_w))
+                    stride_w * num_h_patches + (crop_width - stride_w))
         img_h_padded = (num_v_patches - math.floor(img_h / stride_h)) * (
-                    stride_h * num_v_patches + (data_cfg['crop_height'] - stride_h))
+                    stride_h * num_v_patches + (crop_height - stride_h))
         padded_image, padded_gt_dmap = PadToSize()(
             image=image,
             min_width=img_w_padded,
@@ -72,20 +68,20 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, epoc
                     padded_image,
                     x_min=j,
                     y_min=i,
-                    x_max=j + data_cfg['crop_width'],
-                    y_max=i + data_cfg['crop_height'],
+                    x_max=j + crop_width,
+                    y_max=i + crop_height,
                     dmap=copy.deepcopy(padded_gt_dmap)
                 )
 
-                reconstructed_image[:, i:i + data_cfg['crop_height'], j:j + data_cfg['crop_width']] += image_patch
-                normalization_map[:, i:i + data_cfg['crop_height'], j:j + data_cfg['crop_width']] += 1.0
+                reconstructed_image[:, i:i + crop_height, j:j + crop_width] += image_patch
+                normalization_map[:, i:i + crop_height, j:j + crop_width] += 1.0
 
                 # Computing dmap for the patch
                 pred_dmap_patch = model(image_patch.unsqueeze(dim=0).to(device))
-                if model_cfg['name'] == "UNet":
+                if cfg.model.name == "UNet":
                     pred_dmap_patch /= 1000
 
-                reconstructed_dmap[:, i:i + data_cfg['crop_height'], j:j + data_cfg['crop_width']] += pred_dmap_patch.squeeze(dim=0)
+                reconstructed_dmap[:, i:i + crop_height, j:j + crop_width] += pred_dmap_patch.squeeze(dim=0)
 
         reconstructed_image /= normalization_map
         reconstructed_dmap /= normalization_map[0].unsqueeze(dim=0)
@@ -98,21 +94,21 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, epoc
         img_are = (abs(reconstructed_dmap.sum() - padded_gt_dmap.sum()) / torch.clamp(padded_gt_dmap.sum(), min=1)).item()
         img_ssim = ssim.ssim(padded_gt_dmap.unsqueeze(dim=0), reconstructed_dmap.unsqueeze(dim=0)).item()
 
-        if train_cfg['debug'] and epoch % train_cfg['debug_freq'] == 0:
-            debug_dir = os.path.join(tensorboard_writer.get_logdir(), 'output_debug')
-            if not os.path.exists(debug_dir):
-                os.makedirs(debug_dir)
+        if cfg.training.debug and epoch % cfg.training.debug_freq == 0:
+            debug_folder = os.path.join(os.getcwd(), 'output_debug')
+            if not os.path.exists(debug_folder):
+                os.makedirs(debug_folder)
             num_nets = torch.sum(reconstructed_dmap)
             pil_reconstructed_dmap = Image.fromarray(
                 normalize(reconstructed_dmap.squeeze(dim=0).cpu().numpy()).astype('uint8'))
             draw = ImageDraw.Draw(pil_reconstructed_dmap)
             # Add text to image
-            text = "Num of Nets: {}".format(num_nets)
+            text = f"Num of Nets: {num_nets}"
             font_path = "./font/LEMONMILK-RegularItalic.otf"
             font = ImageFont.truetype(font_path, 100)
             draw.text((75, 75), text=text, font=font, fill=191)
             pil_reconstructed_dmap.save(
-                os.path.join(debug_dir, "reconstructed_{}_dmap_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch))
+                os.path.join(debug_folder, "reconstructed_{}_dmap_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch))
             )
 
         # Updating errors
@@ -133,109 +129,103 @@ def validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, epoc
     total_time = stop - start
     mins, secs = divmod(total_time, 60)
     hours, mins = divmod(mins, 60)
-    sys.stdout.write("Validation ended. Total running time: %d:%d:%d.\n" % (hours, mins, secs))
+    log.info(f"Validation epoch {epoch} ended. Total running time: {hours}:{mins}:{secs}.")
 
     return epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim
 
 
-def main(args):
-    print(args)
+@hydra.main(config_path="conf", config_name="config")
+def main(cfg: DictConfig) -> None:
+    cfg = copy.deepcopy(cfg.technique)
 
-    # Opening YAML cfg config file
-    with open(args.cfg_file, 'r') as stream:
-        try:
-            cfg_file = yaml.safe_load(stream)
-        except yaml.YAMLError as exc:
-            print(exc)
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(cfg.gpu)
+    device = torch.device(f'cuda' if cfg.gpu is not None else 'cpu')
+    log.info(f"Use device {device} for training")
 
-    # Retrieving cfg
-    train_cfg = cfg_file['training']
-    model_cfg = cfg_file['model']
-    data_cfg = cfg_file['dataset']
-
-    # Setting device
-    device = torch.device(model_cfg['device'])
-
-    # Setting cache directory
-    torch.hub.set_dir(model_cfg['cache_folder'])
+    torch.hub.set_dir(os.path.join(hydra.utils.get_original_cwd(), cfg.model.cache_folder))
+    best_models_folder = os.path.join(os.getcwd(), 'best_models')
+    if not os.path.exists(best_models_folder):
+        os.makedirs(best_models_folder)
 
     # No possible to set checkpoint and pre-trained model at the same time
-    if train_cfg['checkpoint'] and train_cfg['pretrained_model']:
-        print("You can't set checkpoint and pretrained-model at the same time")
+    if cfg.model.resume and cfg.model.pretrained:
+        log.error(f"You can't set checkpoint and pretrained-model at the same time")
         exit(1)
 
     # Reproducibility
-    seed = train_cfg['seed']
-    if device == "cuda":
+    seed = cfg.seed
+    if device.type == "cuda":
         random_seed(seed, True)
-    elif device == "cpu":
+    elif device.type == "cpu":
         random_seed(seed, False)
 
     # Creating tensorboard writer
-    if train_cfg['checkpoint']:
-        checkpoint = torch.load(train_cfg['checkpoint'])
+    if cfg.model.resume:
+        checkpoint = torch.load(cfg.model.resume)
         writer = SummaryWriter(log_dir=checkpoint['tensorboard_working_dir'])
     else:
-        writer = SummaryWriter(comment="_" + train_cfg['tensorboard_filename'])
+        writer = SummaryWriter(comment="_" + cfg.experiment_name)
 
-    # Saving cfg file in the same folder
-    copyfile(args.cfg_file, os.path.join(writer.get_logdir(), os.path.basename(args.cfg_file)))
-
-    #####################################
-    # Creating datasets and dataloaders
-    #####################################
-    data_root = data_cfg['root']
-    dataset_name = data_cfg['name']
-    crop_width, crop_height = data_cfg['crop_width'], data_cfg['crop_height']
-    assert crop_width == crop_height, "Crops must be squares"
-    list_frames = data_cfg['all_frames']
-    list_train_frames, list_val_frames = data_cfg['train_frames'], data_cfg['val_frames']
-    if data_cfg['specular_split']:
-        list_train_frames = list_val_frames = list_frames
-
-    ################################
-    # Creating training datasets and dataloader
-    print("Loading training data")
+    # Creating training dataset and dataloader
+    log.info(f"Loading training data")
+    training_crop_width, training_crop_height = cfg.dataset.training.params.input_size
+    if training_crop_width != training_crop_height:
+        logging.error(f"Crops must be squares")
+        exit(1)
+    list_frames = cfg.dataset.training.params.all_frames
+    list_train_frames = cfg.dataset.training.params.train_frames
+    if cfg.training.specular_split:
+        list_train_frames = list_frames
 
     train_dataset = PerineuralNetsDmapDataset(
-        data_root=data_root,
-        transforms=get_dmap_transforms(train=True, crop_width=crop_width, crop_height=crop_height),
+        data_root=cfg.dataset.training.root,
+        transforms=get_dmap_transforms(train=True, crop_width=training_crop_width, crop_height=training_crop_height),
         list_frames=list_train_frames,
-        load_in_memory=data_cfg['load_in_memory'],
-        with_patches=data_cfg['train_with_precomputed_patches'],
-        specular_split=data_cfg['specular_split'],
-        percentage=data_cfg['percentage'],
+        load_in_memory=cfg.dataset.training.params.load_in_memory,
+        with_patches=cfg.training.precomputed_patches,
+        specular_split=cfg.training.specular_split,
+        percentage=cfg.dataset.training.params.percentage,
     )
 
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=train_cfg['batch_size'],
+        batch_size=cfg.training.batch_size,
         shuffle=True,
-        num_workers=train_cfg['num_workers'],
+        num_workers=cfg.training.num_workers,
         collate_fn=train_dataset.custom_collate_fn,
     )
 
-    ################################
-    # Creating training datasets and dataloaders
-    print("Loading validation data")
-    assert crop_width % 32 == 0 and crop_height % 32 == 0, "In validation mode, crop dim must be multiple of 32"
+    log.info(f"Found {len(train_dataset)} samples in training dataset")
+
+    # Creating validation dataset and dataloader
+    log.info(f"Loading validation data")
+    val_crop_width, val_crop_height = cfg.dataset.validation.params.input_size
+    if val_crop_width != val_crop_height or val_crop_width % 32 != 0 or val_crop_height % 32 != 0:
+        logging.error(f"Crops must be squares and in validation mode crop dim must be multiple of 32")
+        exit(1)
+    list_frames = cfg.dataset.validation.params.all_frames
+    list_val_frames = cfg.dataset.validation.params.val_frames
+    if cfg.training.specular_split:
+        list_val_frames = list_frames
 
     val_dataset = PerineuralNetsDmapDataset(
-        data_root=data_root,
-        transforms=get_dmap_transforms(train=False, crop_width=crop_width, crop_height=crop_height),
+        data_root=cfg.dataset.validation.root,
+        transforms=get_dmap_transforms(train=False, crop_width=val_crop_width, crop_height=val_crop_height),
         list_frames=list_val_frames,
         load_in_memory=False,
         with_patches=False,
-        specular_split=data_cfg['specular_split'],
+        specular_split=cfg.training.specular_split,
     )
 
     val_dataloader = DataLoader(
         val_dataset,
-        batch_size=train_cfg['val_batch_size'],
+        batch_size=cfg.training.val_batch_size,
         shuffle=False,
-        num_workers=train_cfg['num_workers'],
+        num_workers=cfg.training.num_workers,
         collate_fn=val_dataset.custom_collate_fn,
     )
+
+    log.info(f"Found {len(val_dataset)} samples in validation dataset")
 
     # Initializing validation metrics
     best_validation_mae = float(sys.maxsize)
@@ -244,78 +234,60 @@ def main(args):
     best_validation_ssim = 0.0
     min_mae_epoch, min_mse_epoch, min_are_epoch, best_ssim_epoch = -1, -1, -1, -1
 
-    #######################
     # Creating model
-    #######################
-    print("Creating model")
-    model_name = model_cfg['name']
-    assert model_name in available_models, "Not implemented model"
-    if model_name == "UNet":
-        model = available_models.get(model_cfg['name'])(in_channels=3, n_classes=1, padding=True, batch_norm=True)
-    elif model_name == "CSRNet":
-        load_initial_weights = True if train_cfg['pretrained_model'] or train_cfg['checkpoint'] else False
-        model = available_models.get(model_cfg['name'])(load_weights=load_initial_weights)
+    log.info(f"Creating model")
+    if cfg.model.resume or cfg.model.pretrained:
+        cfg.model.params.load_weights = True
+    model = hydra.utils.get_class(f"models.{cfg.model.name}.{cfg.model.name}")
+    model = model(**cfg.model.params)
 
     # Putting model to device and setting train mode
     model.to(device)
     model.train()
 
-    ##################################################
-    # Defining optimizer, LR scheduler and criterion
-    ##################################################
     # Constructing an optimizer
-    params = [p for p in model.parameters() if p.requires_grad]
-    if train_cfg['optimizer'] == "Adam":
-        optimizer = torch.optim.Adam(
-            params,
-            lr=train_cfg['lr'])
-    elif train_cfg['optimizer'] == "SGD":
-        optimizer = torch.optim.SGD(params,
-                                    lr=train_cfg['lr'],
-                                    momentum=train_cfg['momentum'],
-                                    weight_decay=train_cfg['weights_decay'])
-    else:
-        print("Not implemented optimizer")
-        exit(1)
+    optimizer = hydra.utils.get_class(f"torch.optim.{cfg.optimizer.name}")
+    optimizer = optimizer(filter(lambda p: p.requires_grad,
+                                 model.parameters()), **cfg.optimizer.params)
+    scheduler = None
+    if cfg.optimizer.scheduler is not None:
+        scheduler = hydra.utils.get_class(
+            f"torch.optim.lr_scheduler.{cfg.optimizer.scheduler.name}")
+        scheduler = scheduler(
+            **
+            {**{"optimizer": optimizer},
+             **cfg.optimizer.scheduler.params})
 
     # Setting criterion
-    criterion = None
-    if train_cfg['loss'] == "MeanSquaredError":
-        criterion = torch.nn.MSELoss()
-    else:
-        print("Not implemented loss")
-        exit(1)
+    criterion = hydra.utils.get_class(
+            f"torch.nn.{cfg.model.loss.name}")()
     aux_criterion = None
-    if train_cfg['aux_loss'] == "SSIM":
-        aux_criterion = ssim.SSIM(window_size=11)
+    if cfg.model.aux_loss.name:
+        aux_criterion = hydra.utils.get_class(
+            f"ssim.{cfg.model.aux_loss.name}")
+        aux_criterion = aux_criterion(
+            **
+            {**cfg.model.aux_loss.params})
 
-    # Constructing lr scheduler
-    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
-                                                        milestones=train_cfg['lr_step_size'],
-                                                        gamma=train_cfg['lr_gamma']
-                                                        )
-
-    #############################
     # Resuming a model
-    #############################
     start_epoch = 0
     # Eventually resuming a pre-trained model
-    if train_cfg['pretrained_model']:
-        print("Resuming pre-trained model")
-        if train_cfg['pretrained_model'].startswith('http://') or train_cfg['pretrained_model'].startswith('https://'):
+    if cfg.model.pretrained:
+        log.info(f"Resuming pre-trained model")
+        if cfg.model.pretrained.startswith('http://') or cfg.model.pretrained.startswith('https://'):
             pre_trained_model = torch.hub.load_state_dict_from_url(
-                train_cfg['pretrained_model'], map_location='cpu', model_dir=model_cfg["cache_folder"])
+                cfg.model.pretrained, map_location='cpu', model_dir=cfg.model.cache_folder)
         else:
-            pre_trained_model = torch.load(train_cfg['pretrained_model'], map_location='cpu')
+            pre_trained_model = torch.load(cfg.model.pretrained, map_location='cpu')
         model.load_state_dict(pre_trained_model['model'])
 
     # Eventually resuming from a saved checkpoint
-    if train_cfg['checkpoint']:
-        print("Resuming from a checkpoint")
-        checkpoint = torch.load(train_cfg['checkpoint'])
+    if cfg.model.resume:
+        log.info(f"Resuming from a checkpoint")
+        checkpoint = torch.load(cfg.model.resume)
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
-        lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        scheduler.load_state_dict(checkpoint['lr_scheduler'])
         start_epoch = checkpoint['epoch']
         best_validation_mae = checkpoint['best_mae']
         best_validation_mse = checkpoint['best_mse']
@@ -329,8 +301,8 @@ def main(args):
     ################
     ################
     # Training
-    print("Start training")
-    for epoch in range(start_epoch, train_cfg['epochs']):
+    log.info(f"Start training")
+    for epoch in range(start_epoch, cfg.training.epochs):
         model.train()
         epoch_loss = 0.0
 
@@ -342,20 +314,14 @@ def main(args):
 
             # Computing pred dmaps
             pred_dmaps = model(images)
-            if model_name == "UNet":
+            if cfg.model.name == "UNet":
                 pred_dmaps /= 1000
 
             # Computing loss and backwarding it
-            if train_cfg['loss'] == "MeanSquaredError":
-                loss = criterion(pred_dmaps, gt_dmaps)
-            else:
-                print("Loss to be implemented")
-                exit(1)
-            if train_cfg['aux_loss'] == "SSIM":
+            loss = criterion(pred_dmaps, gt_dmaps)
+            if cfg.model.aux_loss.name == "SSIM":
                 aux_loss = -aux_criterion(gt_dmaps, pred_dmaps)
-                ssim_value = - aux_loss.item()
-                print("SSIM value: {}".format(ssim_value))
-                loss += train_cfg['lambda_aux_loss'] * aux_loss
+                loss += cfg.model.aux_loss.lambda_multiplier * aux_loss
 
             optimizer.zero_grad()
             loss.backward()
@@ -364,24 +330,24 @@ def main(args):
             # Updating loss
             epoch_loss += loss.item()
 
-            if train_iteration % train_cfg['log_loss'] == 0 and train_iteration != 0:
+            if train_iteration % cfg.training.log_loss == 0 and train_iteration != 0:
                 writer.add_scalar('Training/Density-based Loss Total', epoch_loss / train_iteration, epoch * len(train_dataloader) + train_iteration)
                 writer.add_scalar('Training/Density-based Learning Rate', optimizer.param_groups[0]['lr'],  epoch * len(train_dataloader) + train_iteration)
 
         # Updating lr scheduler
-        lr_scheduler.step()
+        scheduler.step()
 
         # Validating
-        if (epoch % train_cfg['val_freq'] == 0):
+        if epoch % cfg.training.val_freq == 0:
             epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim = \
-                validate(model, val_dataloader, device, train_cfg, data_cfg, model_cfg, epoch, writer)
+                validate(model, val_dataloader, device, cfg, epoch)
 
             # Updating tensorboard
-            writer.add_scalar('Validation on {}/MAE'.format(dataset_name), epoch_mae, epoch)
-            writer.add_scalar('Validation on {}/MSE'.format(dataset_name), epoch_mse, epoch)
-            writer.add_scalar('Validation on {}/ARE'.format(dataset_name), epoch_are, epoch)
-            writer.add_scalar('Validation on {}/Loss'.format(dataset_name), epoch_loss, epoch)
-            writer.add_scalar('Validation on {}/SSIM'.format(dataset_name), epoch_ssim, epoch)
+            writer.add_scalar('Validation on {}/MAE'.format(cfg.dataset.validation.name), epoch_mae, epoch)
+            writer.add_scalar('Validation on {}/MSE'.format(cfg.dataset.validation.name), epoch_mse, epoch)
+            writer.add_scalar('Validation on {}/ARE'.format(cfg.dataset.validation.name), epoch_are, epoch)
+            writer.add_scalar('Validation on {}/Loss'.format(cfg.dataset.validation.name), epoch_loss, epoch)
+            writer.add_scalar('Validation on {}/SSIM'.format(cfg.dataset.validation.name), epoch_ssim, epoch)
 
             # Eventually saving best models
             if epoch_mae < best_validation_mae:
@@ -392,7 +358,7 @@ def main(args):
                     'optimizer': optimizer.state_dict(),
                     'epoch': epoch,
                     'best_mae': epoch_mae,
-                }, writer.get_logdir(), best_model=dataset_name + "_mae")
+                }, best_models_folder, best_model=cfg.dataset.validation.name + "_mae")
             if epoch_mse < best_validation_mse:
                 best_validation_mse = epoch_mse
                 min_mse_epoch = epoch
@@ -401,7 +367,7 @@ def main(args):
                     'optimizer': optimizer.state_dict(),
                     'epoch': epoch,
                     'best_mse': epoch_mse,
-                }, writer.get_logdir(), best_model=dataset_name + "_mse")
+                }, best_models_folder, best_model=cfg.dataset.validation.name + "_mse")
             if epoch_are < best_validation_are:
                 best_validation_are = epoch_are
                 min_are_epoch = epoch
@@ -410,7 +376,7 @@ def main(args):
                     'optimizer': optimizer.state_dict(),
                     'epoch': epoch,
                     'best_are': epoch_are,
-                }, writer.get_logdir(), best_model=dataset_name + "_are")
+                }, best_models_folder, best_model=cfg.dataset.validation.name + "_are")
             if epoch_ssim > best_validation_ssim:
                 best_validation_ssim = epoch_ssim
                 best_ssim_epoch = epoch
@@ -419,20 +385,21 @@ def main(args):
                     'optimizer': optimizer.state_dict(),
                     'epoch': epoch,
                     'best_ssim': epoch_ssim,
-                }, writer.get_logdir(), best_model=dataset_name + "_ssim")
+                }, best_models_folder, best_model=cfg.dataset.validation.name + "_ssim")
 
-            print('Epoch: ', epoch, ' Dataset: ', dataset_name, ' MAE: ', epoch_mae, ' MSE: ', epoch_mse, ' ARE: ', epoch_are, ' SSIM: ', epoch_ssim,
-                  ' Min MAE: ', best_validation_mae, ' Min MAE Epoch: ', min_mae_epoch,
-                  ' Min MSE: ', best_validation_mse, ' Min MSE Epoch: ', min_mse_epoch,
-                  ' Min ARE: ', best_validation_are, ' Min ARE Epoch: ', min_are_epoch,
-                  ' Best SSIM: ', best_validation_ssim, ' Best SSIM Epoch: ', best_ssim_epoch
-                  )
+            nl = '\n'
+            log.info(f"Epoch: {epoch}, Dataset: {cfg.dataset.validation.name}, MAE: {epoch_mae}, MSE: {epoch_mse}, "
+                     f"ARE: {epoch_are}, SSIM: {epoch_ssim}, {nl}, "
+                     f"Min MAE: {best_validation_mae}, Min MAE Epoch: {min_mae_epoch}, {nl}, "
+                     f"Min MSE: {best_validation_mse}, Min MAE Epoch: {min_mse_epoch}, {nl}, "
+                     f"Min ARE: {best_validation_are}, Min ARE Epoch: {min_are_epoch}, {nl}, "
+                     f"Best SSIM: {best_validation_ssim}, Best SSIM Epoch: {best_ssim_epoch}")
 
             # Saving last model
             save_checkpoint({
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
-                'lr_scheduler': lr_scheduler.state_dict(),
+                'lr_scheduler': scheduler.state_dict(),
                 'epoch': epoch,
                 'best_mae': best_validation_mae,
                 'best_mse': best_validation_mse,
@@ -443,17 +410,9 @@ def main(args):
                 'min_are_epoch': min_are_epoch,
                 'best_ssim_epoch': best_ssim_epoch,
                 'tensorboard_working_dir': writer.get_logdir()
-            }, writer.get_logdir())
+            }, os.getcwd())
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description=__doc__)
-
-    parser.add_argument('--cfg-file', required=True, help="YAML config file path")
-
-    args = parser.parse_args()
-
-    main(args)
+    main()
 

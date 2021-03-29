@@ -1,4 +1,3 @@
-pyyaml
 tqdm
 Pillow
 torch
@@ -7,3 +6,5 @@ tensorboard
 matplotlib
 albumentations
 pycocotools
+hydra-core
+omegaconf

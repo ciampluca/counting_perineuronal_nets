@@ -1,0 +1,2 @@
+defaults:
+  - technique: density_based_csrnet

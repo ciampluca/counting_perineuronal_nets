@@ -345,9 +345,9 @@ def main(args):
 
     # Reproducibility
     seed = train_cfg['seed']
-    if device == "cuda":
+    if device.type == "cuda":
         random_seed(seed, True)
-    elif device == "cpu":
+    elif device.type == "cpu":
         random_seed(seed, False)
 
     # Creating tensorboard writer
