@@ -2,7 +2,7 @@
 dataset:
     training:
         name: "perineural_nets"
-        root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
+        root: "/home/modro/datino/perineural_nets"
         params:
             all_frames  : ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
             # Split ttVtt - ttVtt - .... --> used only if specular_split is false
@@ -12,7 +12,7 @@ dataset:
             percentage: null
     validation:
         name: "perineural_nets"
-        root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
+        root: "/home/modro/datino/perineural_nets"
         params:
             all_frames  : ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
             # Split ttVtt - ttVtt - .... --> used only if specular_split is false
@@ -47,7 +47,7 @@ optimizer:
     scheduler:
         name: MultiStepLR
         params:
-            milestones: [50, 75, 100]
+            milestones: [35, 45, 50]
             gamma: 0.1
 
 
@@ -55,10 +55,10 @@ training:
     batch_size: 8
     val_batch_size: 1
     num_workers: 4
-    epochs: 100
+    epochs: 50
     val_freq: 1
     debug: true
-    debug_freq: 3
+    debug_freq: 5
     log_loss: 20
     precomputed_patches: true
     specular_split: true

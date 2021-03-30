@@ -2,7 +2,7 @@
 dataset:
     training:
         name: "perineural_nets"
-        root: "/home/modro/datino/perineural_nets"
+        root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
         params:
             all_frames: ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
             # Split ttVtt - ttVtt - .... --> used only if specular_split is false
@@ -12,7 +12,7 @@ dataset:
             percentage: null
     validation:
         name: "perineural_nets"
-        root: "/home/modro/datino/perineural_nets"
+        root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
         params:
             all_frames  : ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
             # Split ttVtt - ttVtt - .... --> used only if specular_split is false

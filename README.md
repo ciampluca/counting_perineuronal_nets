@@ -12,7 +12,9 @@ we want to done. The values inside these files override the configuration yaml f
 Please note that for each experiment a folder in the outputs folder will be created. Notably, inside 
 there will be also a .hydra hidden folder containing log files etc
 
+
 ###Examples:
+
 
 - Run density based approach, using default technique (CSRNet) and configuration experiment input_size_640_640_overlap_120
 
@@ -24,8 +26,8 @@ there will be also a .hydra hidden folder containing log files etc
 
 - Run all the experiment for density based approach using default technique (CSRNet)
         
-        python train_density-based.py --multirun '+experiment=glob(*)'
+        python train_density-based.py --multirun '+experiment=glob(csrnet*)'
         
 - Run all the experiment for density based approach overriding default technique and using UNet
 
-        python train_density-based.py technique=density_based_unet --multirun '+experiment=glob(*)'
+        python train_density-based.py technique=density_based_unet --multirun '+experiment=glob(unet*)'
