@@ -66,7 +66,7 @@ def get_model_detection(num_classes, cfg, load_custom_model=False):
             box_detections_per_img=cfg.model.max_dets_per_image,
             box_nms_thresh=cfg.model.nms,
             box_score_thresh=cfg.model.det_thresh,
-            model_dir=cfg.model.cache_folder,
+            model_dir=os.path.join(hydra.utils.get_original_cwd(), cfg.model.cache_folder),
             rpn_anchor_generator=rpn_anchor_generator,
             box_roi_pool=roi_pooler,
         )
@@ -77,7 +77,7 @@ def get_model_detection(num_classes, cfg, load_custom_model=False):
             box_detections_per_img=cfg.model.max_dets_per_image,
             box_nms_thresh=cfg.model.nms,
             box_score_thresh=cfg.model.det_thresh,
-            model_dir=cfg.model.cache_folder,
+            model_dir=os.path.join(hydra.utils.get_original_cwd(), cfg.model.cache_folder),
             rpn_anchor_generator=rpn_anchor_generator,
             box_roi_pool=roi_pooler,
         )
@@ -335,7 +335,7 @@ def main(hydra_cfg: DictConfig) -> None:
 
     experiment_name = f"{cfg.model.name}_{cfg.model.backbone}_coco_pretrained-{cfg.model.coco_model_pretrained}" \
                       f"_{cfg.dataset.training.name}_specular_split-{cfg.training.specular_split}" \
-                      f"_input_size-{cfg.dataset.training.params.input_size}_nms-{cfg.training.nms}" \
+                      f"_input_size-{cfg.dataset.training.params.input_size}_nms-{cfg.model.nms}" \
                       f"_val_patches_overlap-${cfg.dataset.validation.params.patches_overlap}" \
                       f"_det_thresh_for_counting-{cfg.training.det_thresh_for_counting}_batch_size-${cfg.training.batch_size}"
 
@@ -380,7 +380,7 @@ def main(hydra_cfg: DictConfig) -> None:
 
     train_dataset = PerineuralNetsBBoxDataset(
         data_root=cfg.dataset.training.root,
-        dataset_name=cfg.dataset.training.dataset_name,
+        dataset_name=cfg.dataset.training.name,
         transforms=get_bbox_transforms(train=True, crop_width=training_crop_width, crop_height=training_crop_height, min_visibility=cfg.training.bbox_discard_min_vis),
         list_frames=list_train_frames,
         min_visibility=cfg.training.bbox_discard_min_vis,
@@ -413,7 +413,7 @@ def main(hydra_cfg: DictConfig) -> None:
 
     val_dataset = PerineuralNetsBBoxDataset(
         data_root=cfg.dataset.validation.root,
-        dataset_name=cfg.dataset.validation.dataset_name,
+        dataset_name=cfg.dataset.validation.name,
         transforms=get_bbox_transforms(train=False),
         list_frames=list_val_frames,
         load_in_memory=False,

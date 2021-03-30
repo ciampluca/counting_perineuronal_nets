@@ -34,8 +34,23 @@ class PadToResizeFactor(object):
         ], additional_targets={'dmap': 'image'})
 
     def __call__(self, image, dmap=None):
+        image_to_tensor_flag = 0
         if isinstance(image, torch.Tensor):
+            if image.is_cuda:
+                device = image.get_device()
+            else:
+                device = torch.device("cpu")
             image = image.permute(1, 2, 0).cpu().numpy()
+            image_to_tensor_flag = 1
+
+        dmap_to_tensor_flag = 0
+        if dmap is not None and isinstance(dmap, torch.Tensor):
+            if dmap.is_cuda:
+                device = dmap.get_device()
+            else:
+                device = torch.device("cpu")
+            dmap = dmap.permute(1, 2, 0).cpu().numpy()
+            dmap_to_tensor_flag = 1
 
         if dmap is not None:
             transformed = self.transform(image=image, dmap=dmap)
@@ -43,6 +58,11 @@ class PadToResizeFactor(object):
         else:
             transformed = self.transform(image=image)
             image = transformed['image']
+
+        if image_to_tensor_flag:
+            image = F.to_tensor(image).to(device)
+        if dmap_to_tensor_flag:
+            dmap = torch.as_tensor(dmap, dtype=torch.float32).permute(2, 0, 1).to(device)
 
         return image, dmap
 

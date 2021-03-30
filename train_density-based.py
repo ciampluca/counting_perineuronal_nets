@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 
 from utils.misc import random_seed, get_dmap_transforms, save_checkpoint, normalize, update_dict
 from datasets.perineural_nets_dmap_dataset import PerineuralNetsDmapDataset
-from utils.transforms_dmaps import PadToSize, CropToFixedSize
+from utils.transforms_dmaps import PadToSize, CropToFixedSize, PadToResizeFactor
 
 # Creating logger
 log = logging.getLogger("Counting Nets")
@@ -35,6 +35,7 @@ def validate(model, val_dataloader, device, cfg, epoch):
     stride_h = crop_height - cfg.dataset.validation.params.patches_overlap
 
     epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim = 0.0, 0.0, 0.0, 0.0, 0.0
+    epoch_game_metrics = dict()
     for images, targets in tqdm.tqdm(val_dataloader):
         images = images.to(device)
         gt_dmaps = targets['dmap'].to(device)
@@ -98,6 +99,40 @@ def validate(model, val_dataloader, device, cfg, epoch):
         img_are = (abs(reconstructed_dmap.sum() - padded_gt_dmap.sum()) / torch.clamp(padded_gt_dmap.sum(), min=1)).item()
         img_ssim = ssim.ssim(padded_gt_dmap.unsqueeze(dim=0), reconstructed_dmap.unsqueeze(dim=0)).item()
 
+        # Updating errors
+        epoch_loss += img_loss
+        epoch_mae += img_mae
+        epoch_mse += img_mse
+        epoch_are += img_are
+        epoch_ssim += img_ssim
+
+        # Computing GAME metrics for the image
+        padded_image_for_game_metrics, padded_gt_dmap_for_game_metrics = PadToResizeFactor(resize_factor=12)(
+            image,
+            dmap=copy.deepcopy(gt_dmap)
+        )
+
+        img_for_game_metrics_w, img_for_game_metrics_h = padded_image_for_game_metrics.shape[2], padded_image_for_game_metrics.shape[1]
+
+        for L in range(1, 4):
+            epoch_game_metrics[f"GAME_{L}"] = 0.0
+            num_patches = 4*L
+            num_h_patches, num_v_patches = img_for_game_metrics_w / (num_patches/2), img_for_game_metrics_h/ (num_patches/2)
+            crop_width, crop_height = img_for_game_metrics_w / num_h_patches, img_for_game_metrics_h / num_v_patches
+
+            for i in range(0, img_for_game_metrics_h, crop_height):
+                for j in range(0, img_for_game_metrics_w, crop_width):
+                    pred_dmap_patch_for_game_metrics, gt_dmap_patch_for_game_metrics = CropToFixedSize()(
+                        copy.deepcopy(reconstructed_dmap),
+                        x_min=j,
+                        y_min=i,
+                        x_max=j + crop_width,
+                        y_max=i + crop_height,
+                        dmap=copy.deepcopy(padded_gt_dmap_for_game_metrics)
+                    )
+
+                    epoch_game_metrics[f"GAME_{L}"] += abs(pred_dmap_patch_for_game_metrics.sum() - gt_dmap_patch_for_game_metrics.sum())
+
         if cfg.training.debug and epoch % cfg.training.debug_freq == 0:
             debug_folder = os.path.join(os.getcwd(), 'output_debug')
             if not os.path.exists(debug_folder):
@@ -115,19 +150,14 @@ def validate(model, val_dataloader, device, cfg, epoch):
                 os.path.join(debug_folder, "reconstructed_{}_dmap_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch))
             )
 
-        # Updating errors
-        epoch_loss += img_loss
-        epoch_mae += img_mae
-        epoch_mse += img_mse
-        epoch_are += img_are
-        epoch_ssim += img_ssim
-
     # Computing mean of the errors
     epoch_mae /= len(val_dataloader.dataset)
     epoch_mse /= len(val_dataloader.dataset)
     epoch_are /= len(val_dataloader.dataset)
     epoch_loss /= len(val_dataloader.dataset)
     epoch_ssim /= len(val_dataloader.dataset)
+    for k, v in epoch_game_metrics.items():
+        epoch_game_metrics[k] = v / len(val_dataloader.dataset)
 
     stop = timeit.default_timer()
     total_time = stop - start
@@ -135,7 +165,7 @@ def validate(model, val_dataloader, device, cfg, epoch):
     hours, mins = divmod(mins, 60)
     log.info(f"Validation epoch {epoch} ended. Total running time: {hours}:{mins}:{secs}.")
 
-    return epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim
+    return epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim, epoch_game_metrics
 
 
 @hydra.main(config_path="conf/density_based", config_name="config")
@@ -241,8 +271,10 @@ def main(hydra_cfg: DictConfig) -> None:
     best_validation_mae = float(sys.maxsize)
     best_validation_mse = float(sys.maxsize)
     best_validation_are = float(sys.maxsize)
+    best_validation_game_1, best_validation_game_2, best_validation_game_3 = float(sys.maxsize), float(sys.maxsize), float(sys.maxsize)
     best_validation_ssim = 0.0
     min_mae_epoch, min_mse_epoch, min_are_epoch, best_ssim_epoch = -1, -1, -1, -1
+    min_game_1_epoch, min_game_2_epoch, min_game_3_epoch = -1, -1, -1
 
     # Creating model
     log.info(f"Creating model")
@@ -302,10 +334,16 @@ def main(hydra_cfg: DictConfig) -> None:
         best_validation_mse = checkpoint['best_mse']
         best_validation_are = checkpoint['best_are']
         best_validation_ssim = checkpoint['best_ssim']
+        best_validation_game_1 = checkpoint['best_game_1']
+        best_validation_game_2 = checkpoint['best_game_1']
+        best_validation_game_3 = checkpoint['best_game_1']
         min_mae_epoch = checkpoint['min_mae_epoch']
         min_mse_epoch = checkpoint['min_mse_epoch']
         min_are_epoch = checkpoint['min_are_epoch']
         best_ssim_epoch = checkpoint['best_ssim_epoch']
+        min_game_1_epoch = checkpoint['min_game_1_epoch']
+        min_game_2_epoch = checkpoint['min_game_2_epoch']
+        min_game_3_epoch = checkpoint['min_game_3_epoch']
 
     ################
     ################
@@ -348,7 +386,7 @@ def main(hydra_cfg: DictConfig) -> None:
 
         # Validating
         if epoch % cfg.training.val_freq == 0:
-            epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim = \
+            epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim, epoch_game_metrics = \
                 validate(model, val_dataloader, device, cfg, epoch)
 
             # Updating tensorboard
@@ -357,6 +395,8 @@ def main(hydra_cfg: DictConfig) -> None:
             writer.add_scalar('Validation on {}/ARE'.format(cfg.dataset.validation.name), epoch_are, epoch)
             writer.add_scalar('Validation on {}/Loss'.format(cfg.dataset.validation.name), epoch_loss, epoch)
             writer.add_scalar('Validation on {}/SSIM'.format(cfg.dataset.validation.name), epoch_ssim, epoch)
+            for k, v in epoch_game_metrics:
+                writer.add_scalar('Validation on {}/{}'.format(cfg.dataset.validation.name, k), v, epoch)
 
             # Eventually saving best models
             if epoch_mae < best_validation_mae:
@@ -395,14 +435,54 @@ def main(hydra_cfg: DictConfig) -> None:
                     'epoch': epoch,
                     'best_ssim': epoch_ssim,
                 }, best_models_folder, best_model=cfg.dataset.validation.name + "_ssim")
+            epoch_game_1, epoch_game_2, epoch_game_3 = 0.0, 0.0, 0.0
+            for k, v in epoch_game_metrics:
+                L = int(k.rsplit("_", 1)[1])
+                if L == 1:
+                    epoch_game_1 = v
+                elif L == 2:
+                    epoch_game_2 = v
+                elif L == 3:
+                    epoch_game_3 = v
+            if epoch_game_1 > best_validation_game_1:
+                best_validation_game_1 = epoch_game_1
+                min_game_1_epoch = epoch
+                save_checkpoint({
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'epoch': epoch,
+                    'best_ssim': epoch_game_1,
+                }, best_models_folder, best_model=cfg.dataset.validation.name + "_game_1")
+            if epoch_game_2 > best_validation_game_2:
+                best_validation_game_2 = epoch_game_2
+                min_game_1_epoch = epoch
+                save_checkpoint({
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'epoch': epoch,
+                    'best_ssim': epoch_game_2,
+                }, best_models_folder, best_model=cfg.dataset.validation.name + "_game_2")
+            if epoch_game_3 > best_validation_game_3:
+                best_validation_game_3 = epoch_game_3
+                min_game_3_epoch = epoch
+                save_checkpoint({
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'epoch': epoch,
+                    'best_ssim': epoch_game_3,
+                }, best_models_folder, best_model=cfg.dataset.validation.name + "_game_3")
 
             nl = '\n'
             log.info(f"Epoch: {epoch}, Dataset: {cfg.dataset.validation.name}, MAE: {epoch_mae}, MSE: {epoch_mse}, "
-                     f"ARE: {epoch_are}, SSIM: {epoch_ssim}, {nl}, "
+                     f"ARE: {epoch_are}, SSIM: {epoch_ssim}, "
+                     f"GAME_1: {epoch_game_1}, GAME_2: {epoch_game_2}, GAME_3: {epoch_game_3}, {nl}, "
                      f"Min MAE: {best_validation_mae}, Min MAE Epoch: {min_mae_epoch}, {nl}, "
                      f"Min MSE: {best_validation_mse}, Min MSE Epoch: {min_mse_epoch}, {nl}, "
                      f"Min ARE: {best_validation_are}, Min ARE Epoch: {min_are_epoch}, {nl}, "
-                     f"Best SSIM: {best_validation_ssim}, Best SSIM Epoch: {best_ssim_epoch}")
+                     f"Best SSIM: {best_validation_ssim}, Best SSIM Epoch: {best_ssim_epoch}, "
+                     f"Best GAME_1: {best_validation_game_1}, Best GAME_1 Epoch: {min_game_1_epoch}, "
+                     f"Best GAME_2: {best_validation_game_2}, Best GAME_2 Epoch: {min_game_2_epoch}, "
+                     f"Best GAME_3: {best_validation_game_3}, Best GAME_3 Epoch: {min_game_3_epoch}")
 
             # Saving last model
             save_checkpoint({
@@ -414,10 +494,16 @@ def main(hydra_cfg: DictConfig) -> None:
                 'best_mse': best_validation_mse,
                 'best_are': best_validation_are,
                 'best_ssim': best_validation_ssim,
+                'best_game_1': best_validation_game_1,
+                'best_game_2': best_validation_game_2,
+                'best_game_3': best_validation_game_3,
                 'min_mae_epoch': min_mae_epoch,
                 'min_mse_epoch': min_mse_epoch,
                 'min_are_epoch': min_are_epoch,
                 'best_ssim_epoch': best_ssim_epoch,
+                'min_game_1_epoch': min_game_1_epoch,
+                'min_game_2_epoch': min_game_2_epoch,
+                'min_game_3_epoch': min_game_3_epoch,
                 'tensorboard_working_dir': writer.get_logdir()
             }, os.getcwd())
 
