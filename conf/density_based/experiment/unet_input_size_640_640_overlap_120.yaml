@@ -11,7 +11,7 @@ density_based_unet:
     validation:
       params:
         input_size: [640, 640]
-        patches_overlap: 0
+        patches_overlap: 120
 
   training:
     batch_size: 4

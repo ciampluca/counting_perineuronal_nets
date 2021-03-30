@@ -7,11 +7,11 @@ density_based_unet:
   dataset:
     training:
       params:
-        input_size: [640, 640]
+        input_size: [320, 320]
     validation:
       params:
-        input_size: [640, 640]
+        input_size: [320, 320]
         patches_overlap: 0
 
   training:
-    batch_size: 4
+    batch_size: 6

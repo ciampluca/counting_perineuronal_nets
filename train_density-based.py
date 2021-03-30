@@ -15,9 +15,9 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 
-from utils.misc import random_seed, get_dmap_transforms, save_checkpoint, normalize, update_dict
+from utils.misc import random_seed, get_dmap_transforms, save_checkpoint, normalize, compute_GAME, update_dict
 from datasets.perineural_nets_dmap_dataset import PerineuralNetsDmapDataset
-from utils.transforms_dmaps import PadToSize, CropToFixedSize, PadToResizeFactor
+from utils.transforms_dmaps import PadToSize, CropToFixedSize
 
 # Creating logger
 log = logging.getLogger("Counting Nets")
@@ -30,9 +30,9 @@ def validate(model, val_dataloader, device, cfg, epoch):
     log.info(f"Start validation of the epoch {epoch}")
     start = timeit.default_timer()
 
-    crop_width, crop_height = cfg.dataset.validation.params.input_size
-    stride_w = crop_width - cfg.dataset.validation.params.patches_overlap
-    stride_h = crop_height - cfg.dataset.validation.params.patches_overlap
+    crop_w, crop_h = cfg.dataset.validation.params.input_size
+    stride_w = crop_w - cfg.dataset.validation.params.patches_overlap
+    stride_h = crop_h - cfg.dataset.validation.params.patches_overlap
 
     epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim = 0.0, 0.0, 0.0, 0.0, 0.0
     epoch_game_metrics = dict()
@@ -49,9 +49,9 @@ def validate(model, val_dataloader, device, cfg, epoch):
         img_w, img_h = image.shape[2], image.shape[1]
         num_h_patches, num_v_patches = math.ceil(img_w / stride_w), math.ceil(img_h / stride_h)
         img_w_padded = (num_h_patches - math.floor(img_w / stride_w)) * (
-                    stride_w * num_h_patches + (crop_width - stride_w))
+                    stride_w * num_h_patches + (crop_w - stride_w))
         img_h_padded = (num_v_patches - math.floor(img_h / stride_h)) * (
-                    stride_h * num_v_patches + (crop_height - stride_h))
+                    stride_h * num_v_patches + (crop_h - stride_h))
         padded_image, padded_gt_dmap = PadToSize()(
             image=image,
             min_width=img_w_padded,
@@ -73,19 +73,19 @@ def validate(model, val_dataloader, device, cfg, epoch):
                     padded_image,
                     x_min=j,
                     y_min=i,
-                    x_max=j + crop_width,
-                    y_max=i + crop_height,
+                    x_max=j + crop_w,
+                    y_max=i + crop_h,
                     dmap=copy.deepcopy(padded_gt_dmap)
                 )
 
-                normalization_map[:, i:i + crop_height, j:j + crop_width] += 1.0
+                normalization_map[:, i:i + crop_h, j:j + crop_w] += 1.0
 
                 # Computing dmap for the patch
                 pred_dmap_patch = model(image_patch.unsqueeze(dim=0).to(device))
                 if cfg.model.name == "UNet":
                     pred_dmap_patch /= 1000
 
-                reconstructed_dmap[:, i:i + crop_height, j:j + crop_width] += pred_dmap_patch.squeeze(dim=0)
+                reconstructed_dmap[:, i:i + crop_h, j:j + crop_w] += pred_dmap_patch.squeeze(dim=0)
 
         reconstructed_dmap /= normalization_map[0].unsqueeze(dim=0)
         reconstructed_dmap = reconstructed_dmap[:, h_pad_top:img_h_padded - h_pad_bottom,
@@ -96,8 +96,11 @@ def validate(model, val_dataloader, device, cfg, epoch):
         img_loss = loss.item()
         img_mae = abs(reconstructed_dmap.sum() - gt_dmap.sum()).item()
         img_mse = ((reconstructed_dmap.sum() - gt_dmap.sum()) ** 2).item()
-        img_are = (abs(reconstructed_dmap.sum() - gt_dmap.sum()) / torch.clamp(padded_gt_dmap.sum(), min=1)).item()
+        img_are = (abs(reconstructed_dmap.sum() - gt_dmap.sum()) / torch.clamp(gt_dmap.sum(), min=1)).item()
         img_ssim = ssim.ssim(gt_dmap.unsqueeze(dim=0), reconstructed_dmap.unsqueeze(dim=0)).item()
+
+        # Computing GAME metrics for the image
+        epoch_game_metrics = compute_GAME(img_w, img_h, gt_dmap, reconstructed_dmap)
 
         # Updating errors
         epoch_loss += img_loss
@@ -106,38 +109,10 @@ def validate(model, val_dataloader, device, cfg, epoch):
         epoch_are += img_are
         epoch_ssim += img_ssim
 
-        # Computing GAME metrics for the image
-        padded_image_for_game_metrics, padded_gt_dmap_for_game_metrics = PadToResizeFactor(resize_factor=12)(
-            image,
-            dmap=copy.deepcopy(gt_dmap)
-        )
-
-        img_for_game_metrics_w, img_for_game_metrics_h = padded_image_for_game_metrics.shape[2], padded_image_for_game_metrics.shape[1]
-
-        for L in range(1, 4):
-            epoch_game_metrics[f"GAME_{L}"] = 0.0
-            num_patches = 4*L
-            num_h_patches, num_v_patches = \
-                math.floor(img_for_game_metrics_w / (num_patches/2)), math.floor(img_for_game_metrics_h / (num_patches/2))
-            crop_width, crop_height = img_for_game_metrics_w / num_h_patches, img_for_game_metrics_h / num_v_patches
-
-            for i in range(0, img_for_game_metrics_h, crop_height):
-                for j in range(0, img_for_game_metrics_w, crop_width):
-                    pred_dmap_patch_for_game_metrics, gt_dmap_patch_for_game_metrics = CropToFixedSize()(
-                        copy.deepcopy(reconstructed_dmap),
-                        x_min=j,
-                        y_min=i,
-                        x_max=j + crop_width,
-                        y_max=i + crop_height,
-                        dmap=copy.deepcopy(padded_gt_dmap_for_game_metrics)
-                    )
-
-                    epoch_game_metrics[f"GAME_{L}"] += abs(pred_dmap_patch_for_game_metrics.sum() - gt_dmap_patch_for_game_metrics.sum())
-
         if cfg.training.debug and epoch % cfg.training.debug_freq == 0:
-            debug_folder = os.path.join(os.getcwd(), 'output_debug')
-            if not os.path.exists(debug_folder):
-                os.makedirs(debug_folder)
+            debug_dir = os.path.join(os.getcwd(), 'output_debug')
+            if not os.path.exists(debug_dir):
+                os.makedirs(debug_dir)
             num_nets = torch.sum(reconstructed_dmap)
             gt_num_nets = torch.sum(gt_dmap)
             pil_reconstructed_dmap = Image.fromarray(
@@ -145,11 +120,11 @@ def validate(model, val_dataloader, device, cfg, epoch):
             draw = ImageDraw.Draw(pil_reconstructed_dmap)
             # Add text to image
             text = f"Det Num of Nets: {num_nets}, GT Num of Nets: {gt_num_nets}"
-            font_path = "./font/LEMONMILK-RegularItalic.otf"
+            font_path = os.path.join(hydra.utils.get_original_cwd(), "./font/LEMONMILK-RegularItalic.otf")
             font = ImageFont.truetype(font_path, 100)
             draw.text((75, 75), text=text, font=font, fill=191)
             pil_reconstructed_dmap.save(
-                os.path.join(debug_folder, "reconstructed_{}_dmap_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch))
+                os.path.join(debug_dir, "reconstructed_{}_dmap_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch))
             )
 
     # Computing mean of the errors
@@ -176,9 +151,9 @@ def main(hydra_cfg: DictConfig) -> None:
     for _, v in hydra_cfg.items():
         update_dict(cfg, v)
     experiment_name = f"{cfg.model.name}_{cfg.dataset.training.name}_specular_split-{cfg.training.specular_split}" \
-               f"_input_size-{cfg.dataset.training.params.input_size}_loss-${cfg.model.loss.name}" \
-               f"_aux_loss-${cfg.model.aux_loss.name}_val_patches_overlap-${cfg.dataset.validation.params.patches_overlap}" \
-               f"_batch_size-${cfg.training.batch_size}"
+               f"_input_size-{cfg.dataset.training.params.input_size}_loss-{cfg.model.loss.name}" \
+               f"_aux_loss-{cfg.model.aux_loss.name}_val_patches_overlap-{cfg.dataset.validation.params.patches_overlap}" \
+               f"_batch_size-{cfg.training.batch_size}"
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(cfg.gpu)
     device = torch.device(f'cuda' if cfg.gpu is not None else 'cpu')
@@ -477,13 +452,13 @@ def main(hydra_cfg: DictConfig) -> None:
             nl = '\n'
             log.info(f"Epoch: {epoch}, Dataset: {cfg.dataset.validation.name}, MAE: {epoch_mae}, MSE: {epoch_mse}, "
                      f"ARE: {epoch_are}, SSIM: {epoch_ssim}, "
-                     f"GAME_1: {epoch_game_1}, GAME_2: {epoch_game_2}, GAME_3: {epoch_game_3}, {nl}, "
-                     f"Min MAE: {best_validation_mae}, Min MAE Epoch: {min_mae_epoch}, {nl}, "
-                     f"Min MSE: {best_validation_mse}, Min MSE Epoch: {min_mse_epoch}, {nl}, "
-                     f"Min ARE: {best_validation_are}, Min ARE Epoch: {min_are_epoch}, {nl}, "
-                     f"Best SSIM: {best_validation_ssim}, Best SSIM Epoch: {best_ssim_epoch}, "
-                     f"Best GAME_1: {best_validation_game_1}, Best GAME_1 Epoch: {min_game_1_epoch}, "
-                     f"Best GAME_2: {best_validation_game_2}, Best GAME_2 Epoch: {min_game_2_epoch}, "
+                     f"GAME_1: {epoch_game_1}, GAME_2: {epoch_game_2}, GAME_3: {epoch_game_3}, {nl} "
+                     f"Min MAE: {best_validation_mae}, Min MAE Epoch: {min_mae_epoch}, {nl} "
+                     f"Min MSE: {best_validation_mse}, Min MSE Epoch: {min_mse_epoch}, {nl} "
+                     f"Min ARE: {best_validation_are}, Min ARE Epoch: {min_are_epoch}, {nl} "
+                     f"Best SSIM: {best_validation_ssim}, Best SSIM Epoch: {best_ssim_epoch}, {nl} "
+                     f"Best GAME_1: {best_validation_game_1}, Best GAME_1 Epoch: {min_game_1_epoch}, {nl} "
+                     f"Best GAME_2: {best_validation_game_2}, Best GAME_2 Epoch: {min_game_2_epoch}, {nl} "
                      f"Best GAME_3: {best_validation_game_3}, Best GAME_3 Epoch: {min_game_3_epoch}")
 
             # Saving last model

@@ -10,6 +10,7 @@ import collections.abc
 
 import torch
 import torch.distributed as dist
+import torchvision.transforms.functional as F
 
 import utils.transforms_dmaps as dmap_custom_T
 import utils.transforms_bbs as bbox_custom_T
@@ -479,5 +480,44 @@ def update_dict(d, u):
         else:
             d[k] = v
     return d
+
+
+
+def compute_GAME(img_w, img_h, gt_dmap, reconstructed_dmap):
+    epoch_game_metrics = dict()
+
+    pad_remained = img_h % 12
+    pad_h = 12 - pad_remained if pad_remained > 0 else 0
+    h_pad_top = pad_h // 2
+    h_pad_bottom = pad_h - h_pad_top
+
+    pad_remained = img_w % 12
+    pad_w = 12 - pad_remained if pad_remained > 0 else 0
+    w_pad_left = pad_w // 2
+    w_pad_right = pad_w - w_pad_left
+
+    padded_gt_dmap_for_game_metrics = F.pad(gt_dmap, (w_pad_left, h_pad_top, w_pad_right, h_pad_bottom))
+    padded_pred_dmap_for_game_metrics = F.pad(reconstructed_dmap, (w_pad_left, h_pad_top, w_pad_right, h_pad_bottom))
+
+    w_for_game_metrics, h_for_game_metrics = padded_gt_dmap_for_game_metrics.shape[2], \
+                                             padded_gt_dmap_for_game_metrics.shape[1]
+
+    for L in range(1, 4):
+        epoch_game_metrics[f"GAME_{L}"] = 0.0
+        num_patches = 4 * L
+        crop_width, crop_height = int(w_for_game_metrics / (num_patches / 2)), int(
+            h_for_game_metrics / (num_patches / 2))
+
+        for i in range(0, h_for_game_metrics, crop_height):
+            for j in range(0, w_for_game_metrics, crop_width):
+                pred_dmap_patch_for_game_metrics = padded_pred_dmap_for_game_metrics[:, i:i + crop_width,
+                                                   j:j + crop_height]
+                gt_dmap_patch_for_game_metrics = padded_gt_dmap_for_game_metrics[:, i:i + crop_width, j:j + crop_height]
+
+                epoch_game_metrics[f"GAME_{L}"] += abs(
+                    pred_dmap_patch_for_game_metrics.sum() - gt_dmap_patch_for_game_metrics.sum())
+
+    return epoch_game_metrics
+
 
 
