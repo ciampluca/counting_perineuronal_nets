@@ -14,4 +14,4 @@ density_based_csrnet:
         patches_overlap: 0
 
   training:
-    batch_size: 12
+    batch_size: 32

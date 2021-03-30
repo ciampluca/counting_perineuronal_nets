@@ -1,0 +1,75 @@
+# @package _group_
+dataset:
+    training:
+        name: "perineural_nets"
+        root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
+        params:
+            all_frames  : ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
+            # Split ttVtt - ttVtt - .... --> used only if specular_split is false
+            train_frames: ['014', '015', '017', '019', '020', '021', '023', '026', '027', '028', '035', '036', '041', '042', '044', '048', '049', '050', '052', '053']
+            input_size: [640, 640]      # w, h
+            load_in_memory: False
+            percentage: null
+    validation:
+        name: "perineural_nets"
+        root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
+        params:
+            all_frames  : ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
+            # Split ttVtt - ttVtt - .... --> used only if specular_split is false
+            val_frames  : ['016', '022', '034', '043', '051']
+            input_size: [640, 640]      # w, h
+            load_in_memory: False
+            percentage: null
+            patches_overlap: 0      # in pixels
+
+
+model:
+    name: UNet        # can be CSRNet or UNet
+    cache_folder: ./model_zoo
+    pretrained: null     # path to pretrained weights, optimizer states will not restored
+    resume: null    # path to last trained model, will restore optimizer states
+    loss:
+        name:
+            MSELoss
+    aux_loss:
+        name: null      # can be "SSIM" or null
+        params:
+            windows_size: 11
+        lambda_multiplier: 10
+    params:
+        load_weights: False
+        in_channels: 3
+        n_classes: 1
+        padding: True
+        batch_norm: True
+
+
+optimizer:
+    name: Adam
+    params:
+        lr: 0.00001
+    scheduler:
+        name: MultiStepLR
+        params:
+            milestones: [50, 75, 100]
+            gamma: 0.1
+
+
+training:
+    batch_size: 8
+    val_batch_size: 1
+    num_workers: 4
+    epochs: 100
+    val_freq: 1
+    debug: true
+    debug_freq: 3
+    log_loss: 20
+    precomputed_patches: true
+    specular_split: true
+
+
+seed: 10
+gpu : 0      # index of the gpu you want to use, null for cpu
+
+
+

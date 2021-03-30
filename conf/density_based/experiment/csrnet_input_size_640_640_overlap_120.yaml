@@ -12,3 +12,6 @@ density_based_csrnet:
       params:
         input_size: [640, 640]
         patches_overlap: 120
+
+  training:
+    batch_size: 12

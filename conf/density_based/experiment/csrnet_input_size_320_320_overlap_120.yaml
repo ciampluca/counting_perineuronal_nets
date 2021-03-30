@@ -7,11 +7,11 @@ density_based_csrnet:
   dataset:
     training:
       params:
-        input_size: [224, 224]
+        input_size: [320, 320]
     validation:
       params:
-        input_size: [224, 224]
+        input_size: [320, 320]
         patches_overlap: 120
 
   training:
-    batch_size: 12
+    batch_size: 24

@@ -267,6 +267,13 @@ def validate(model, val_dataloader, device, cfg, epoch):
                 debug_dir = os.path.join(os.getcwd(), 'output_debug')
                 if not os.path.exists(debug_dir):
                     os.makedirs(debug_dir)
+                # Removing pad from image
+                h_pad_top = int((img_h_padded - img_h) / 2.0)
+                h_pad_bottom = img_h_padded - img_h - h_pad_top
+                w_pad_left = int((img_w_padded - img_w) / 2.0)
+                w_pad_right = img_w_padded - img_w - w_pad_left
+                reconstructed_image = reconstructed_image[:, h_pad_top:img_h_padded - h_pad_bottom,
+                                      w_pad_left:img_w_padded - w_pad_right]
                 # Drawing det bbs
                 pil_reconstructed_image = to_pil_image(reconstructed_image)
                 draw = ImageDraw.Draw(pil_reconstructed_image)

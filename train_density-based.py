@@ -56,7 +56,7 @@ def validate(model, val_dataloader, device, cfg, epoch):
             image=image,
             min_width=img_w_padded,
             min_height=img_h_padded,
-            dmap=gt_dmap
+            dmap=copy.deepcopy(gt_dmap)
         )
 
         h_pad_top = int((img_h_padded - img_h) / 2.0)
@@ -92,12 +92,12 @@ def validate(model, val_dataloader, device, cfg, epoch):
                              w_pad_left:img_w_padded - w_pad_right]
 
         # Updating metrics
-        loss = torch.nn.MSELoss()(reconstructed_dmap.unsqueeze(dim=0), padded_gt_dmap.unsqueeze(dim=0))
+        loss = torch.nn.MSELoss()(reconstructed_dmap.unsqueeze(dim=0), gt_dmap.unsqueeze(dim=0))
         img_loss = loss.item()
-        img_mae = abs(reconstructed_dmap.sum() - padded_gt_dmap.sum()).item()
-        img_mse = ((reconstructed_dmap.sum() - padded_gt_dmap.sum()) ** 2).item()
-        img_are = (abs(reconstructed_dmap.sum() - padded_gt_dmap.sum()) / torch.clamp(padded_gt_dmap.sum(), min=1)).item()
-        img_ssim = ssim.ssim(padded_gt_dmap.unsqueeze(dim=0), reconstructed_dmap.unsqueeze(dim=0)).item()
+        img_mae = abs(reconstructed_dmap.sum() - gt_dmap.sum()).item()
+        img_mse = ((reconstructed_dmap.sum() - gt_dmap.sum()) ** 2).item()
+        img_are = (abs(reconstructed_dmap.sum() - gt_dmap.sum()) / torch.clamp(padded_gt_dmap.sum(), min=1)).item()
+        img_ssim = ssim.ssim(gt_dmap.unsqueeze(dim=0), reconstructed_dmap.unsqueeze(dim=0)).item()
 
         # Updating errors
         epoch_loss += img_loss
@@ -138,11 +138,12 @@ def validate(model, val_dataloader, device, cfg, epoch):
             if not os.path.exists(debug_folder):
                 os.makedirs(debug_folder)
             num_nets = torch.sum(reconstructed_dmap)
+            gt_num_nets = torch.sum(gt_dmap)
             pil_reconstructed_dmap = Image.fromarray(
                 normalize(reconstructed_dmap.squeeze(dim=0).cpu().numpy()).astype('uint8'))
             draw = ImageDraw.Draw(pil_reconstructed_dmap)
             # Add text to image
-            text = f"Num of Nets: {num_nets}"
+            text = f"Det Num of Nets: {num_nets}, GT Num of Nets: {gt_num_nets}"
             font_path = "./font/LEMONMILK-RegularItalic.otf"
             font = ImageFont.truetype(font_path, 100)
             draw.text((75, 75), text=text, font=font, fill=191)
