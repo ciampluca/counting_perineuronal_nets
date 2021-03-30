@@ -117,7 +117,8 @@ def validate(model, val_dataloader, device, cfg, epoch):
         for L in range(1, 4):
             epoch_game_metrics[f"GAME_{L}"] = 0.0
             num_patches = 4*L
-            num_h_patches, num_v_patches = img_for_game_metrics_w / (num_patches/2), img_for_game_metrics_h/ (num_patches/2)
+            num_h_patches, num_v_patches = \
+                math.floor(img_for_game_metrics_w / (num_patches/2)), math.floor(img_for_game_metrics_h / (num_patches/2))
             crop_width, crop_height = img_for_game_metrics_w / num_h_patches, img_for_game_metrics_h / num_v_patches
 
             for i in range(0, img_for_game_metrics_h, crop_height):

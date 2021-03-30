@@ -263,34 +263,10 @@ def validate(model, val_dataloader, device, cfg, epoch):
                 if float(det_score) > cfg.training.det_thresh_for_counting:
                     img_det_num += 1
 
-            if cfg.training.debug and epoch % cfg.training.debug_freq == 0:
-                debug_dir = os.path.join(os.getcwd(), 'output_debug')
-                if not os.path.exists(debug_dir):
-                    os.makedirs(debug_dir)
-                # Removing pad from image
-                h_pad_top = int((img_h_padded - img_h) / 2.0)
-                h_pad_bottom = img_h_padded - img_h - h_pad_top
-                w_pad_left = int((img_w_padded - img_w) / 2.0)
-                w_pad_right = img_w_padded - img_w - w_pad_left
-                reconstructed_image = reconstructed_image[:, h_pad_top:img_h_padded - h_pad_bottom,
-                                      w_pad_left:img_w_padded - w_pad_right]
-                # Drawing det bbs
-                pil_reconstructed_image = to_pil_image(reconstructed_image)
-                draw = ImageDraw.Draw(pil_reconstructed_image)
-                for bb in final_bbs:
-                    draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='red', width=3)
-                # Add text to image
-                text = "Num of Nets: {}".format(img_det_num)
-                font_path = "./font/LEMONMILK-RegularItalic.otf"
-                font = ImageFont.truetype(font_path, 100)
-                draw.text((75, 75), text=text, font=font, fill=(0, 191, 255))
-                pil_reconstructed_image.save(
-                    os.path.join(debug_dir, "reconstructed_{}_with_bbs_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch)))
-
-            # Updating errors
+            # Updating counting errors
             img_mae = abs(img_det_num - img_gt_num)
             img_mse = (img_det_num - img_gt_num) ** 2
-            img_are = abs(img_det_num - img_gt_num) / np.clip(img_gt_num, 1)
+            img_are = abs(img_det_num - img_gt_num) / np.clip(img_gt_num, 1, a_max=None)
             epoch_mae += img_mae
             epoch_mse += img_mse
             epoch_are += img_are
@@ -310,6 +286,30 @@ def validate(model, val_dataloader, device, cfg, epoch):
                 'gt_bbs': target['boxes'].data.cpu().tolist(),
                 'img_dim': (img_w, img_h),
             }
+
+            if cfg.training.debug and epoch % cfg.training.debug_freq == 0:
+                debug_dir = os.path.join(os.getcwd(), 'output_debug')
+                if not os.path.exists(debug_dir):
+                    os.makedirs(debug_dir)
+                # Removing pad from image
+                h_pad_top = int((img_h_padded - img_h) / 2.0)
+                h_pad_bottom = img_h_padded - img_h - h_pad_top
+                w_pad_left = int((img_w_padded - img_w) / 2.0)
+                w_pad_right = img_w_padded - img_w - w_pad_left
+                reconstructed_image = reconstructed_image[:, h_pad_top:img_h_padded - h_pad_bottom,
+                                      w_pad_left:img_w_padded - w_pad_right]
+                # Drawing det bbs
+                pil_reconstructed_image = to_pil_image(reconstructed_image)
+                draw = ImageDraw.Draw(pil_reconstructed_image)
+                for bb in final_bbs:
+                    draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='red', width=3)
+                # Add text to image
+                text = f"Det Num of Nets: {img_det_num}, GT Num of Nets: {img_gt_num}"
+                font_path = os.path.join(hydra.utils.get_original_cwd(), "./font/LEMONMILK-RegularItalic.otf")
+                font = ImageFont.truetype(font_path, 100)
+                draw.text((75, 75), text=text, font=font, fill=(0, 191, 255))
+                pil_reconstructed_image.save(
+                    os.path.join(debug_dir, "reconstructed_{}_with_bbs_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch)))
 
     stop = timeit.default_timer()
     total_time = stop - start
@@ -522,14 +522,14 @@ def main(hydra_cfg: DictConfig) -> None:
                 validate(model, val_dataloader, device, cfg, epoch)
 
             # Updating tensorboard
-            writer.add_scalar('Validation on {}/MAE'.format(cfg.dataset.validation.dataset_name), epoch_mae, epoch)
-            writer.add_scalar('Validation on {}/MSE'.format(cfg.dataset.validation.dataset_name), epoch_mse, epoch)
-            writer.add_scalar('Validation on {}/ARE'.format(cfg.dataset.validation.dataset_name), epoch_are, epoch)
+            writer.add_scalar('Validation on {}/MAE'.format(cfg.dataset.validation.name), epoch_mae, epoch)
+            writer.add_scalar('Validation on {}/MSE'.format(cfg.dataset.validation.name), epoch_mse, epoch)
+            writer.add_scalar('Validation on {}/ARE'.format(cfg.dataset.validation.name), epoch_are, epoch)
             epoch_coco_map_05 = epoch_coco_evaluator.coco_eval['bbox'].stats[1]
-            writer.add_scalar('Validation on {}/COCO mAP'.format(cfg.dataset.validation.dataset_name), epoch_coco_map_05, epoch)
-            writer.add_scalar('Validation on {}/Det mAP'.format(cfg.dataset.validation.dataset_name), epoch_det_map, epoch)
-            writer.add_scalar('Validation on {}/Dice Score'.format(cfg.dataset.validation.dataset_name), epoch_dice, epoch)
-            writer.add_scalar('Validation on {}/Jaccard Index'.format(cfg.dataset.validation.dataset_name), epoch_jaccard, epoch)
+            writer.add_scalar('Validation on {}/COCO mAP'.format(cfg.dataset.validation.name), epoch_coco_map_05, epoch)
+            writer.add_scalar('Validation on {}/Det mAP'.format(cfg.dataset.validation.name), epoch_det_map, epoch)
+            writer.add_scalar('Validation on {}/Dice Score'.format(cfg.dataset.validation.name), epoch_dice, epoch)
+            writer.add_scalar('Validation on {}/Jaccard Index'.format(cfg.dataset.validation.name), epoch_jaccard, epoch)
 
             # Eventually saving best models
             if epoch_mae < best_validation_mae:
@@ -540,7 +540,7 @@ def main(hydra_cfg: DictConfig) -> None:
                     'optimizer': optimizer.state_dict(),
                     'epoch': epoch,
                     'best_mae': epoch_mae,
-                }, best_models_folder, best_model=cfg.dataset.validation.dataset_name + "_mae")
+                }, best_models_folder, best_model=cfg.dataset.validation.name + "_mae")
             if epoch_mse < best_validation_mse:
                 best_validation_mse = epoch_mse
                 min_mse_epoch = epoch
@@ -549,7 +549,7 @@ def main(hydra_cfg: DictConfig) -> None:
                     'optimizer': optimizer.state_dict(),
                     'epoch': epoch,
                     'best_mse': epoch_mse,
-                }, best_models_folder, best_model=cfg.dataset.validation.dataset_name + "_mse")
+                }, best_models_folder, best_model=cfg.dataset.validation.name + "_mse")
             if epoch_are < best_validation_are:
                 best_validation_are = epoch_are
                 min_are_epoch = epoch
@@ -558,7 +558,7 @@ def main(hydra_cfg: DictConfig) -> None:
                     'optimizer': optimizer.state_dict(),
                     'epoch': epoch,
                     'best_mse': epoch_are,
-                }, best_models_folder, best_model=cfg.dataset.validation.dataset_name + "_are")
+                }, best_models_folder, best_model=cfg.dataset.validation.name + "_are")
             if epoch_det_map >= best_validation_map:
                 best_validation_map = epoch_det_map
                 best_map_epoch = epoch
@@ -567,7 +567,7 @@ def main(hydra_cfg: DictConfig) -> None:
                     'optimizer': optimizer.state_dict(),
                     'epoch': epoch,
                     'best_map': epoch_det_map,
-                }, best_models_folder, best_model=cfg.dataset.validation.dataset_name + "_map")
+                }, best_models_folder, best_model=cfg.dataset.validation.name + "_map")
             if epoch_coco_map_05 >= best_validation_coco_map:
                 best_validation_coco_map = epoch_coco_map_05
                 best_coco_map_epoch = epoch
@@ -576,7 +576,7 @@ def main(hydra_cfg: DictConfig) -> None:
                     'optimizer': optimizer.state_dict(),
                     'epoch': epoch,
                     'best_coco_map': epoch_coco_map_05,
-                }, best_models_folder, best_model=cfg.dataset.validation.dataset_name + "_coco_map_05")
+                }, best_models_folder, best_model=cfg.dataset.validation.name + "_coco_map_05")
             if epoch_dice >= best_validation_dice:
                 best_validation_dice = epoch_dice
                 best_dice_epoch = epoch
@@ -585,7 +585,7 @@ def main(hydra_cfg: DictConfig) -> None:
                     'optimizer': optimizer.state_dict(),
                     'epoch': epoch,
                     'best_dice': epoch_dice,
-                }, best_models_folder, best_model=cfg.dataset.validation.dataset_name + "_dice")
+                }, best_models_folder, best_model=cfg.dataset.validation.name + "_dice")
             if epoch_jaccard >= best_validation_jaccard:
                 best_validation_jaccard = epoch_jaccard
                 best_jaccard_epoch = epoch
@@ -594,7 +594,7 @@ def main(hydra_cfg: DictConfig) -> None:
                     'optimizer': optimizer.state_dict(),
                     'epoch': epoch,
                     'best_jaccard': epoch_jaccard,
-                }, best_models_folder, best_model=cfg.dataset.validation.dataset_name + "_jaccard")
+                }, best_models_folder, best_model=cfg.dataset.validation.name + "_jaccard")
 
             nl = '\n'
             log.info(f"Epoch: {epoch}, Dataset: {cfg.dataset.validation.name}, MAE: {epoch_mae}, MSE: {epoch_mse}, "
