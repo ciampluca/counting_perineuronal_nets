@@ -372,7 +372,7 @@ def main(hydra_cfg: DictConfig) -> None:
             writer.add_scalar('Validation on {}/ARE'.format(cfg.dataset.validation.name), epoch_are, epoch)
             writer.add_scalar('Validation on {}/Loss'.format(cfg.dataset.validation.name), epoch_loss, epoch)
             writer.add_scalar('Validation on {}/SSIM'.format(cfg.dataset.validation.name), epoch_ssim, epoch)
-            for k, v in epoch_game_metrics:
+            for k, v in epoch_game_metrics.items():
                 writer.add_scalar('Validation on {}/{}'.format(cfg.dataset.validation.name, k), v, epoch)
 
             # Eventually saving best models
