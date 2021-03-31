@@ -101,8 +101,8 @@ def validate(model, val_dataloader, device, cfg, epoch):
 
         # Computing GAME metrics for the image
         img_game_metrics = compute_GAME(img_w, img_h, gt_dmap, reconstructed_dmap)
-        for i in (k, v) in enumerate(img_game_metrics):
-            epoch_game_metrics[f'GAME_{i}'] += v
+        for i, (k, v) in enumerate(img_game_metrics.items()):
+            epoch_game_metrics[f'GAME_{i+1}'] += v
 
         # Updating errors
         epoch_loss += img_loss
@@ -136,7 +136,7 @@ def validate(model, val_dataloader, device, cfg, epoch):
     epoch_loss /= len(val_dataloader.dataset)
     epoch_ssim /= len(val_dataloader.dataset)
     for k, v in epoch_game_metrics.items():
-        epoch_game_metrics[k] = v / len(val_dataloader.dataset)
+        epoch_game_metrics[k] = (v / len(val_dataloader.dataset))
 
     stop = timeit.default_timer()
     total_time = stop - start
@@ -430,7 +430,7 @@ def main(hydra_cfg: DictConfig) -> None:
                 }, best_models_folder, best_model=cfg.dataset.validation.name + "_game_1")
             if epoch_game_2 < best_validation_game_2:
                 best_validation_game_2 = epoch_game_2
-                min_game_1_epoch = epoch
+                min_game_2_epoch = epoch
                 save_checkpoint({
                     'model': model.state_dict(),
                     'optimizer': optimizer.state_dict(),
