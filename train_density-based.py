@@ -35,7 +35,7 @@ def validate(model, val_dataloader, device, cfg, epoch):
     stride_h = crop_h - cfg.dataset.validation.params.patches_overlap
 
     epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim = 0.0, 0.0, 0.0, 0.0, 0.0
-    epoch_game_metrics = dict()
+    epoch_game_metrics = {'GAME_1': 0.0, 'GAME_2': 0.0, "GAME_3": 0.0}
     for images, targets in tqdm.tqdm(val_dataloader):
         images = images.to(device)
         gt_dmaps = targets['dmap'].to(device)
@@ -100,7 +100,9 @@ def validate(model, val_dataloader, device, cfg, epoch):
         img_ssim = ssim.ssim(gt_dmap.unsqueeze(dim=0), reconstructed_dmap.unsqueeze(dim=0)).item()
 
         # Computing GAME metrics for the image
-        epoch_game_metrics = compute_GAME(img_w, img_h, gt_dmap, reconstructed_dmap)
+        img_game_metrics = compute_GAME(img_w, img_h, gt_dmap, reconstructed_dmap)
+        for i in (k, v) in enumerate(img_game_metrics):
+            epoch_game_metrics[f'GAME_{i}'] += v
 
         # Updating errors
         epoch_loss += img_loss
@@ -177,11 +179,7 @@ def main(hydra_cfg: DictConfig) -> None:
         random_seed(seed, False)
 
     # Creating tensorboard writer
-    if cfg.model.resume:
-        checkpoint = torch.load(cfg.model.resume)
-        writer = SummaryWriter(log_dir=checkpoint['tensorboard_working_dir'])
-    else:
-        writer = SummaryWriter(comment="_" + experiment_name)
+    writer = SummaryWriter(comment="_" + experiment_name)
 
     # Creating training dataset and dataloader
     log.info(f"Loading training data")
@@ -293,15 +291,15 @@ def main(hydra_cfg: DictConfig) -> None:
         log.info(f"Resuming pre-trained model")
         if cfg.model.pretrained.startswith('http://') or cfg.model.pretrained.startswith('https://'):
             pre_trained_model = torch.hub.load_state_dict_from_url(
-                cfg.model.pretrained, map_location='cpu', model_dir=cfg.model.cache_folder)
+                cfg.model.pretrained, map_location=device, model_dir=cfg.model.cache_folder)
         else:
-            pre_trained_model = torch.load(cfg.model.pretrained, map_location='cpu')
+            pre_trained_model = torch.load(cfg.model.pretrained, map_location=device)
         model.load_state_dict(pre_trained_model['model'])
 
     # Eventually resuming from a saved checkpoint
     if cfg.model.resume:
         log.info(f"Resuming from a checkpoint")
-        checkpoint = torch.load(cfg.model.resume)
+        checkpoint = torch.load(cfg.model.resume, map_location=device)
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         if scheduler is not None:
@@ -413,7 +411,7 @@ def main(hydra_cfg: DictConfig) -> None:
                     'best_ssim': epoch_ssim,
                 }, best_models_folder, best_model=cfg.dataset.validation.name + "_ssim")
             epoch_game_1, epoch_game_2, epoch_game_3 = 0.0, 0.0, 0.0
-            for k, v in epoch_game_metrics:
+            for k, v in epoch_game_metrics.items():
                 L = int(k.rsplit("_", 1)[1])
                 if L == 1:
                     epoch_game_1 = v
@@ -421,7 +419,7 @@ def main(hydra_cfg: DictConfig) -> None:
                     epoch_game_2 = v
                 elif L == 3:
                     epoch_game_3 = v
-            if epoch_game_1 > best_validation_game_1:
+            if epoch_game_1 < best_validation_game_1:
                 best_validation_game_1 = epoch_game_1
                 min_game_1_epoch = epoch
                 save_checkpoint({
@@ -430,7 +428,7 @@ def main(hydra_cfg: DictConfig) -> None:
                     'epoch': epoch,
                     'best_ssim': epoch_game_1,
                 }, best_models_folder, best_model=cfg.dataset.validation.name + "_game_1")
-            if epoch_game_2 > best_validation_game_2:
+            if epoch_game_2 < best_validation_game_2:
                 best_validation_game_2 = epoch_game_2
                 min_game_1_epoch = epoch
                 save_checkpoint({
@@ -439,7 +437,7 @@ def main(hydra_cfg: DictConfig) -> None:
                     'epoch': epoch,
                     'best_ssim': epoch_game_2,
                 }, best_models_folder, best_model=cfg.dataset.validation.name + "_game_2")
-            if epoch_game_3 > best_validation_game_3:
+            if epoch_game_3 < best_validation_game_3:
                 best_validation_game_3 = epoch_game_3
                 min_game_3_epoch = epoch
                 save_checkpoint({
@@ -481,8 +479,9 @@ def main(hydra_cfg: DictConfig) -> None:
                 'min_game_1_epoch': min_game_1_epoch,
                 'min_game_2_epoch': min_game_2_epoch,
                 'min_game_3_epoch': min_game_3_epoch,
-                'tensorboard_working_dir': writer.get_logdir()
             }, os.getcwd())
+
+    log.info("Training ended. Exiting....")
 
 
 if __name__ == "__main__":

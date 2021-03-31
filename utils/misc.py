@@ -7,6 +7,7 @@ import pickle
 import sys
 import timeit
 import collections.abc
+from collections import OrderedDict
 
 import torch
 import torch.distributed as dist
@@ -482,10 +483,7 @@ def update_dict(d, u):
     return d
 
 
-
 def compute_GAME(img_w, img_h, gt_dmap, reconstructed_dmap):
-    epoch_game_metrics = dict()
-
     pad_remained = img_h % 12
     pad_h = 12 - pad_remained if pad_remained > 0 else 0
     h_pad_top = pad_h // 2
@@ -502,8 +500,9 @@ def compute_GAME(img_w, img_h, gt_dmap, reconstructed_dmap):
     w_for_game_metrics, h_for_game_metrics = padded_gt_dmap_for_game_metrics.shape[2], \
                                              padded_gt_dmap_for_game_metrics.shape[1]
 
+    img_game_metrics = OrderedDict()
     for L in range(1, 4):
-        epoch_game_metrics[f"GAME_{L}"] = 0.0
+        img_game_metrics[f"GAME_{L}"] = 0.0
         num_patches = 4 * L
         crop_width, crop_height = int(w_for_game_metrics / (num_patches / 2)), int(
             h_for_game_metrics / (num_patches / 2))
@@ -514,10 +513,10 @@ def compute_GAME(img_w, img_h, gt_dmap, reconstructed_dmap):
                                                    j:j + crop_height]
                 gt_dmap_patch_for_game_metrics = padded_gt_dmap_for_game_metrics[:, i:i + crop_width, j:j + crop_height]
 
-                epoch_game_metrics[f"GAME_{L}"] += abs(
+                img_game_metrics[f"GAME_{L}"] += abs(
                     pred_dmap_patch_for_game_metrics.sum() - gt_dmap_patch_for_game_metrics.sum())
 
-    return epoch_game_metrics
+    return img_game_metrics
 
 
 
