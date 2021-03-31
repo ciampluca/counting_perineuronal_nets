@@ -22,7 +22,7 @@ from torchvision.ops import boxes as box_ops
 
 from datasets.perineural_nets_bbox_dataset import PerineuralNetsBBoxDataset
 import utils.misc as utils
-from utils.misc import random_seed, get_bbox_transforms, save_checkpoint, check_empty_images, coco_evaluate, compute_map, compute_dice_and_jaccard, update_dict
+from utils.misc import update_dict, random_seed, get_bbox_transforms, save_checkpoint, check_empty_images, coco_evaluate, compute_map, compute_dice_and_jaccard
 from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet101_fpn
 from utils.transforms_bbs import CropToFixedSize, PadToSize
 
@@ -81,7 +81,7 @@ def get_model_detection(num_classes, cfg, load_custom_model=False):
             rpn_anchor_generator=rpn_anchor_generator,
             box_roi_pool=roi_pooler,
         )
-    elif cfg['backbone'] == "resnet152":
+    elif cfg.model.backbone == "resnet152":
         log.error(f"Model with ResNet152 to be implemented")
         exit(1)
     else:
@@ -144,7 +144,7 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, cfg, tensorboa
         metric_logger.update(loss=losses_reduced, **loss_dict_reduced)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
 
-        if (train_iteration % cfg.training.log_loss == 0):
+        if train_iteration % cfg.training.log_loss == 0:
             tensorboard_writer.add_scalar('Training/Detection-based Learning Rate', optimizer.param_groups[0]["lr"], epoch * len(data_loader) + train_iteration)
             tensorboard_writer.add_scalar('Training/Detection-based Reduced Sum Losses', losses_reduced, epoch * len(data_loader) + train_iteration)
             tensorboard_writer.add_scalars('Training/Detection-based All Losses', loss_dict, epoch * len(data_loader) + train_iteration)
@@ -161,10 +161,9 @@ def validate(model, val_dataloader, device, cfg, epoch):
     epoch_dets_for_coco_eval = []
     epoch_dets_for_map_eval = {}
 
-    stride_w, stride_h = cfg.dataset.validation.params.input_size
     crop_width, crop_height = cfg.dataset.validation.params.input_size
-    if cfg.dataset.validation.params.patches_overlap:
-        stride_w, stride_h = crop_width - cfg.dataset.validation.params.patches_overlap, crop_height - cfg.dataset.validation.params.patches_overlap
+    stride_w = crop_width - cfg.dataset.validation.params.patches_overlap
+    stride_h = crop_height - cfg.dataset.validation.params.patches_overlap
 
     for images, targets in tqdm.tqdm(val_dataloader):
         images = list(image.to(device) for image in images)
@@ -263,7 +262,32 @@ def validate(model, val_dataloader, device, cfg, epoch):
                 if float(det_score) > cfg.training.det_thresh_for_counting:
                     img_det_num += 1
 
-            # Updating counting errors
+            if cfg.training.debug and epoch % cfg.training.debug_freq == 0:
+                debug_dir = os.path.join(os.getcwd(), 'output_debug')
+                if not os.path.exists(debug_dir):
+                    os.makedirs(debug_dir)
+                # Removing pad from image
+                h_pad_top = int((img_h_padded - img_h) / 2.0)
+                h_pad_bottom = img_h_padded - img_h - h_pad_top
+                w_pad_left = int((img_w_padded - img_w) / 2.0)
+                w_pad_right = img_w_padded - img_w - w_pad_left
+                # Drawing det bbs
+                reconstructed_image = reconstructed_image[:, h_pad_top:img_h_padded - h_pad_bottom,
+                                      w_pad_left:img_w_padded - w_pad_right]
+                # Drawing det bbs
+                pil_reconstructed_image = to_pil_image(reconstructed_image)
+                draw = ImageDraw.Draw(pil_reconstructed_image)
+                for bb in final_bbs:
+                    draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='red', width=3)
+                # Add text to image
+                text = f"Det Num of Nets: {img_det_num}, GT Num of Nets: {img_gt_num}"
+                font_path = os.path.join(hydra.utils.get_original_cwd(), "./font/LEMONMILK-RegularItalic.otf")
+                font = ImageFont.truetype(font_path, 100)
+                draw.text((75, 75), text=text, font=font, fill=(0, 191, 255))
+                pil_reconstructed_image.save(
+                    os.path.join(debug_dir, "reconstructed_{}_with_bbs_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch)))
+
+            # Updating errors
             img_mae = abs(img_det_num - img_gt_num)
             img_mse = (img_det_num - img_gt_num) ** 2
             img_are = abs(img_det_num - img_gt_num) / np.clip(img_gt_num, 1, a_max=None)
@@ -287,30 +311,6 @@ def validate(model, val_dataloader, device, cfg, epoch):
                 'img_dim': (img_w, img_h),
             }
 
-            if cfg.training.debug and epoch % cfg.training.debug_freq == 0:
-                debug_dir = os.path.join(os.getcwd(), 'output_debug')
-                if not os.path.exists(debug_dir):
-                    os.makedirs(debug_dir)
-                # Removing pad from image
-                h_pad_top = int((img_h_padded - img_h) / 2.0)
-                h_pad_bottom = img_h_padded - img_h - h_pad_top
-                w_pad_left = int((img_w_padded - img_w) / 2.0)
-                w_pad_right = img_w_padded - img_w - w_pad_left
-                reconstructed_image = reconstructed_image[:, h_pad_top:img_h_padded - h_pad_bottom,
-                                      w_pad_left:img_w_padded - w_pad_right]
-                # Drawing det bbs
-                pil_reconstructed_image = to_pil_image(reconstructed_image)
-                draw = ImageDraw.Draw(pil_reconstructed_image)
-                for bb in final_bbs:
-                    draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='red', width=3)
-                # Add text to image
-                text = f"Det Num of Nets: {img_det_num}, GT Num of Nets: {img_gt_num}"
-                font_path = os.path.join(hydra.utils.get_original_cwd(), "./font/LEMONMILK-RegularItalic.otf")
-                font = ImageFont.truetype(font_path, 100)
-                draw.text((75, 75), text=text, font=font, fill=(0, 191, 255))
-                pil_reconstructed_image.save(
-                    os.path.join(debug_dir, "reconstructed_{}_with_bbs_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch)))
-
     stop = timeit.default_timer()
     total_time = stop - start
     mins, secs = divmod(total_time, 60)
@@ -323,7 +323,7 @@ def validate(model, val_dataloader, device, cfg, epoch):
     epoch_are /= len(val_dataloader.dataset)
 
     # Computing COCO mAP
-    coco_det_map = coco_evaluate(val_dataloader, epoch_dets_for_coco_eval, max_dets=cfg.model.max_dets_per_image, folder_to_save=os.getcwd())
+    coco_det_map = coco_evaluate(val_dataloader, epoch_dets_for_coco_eval, max_dets=cfg.training.coco_max_dets, folder_to_save=os.getcwd())
 
     # Computing map
     det_map = compute_map(epoch_dets_for_map_eval)
@@ -368,11 +368,7 @@ def main(hydra_cfg: DictConfig) -> None:
         random_seed(seed, False)
 
     # Creating tensorboard writer
-    if cfg.model.resume:
-        checkpoint = torch.load(cfg.model.resume)
-        writer = SummaryWriter(log_dir=checkpoint['tensorboard_working_dir'])
-    else:
-        writer = SummaryWriter(comment="_" + experiment_name)
+    writer = SummaryWriter(comment="_" + experiment_name)
 
     # Creating training dataset and dataloader
     log.info(f"Loading training data")
@@ -476,15 +472,15 @@ def main(hydra_cfg: DictConfig) -> None:
         log.info(f"Resuming pre-trained model")
         if cfg.model.pretrained.startswith('http://') or cfg.model.pretrained.startswith('https://'):
             pre_trained_model = torch.hub.load_state_dict_from_url(
-                cfg.model.pretrained, map_location='cpu', model_dir=cfg.model.cache_folder)
+                cfg.model.pretrained, map_location=device, model_dir=cfg.model.cache_folder)
         else:
-            pre_trained_model = torch.load(cfg.model.pretrained, map_location='cpu')
+            pre_trained_model = torch.load(cfg.model.pretrained, map_location=device)
         model.load_state_dict(pre_trained_model['model'])
 
     # Eventually resuming from a saved checkpoint
     if cfg.model.resume:
         log.info(f"Resuming from a checkpoint")
-        checkpoint = torch.load(cfg.model.resume)
+        checkpoint = torch.load(cfg.model.resume, map_location=device)
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         if scheduler is not None:
@@ -517,7 +513,7 @@ def main(hydra_cfg: DictConfig) -> None:
         scheduler.step()
 
         # Validating
-        if (epoch % cfg.training.val_freq == 0):
+        if epoch % cfg.training.val_freq == 0:
             epoch_mae, epoch_mse, epoch_are, epoch_coco_evaluator, epoch_det_map, epoch_dice, epoch_jaccard = \
                 validate(model, val_dataloader, device, cfg, epoch)
 
@@ -595,7 +591,6 @@ def main(hydra_cfg: DictConfig) -> None:
                     'epoch': epoch,
                     'best_jaccard': epoch_jaccard,
                 }, best_models_folder, best_model=cfg.dataset.validation.name + "_jaccard")
-
             nl = '\n'
             log.info(f"Epoch: {epoch}, Dataset: {cfg.dataset.validation.name}, MAE: {epoch_mae}, MSE: {epoch_mse}, "
                      f"ARE: {epoch_are}, {nl} mAP: {epoch_det_map}, COCO mAP 0.5: {epoch_coco_map_05},"

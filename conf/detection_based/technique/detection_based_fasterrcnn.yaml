@@ -9,7 +9,7 @@ dataset:
             train_frames: ['014', '015', '017', '019', '020', '021', '023', '026', '027', '028', '035', '036', '041', '042', '044', '048', '049', '050', '052', '053']
             input_size: [640, 640]      # w, h
             load_in_memory: False
-            percentage: 30
+            percentage: null
     validation:
         name: "perineural_nets"
         root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
