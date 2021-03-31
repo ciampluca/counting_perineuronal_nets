@@ -598,14 +598,14 @@ def main(hydra_cfg: DictConfig) -> None:
 
             nl = '\n'
             log.info(f"Epoch: {epoch}, Dataset: {cfg.dataset.validation.name}, MAE: {epoch_mae}, MSE: {epoch_mse}, "
-                     f"ARE: {epoch_are}, {nl}, mAP: {epoch_det_map}, COCO mAP 0.5: {epoch_coco_map_05},"
-                     f"Dice Score: {epoch_dice}, Jaccard Coefficient: {epoch_jaccard}, {nl}, "
-                     f"Min MAE: {best_validation_mae}, Min MAE Epoch: {min_mae_epoch}, {nl}, "
-                     f"Min MSE: {best_validation_mse}, Min MSE Epoch: {min_mse_epoch}, {nl}, "
-                     f"Min ARE: {best_validation_are}, Min ARE Epoch: {min_are_epoch}, {nl}, "
-                     f"Best mAP: {best_validation_map}, Best mAP Epoch: {best_map_epoch}, {nl}, "
-                     f"Best COCO mAP: {best_validation_coco_map}, Best COCO mAP Epoch: {best_coco_map_epoch}, {nl}, "
-                     f"Best Dice: {best_validation_dice}, Best Dice Epoch: {best_dice_epoch}, {nl}, "
+                     f"ARE: {epoch_are}, {nl} mAP: {epoch_det_map}, COCO mAP 0.5: {epoch_coco_map_05},"
+                     f"Dice Score: {epoch_dice}, Jaccard Coefficient: {epoch_jaccard}, {nl} "
+                     f"Min MAE: {best_validation_mae}, Min MAE Epoch: {min_mae_epoch}, {nl} "
+                     f"Min MSE: {best_validation_mse}, Min MSE Epoch: {min_mse_epoch}, {nl} "
+                     f"Min ARE: {best_validation_are}, Min ARE Epoch: {min_are_epoch}, {nl} "
+                     f"Best mAP: {best_validation_map}, Best mAP Epoch: {best_map_epoch}, {nl} "
+                     f"Best COCO mAP: {best_validation_coco_map}, Best COCO mAP Epoch: {best_coco_map_epoch}, {nl} "
+                     f"Best Dice: {best_validation_dice}, Best Dice Epoch: {best_dice_epoch}, {nl} "
                      f"Best Jaccard: {best_validation_jaccard}, Best Jaccard Epoch: {best_jaccard_epoch}")
 
             # Saving last model

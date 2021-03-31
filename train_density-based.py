@@ -35,7 +35,7 @@ def validate(model, val_dataloader, device, cfg, epoch):
     stride_h = crop_h - cfg.dataset.validation.params.patches_overlap
 
     epoch_mae, epoch_mse, epoch_are, epoch_loss, epoch_ssim = 0.0, 0.0, 0.0, 0.0, 0.0
-    epoch_game_metrics = {'GAME_1': 0.0, 'GAME_2': 0.0, "GAME_3": 0.0}
+    epoch_game_metrics = {'GAME_0': 0.0, 'GAME_1': 0.0, 'GAME_2': 0.0, "GAME_3": 0.0}
     for images, targets in tqdm.tqdm(val_dataloader):
         images = images.to(device)
         gt_dmaps = targets['dmap'].to(device)
@@ -102,7 +102,7 @@ def validate(model, val_dataloader, device, cfg, epoch):
         # Computing GAME metrics for the image
         img_game_metrics = compute_GAME(img_w, img_h, gt_dmap, reconstructed_dmap)
         for i, (k, v) in enumerate(img_game_metrics.items()):
-            epoch_game_metrics[f'GAME_{i+1}'] += v
+            epoch_game_metrics[f'GAME_{i}'] += v
 
         # Updating errors
         epoch_loss += img_loss
@@ -410,10 +410,12 @@ def main(hydra_cfg: DictConfig) -> None:
                     'epoch': epoch,
                     'best_ssim': epoch_ssim,
                 }, best_models_folder, best_model=cfg.dataset.validation.name + "_ssim")
-            epoch_game_1, epoch_game_2, epoch_game_3 = 0.0, 0.0, 0.0
+            epoch_game_0, epoch_game_1, epoch_game_2, epoch_game_3 = 0.0, 0.0, 0.0, 0.0
             for k, v in epoch_game_metrics.items():
                 L = int(k.rsplit("_", 1)[1])
-                if L == 1:
+                if L == 0:
+                    epoch_game_0 = v
+                elif L == 1:
                     epoch_game_1 = v
                 elif L == 2:
                     epoch_game_2 = v
@@ -450,7 +452,7 @@ def main(hydra_cfg: DictConfig) -> None:
             nl = '\n'
             log.info(f"Epoch: {epoch}, Dataset: {cfg.dataset.validation.name}, MAE: {epoch_mae}, MSE: {epoch_mse}, "
                      f"ARE: {epoch_are}, SSIM: {epoch_ssim}, "
-                     f"GAME_1: {epoch_game_1}, GAME_2: {epoch_game_2}, GAME_3: {epoch_game_3}, {nl} "
+                     f"GAME_0: {epoch_game_0}, GAME_1: {epoch_game_1}, GAME_2: {epoch_game_2}, GAME_3: {epoch_game_3}, {nl} "
                      f"Min MAE: {best_validation_mae}, Min MAE Epoch: {min_mae_epoch}, {nl} "
                      f"Min MSE: {best_validation_mse}, Min MSE Epoch: {min_mse_epoch}, {nl} "
                      f"Min ARE: {best_validation_are}, Min ARE Epoch: {min_are_epoch}, {nl} "

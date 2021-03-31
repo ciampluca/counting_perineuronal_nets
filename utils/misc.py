@@ -501,11 +501,14 @@ def compute_GAME(img_w, img_h, gt_dmap, reconstructed_dmap):
                                              padded_gt_dmap_for_game_metrics.shape[1]
 
     img_game_metrics = OrderedDict()
-    for L in range(1, 4):
+    for L in range(0, 4):
         img_game_metrics[f"GAME_{L}"] = 0.0
         num_patches = 4 * L
-        crop_width, crop_height = int(w_for_game_metrics / (num_patches / 2)), int(
-            h_for_game_metrics / (num_patches / 2))
+        if num_patches == 0:
+            crop_width, crop_height = w_for_game_metrics, h_for_game_metrics
+        else:
+            crop_width, crop_height = int(w_for_game_metrics / (num_patches / 2)), int(
+                h_for_game_metrics / (num_patches / 2))
 
         for i in range(0, h_for_game_metrics, crop_height):
             for j in range(0, w_for_game_metrics, crop_width):
