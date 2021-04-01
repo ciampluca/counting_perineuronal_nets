@@ -11,6 +11,8 @@ we want to done. The values inside these files override the configuration yaml f
 
 Please note that for each experiment a folder in the outputs folder will be created. Notably, inside 
 there will be also a .hydra hidden folder containing log files etc
+If you use the multirun option, Hydra will create a multirun folder instad of the outputs one, having 
+a similar structure.
 
 
 ###Examples:
@@ -28,6 +30,6 @@ there will be also a .hydra hidden folder containing log files etc
         
         python train_density-based.py --multirun '+experiment=glob(csrnet*)'
         
-- Run all the experiment for density based approach overriding default technique and using UNet
+- Run all the experiment having input size 640x640 for density based approach overriding default technique and using UNet
 
-        python train_density-based.py technique=density_based_unet --multirun '+experiment=glob(unet*)'
+        python train_density-based.py technique=density_based_unet --multirun '+experiment=glob(unet*640*)'
