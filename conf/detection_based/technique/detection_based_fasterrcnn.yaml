@@ -45,7 +45,7 @@ optimizer:
     scheduler:
         name: MultiStepLR
         params:
-            milestones: [25, 50, 100]
+            milestones: [25, 50, 75]
             gamma: 0.1
 
 
@@ -53,7 +53,7 @@ training:
     batch_size: 8
     val_batch_size: 1
     num_workers: 4
-    epochs: 100
+    epochs: 75
     print_freq: 10
     val_freq: 1
     log_loss: 10

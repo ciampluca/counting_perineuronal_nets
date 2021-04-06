@@ -279,6 +279,9 @@ def validate(model, val_dataloader, device, cfg, epoch):
                 draw = ImageDraw.Draw(pil_reconstructed_image)
                 for bb in final_bbs:
                     draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='red', width=3)
+                gt_bboxes = target['boxes'].data.cpu().tolist()
+                for bb in gt_bboxes:
+                    draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='green', width=3)
                 # Add text to image
                 text = f"Det Num of Nets: {img_det_num}, GT Num of Nets: {img_gt_num}"
                 font_path = os.path.join(hydra.utils.get_original_cwd(), "./font/LEMONMILK-RegularItalic.otf")
