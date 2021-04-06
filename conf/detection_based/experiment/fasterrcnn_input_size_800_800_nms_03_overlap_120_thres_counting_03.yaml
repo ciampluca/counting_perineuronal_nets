@@ -14,7 +14,7 @@ detection_based_fasterrcnn:
         patches_overlap: 120
 
   training:
-    batch_size: 8
+    batch_size: 6
     det_thresh_for_counting: 0.3
 
   model:
