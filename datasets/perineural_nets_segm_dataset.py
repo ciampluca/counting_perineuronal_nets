@@ -13,6 +13,59 @@ from scipy.spatial.distance import pdist, squareform
 from torch.utils.data import Dataset, ConcatDataset
 
 
+class PerineuralNetsSegmDataset(ConcatDataset):
+    """ Dataset that provides per-patch iteration of bunch of big image files,
+        implemented as a concatenation of single-file datasets. """
+
+    def __init__(self, root='data/perineuronal_nets', split='all', patch_size=640, overlap=0, random_offset=0, gt_params={}, transforms=None, max_cache_mem=None):
+        self.root = Path(root)
+        self.transforms = transforms
+        self.patch_size = patch_size
+        self.overlap = overlap
+        self.random_offset = random_offset
+        assert split in ('train', 'validation', 'train-specular', 'validation-specular', 'all'), \
+            "split must be one of ('train', 'validation', 'train-specular', 'validation-specular', 'all')"
+        self.split = split
+
+        annot_path = self.root / 'annotation' / 'annotations.csv'
+        self.annot = pd.read_csv(annot_path, index_col=0)
+
+        image_files = sorted((self.root / 'fullFramesH5').glob('*.h5'))
+        assert len(image_files) > 0, "No images found"
+
+        if max_cache_mem:
+            max_cache_mem /= len(image_files)
+
+        splits = ('all',)
+        if self.split == 'train':
+            # remove validation images from list: ttVtt, V removed
+            del image_files[2::5]
+        elif self.split == 'validation':
+            # keep only validation elements: ttVtt, only V kept
+            image_files = image_files[2::5]
+        if self.split == 'train-specular':
+            splits = ('left', 'right')
+        elif self.split == 'validation-specular':
+            splits = ('right', 'left')
+        # elif self.split == 'all':
+            # pass
+        splits = itertools.cycle(splits)
+
+        stride = patch_size - overlap
+        kwargs = dict(patch_size=patch_size, stride=stride, random_offset=random_offset, gt_params=gt_params, max_cache_mem=max_cache_mem)
+        datasets = [_PerineuralNetsSegmImage(image_path, self.annot, split=s, **kwargs) for image_path, s in zip(image_files, splits)]
+        super(self.__class__, self).__init__(datasets)
+
+    def __getitem__(self, index):
+        sample = super(self.__class__, self).__getitem__(index)
+
+        if self.transforms:
+            sample = (self.transforms(sample[0]),) + sample[1:]
+
+        return sample       
+
+
+# find cliques in graphs
 # from https://en.wikipedia.org/wiki/Bron%E2%80%93Kerbosch_algorithm
 def find_cliques(adj_matrix):
     N = {i: set(np.nonzero(row)[0]) for i, row in enumerate(adj_matrix)}
@@ -38,8 +91,8 @@ class _PerineuralNetsSegmImage(Dataset):
 
     # params for groundtruth segmentation maps generation
     DEFAULT_GT_PARAMS = {
-        'radius': 35,         # radius (in px) of the dot placed on a cell in the segmentation map
-        'radius_ignore': 40,  # radius (in px) of the 'ignore' zone surrounding the cell
+        'radius': 25,         # radius (in px) of the dot placed on a cell in the segmentation map
+        'radius_ignore': 30,  # radius (in px) of the 'ignore' zone surrounding the cell
         'v_bal': 0.1,         # weight of the loss of bg pixels
         'sigma_bal': 10,      # gaussian stddev (in px) to blur loss weights of bg pixels near fg pixels
         'sep_width': 1,       # width (in px) of bg ridge separating two overlapping foreground cells
@@ -47,10 +100,10 @@ class _PerineuralNetsSegmImage(Dataset):
         'lambda_sep': 50,     # multiplier for the separation weights (before being summed to the other loss weights)
     }
     
-    def __init__(self, h5_path, annot_path, patch_size=640, stride=None, split='left', max_cache_mem=None, gt_params={}):
+    def __init__(self, h5_path, annotations, patch_size=640, stride=None, split='left', random_offset=0, max_cache_mem=None, gt_params={}):
         
         self.h5_path = h5_path
-        self.annot_path = annot_path
+        self.random_offset = random_offset
         
         # groundtruth parameters
         self.gt_params = deepcopy(self.DEFAULT_GT_PARAMS)
@@ -59,9 +112,9 @@ class _PerineuralNetsSegmImage(Dataset):
         assert split in ('left', 'right', 'all'), "split must be one of ('left', 'right', 'all')"
         self.split = split
 
-        # load annotation, keep only the ones of this image
-        image_id = Path(h5_path).with_suffix('.tif').name
-        self.annot = pd.read_csv(annot_path, index_col=0).loc[image_id]
+        # keep only annotations of this image
+        self.image_id = Path(h5_path).with_suffix('.tif').name
+        self.annot = annotations.loc[self.image_id]
 
         # patch size (height and width)
         self.patch_hw = np.array((patch_size, patch_size))
@@ -75,14 +128,19 @@ class _PerineuralNetsSegmImage(Dataset):
         # size of the region from which we take patches
         image_hw = np.array(self.data.shape)
         image_half_hw = image_hw // np.array((1, 2))  # half only width
-        self.region_hw = image_hw if split == 'all' else image_half_hw
+        if split == 'all':
+            self.region_hw = image_hw
+        elif split == 'left':
+            self.region_hw = image_half_hw
+        else:  # split == 'right':
+            self.region_hw = image_hw - image_half_hw
 
         # the origin and limits of the region (split) of interest
         self.origin_yx = np.array((0, image_half_hw[1]) if self.split == 'right' else (0, 0))
         self.limits_yx = image_half_hw if self.split == 'left' else image_hw
 
         # the number of patches in a row and a column
-        self.num_patches = np.ceil((self.region_hw - self.patch_hw) / self.stride_hw).astype(int)
+        self.num_patches = np.ceil(1 + ((self.region_hw - self.patch_hw) / self.stride_hw)).astype(int)
         
     def __len__(self):
         # total number of patches
@@ -95,12 +153,15 @@ class _PerineuralNetsSegmImage(Dataset):
 
         # patch boundaries
         start_yx = self.origin_yx + self.stride_hw * row_col_idx
+        if self.random_offset:
+            start_yx += np.random.randint(-self.random_offset, self.random_offset, size=2)
+            start_yx = np.clip(start_yx, (0, 0), self.limits_yx - self.patch_hw)
         end_yx = np.minimum(start_yx + self.patch_hw, self.limits_yx)
         (sy, sx), (ey, ex) = start_yx, end_yx
 
         # read patch
-        patch = self.data[sy:ey, sx:ex]
-        patch_hw = patch.shape  # before padding
+        patch = self.data[sy:ey, sx:ex] / np.array(255., dtype=np.float32)
+        patch_hw = np.array(patch.shape)  # before padding
 
         # gather annotations
         selector = self.annot.X.between(sx, ex) & self.annot.Y.between(sy, ey)
@@ -111,14 +172,19 @@ class _PerineuralNetsSegmImage(Dataset):
         segmentation, weights = self._build_target_maps(patch, patch_locations)
 
         # pad patch (in case of patches in last col/rows)
-        py, px = - np.array(patch_hw) % self.patch_hw
+        py, px = - patch_hw % self.patch_hw
         pad = ((0, py), (0, px))
 
         patch = np.pad(patch, pad)  # defaults to zero padding
         segmentation = np.pad(segmentation, pad)
         weights = np.pad(weights, pad)  # 0 in loss weight = don't care
 
-        return patch, segmentation, weights, patch_hw, start_yx
+        # stack in a unique RGB-like tensor, useful for applying data augmentation
+        input_and_target = np.stack((patch, segmentation, weights), axis=-1)
+
+        # patch coordinates in the region space (useful for reconstructing the full region)
+        local_start_yx = start_yx - self.origin_yx
+        return input_and_target, patch_hw, local_start_yx, self.region_hw, self.image_id
 
     def _build_target_maps(self, patch, locations):
         """ This builds the segmantation and loss weights maps, as described
@@ -140,7 +206,7 @@ class _PerineuralNetsSegmImage(Dataset):
         segmentation = np.zeros(shape, dtype=np.float32)
         
         if len(locations) == 0:  # empty patch
-            weights = np.full_like(segmentation, v_bal)
+            weights = np.full_like(segmentation, v_bal, dtype=np.float32)
             return segmentation, weights
         
         weights_balance = np.zeros(shape, dtype=np.float32)
@@ -192,6 +258,7 @@ class _PerineuralNetsSegmImage(Dataset):
         
         # combined weights
         weights = weights_balance + lambda_sep * weights_separation
+        weights = weights.astype(np.float32)  # ensure float32
         
         # set ignore regions as bg in the segmentation map
         segmentation[segmentation < 0] = 0
@@ -291,45 +358,6 @@ class _PerineuralNetsSegmImage(Dataset):
         end += region_start_yx
 
         return start, end
-
-
-class PerineuralNetsSegmDataset(ConcatDataset):
-    """ Dataset that provides per-patch iteration of bunch of big image files,
-        implemented as a concatenation of single-file datasets. """
-
-    def __init__(self, data_root, transforms=None, patch_size=640, overlap=0, split='all', max_cache_mem=None, gt_params={}):
-        self.data_root = Path(data_root)
-        self.transforms = transforms
-        assert split in ('train', 'validation', 'all'), "split must be one of ('train', 'validation', 'all')"
-        self.split = split
-
-        annot_path = self.data_root / 'annotation' / 'annotations.csv'
-        image_files = sorted((self.data_root / 'fullFramesH5').glob('*.h5'))
-        assert len(image_files) > 0, "No images found"
-
-        if max_cache_mem:
-            max_cache_mem /= len(image_files)
-
-        if self.split == 'train':
-            splits = ('left', 'right')
-        elif self.split == 'validation':
-            splits = ('right', 'left')
-        else:  # self.split == 'all':
-            splits = ('all', )
-        splits = itertools.cycle(splits)
-
-        stride = patch_size - overlap
-        kwargs = dict(patch_size=patch_size, stride=stride, max_cache_mem=max_cache_mem, gt_params=gt_params)
-        datasets = [_PerineuralNetsSegmImage(image_path, annot_path, split=s, **kwargs) for image_path, s in zip(image_files, splits)]
-        super(self.__class__, self).__init__(datasets)
-
-    def __getitem__(self, index):
-        sample = super(self.__class__, self).__getitem__(index)
-
-        if self.transforms:
-            sample = self.transforms(sample)
-
-        return sample       
 
 
 if __name__ == "__main__":
