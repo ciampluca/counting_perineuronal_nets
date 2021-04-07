@@ -180,10 +180,8 @@ def validate(model, val_dataloader, device, cfg, epoch):
             img_det_bbs, img_det_scores, img_det_labels = [], [], []
 
             num_h_patches, num_v_patches = math.ceil(img_w / stride_w), math.ceil(img_h / stride_h)
-            img_w_padded = (num_h_patches - math.floor(img_w / stride_w)) * (
-                    stride_w * num_h_patches + (crop_width - stride_w))
-            img_h_padded = (num_v_patches - math.floor(img_h / stride_h)) * (
-                    stride_h * num_v_patches + (crop_height - stride_h))
+            img_w_padded = stride_w * num_h_patches + (crop_width - stride_w)
+            img_h_padded = stride_h * num_v_patches + (crop_height - stride_h)
 
             padded_image, padded_target = PadToSize()(
                 image=image,
