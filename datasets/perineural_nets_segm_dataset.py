@@ -17,7 +17,7 @@ class PerineuralNetsSegmDataset(ConcatDataset):
     """ Dataset that provides per-patch iteration of bunch of big image files,
         implemented as a concatenation of single-file datasets. """
 
-    def __init__(self, root='data/perineuronal_nets', split='all', patch_size=640, overlap=0, random_offset=0, gt_params={}, transforms=None, max_cache_mem=None):
+    def __init__(self, root='data/perineuronal_nets', split='all', patch_size=640, overlap=0, random_offset=0, with_targets=True, gt_params={}, transforms=None, max_cache_mem=None):
         self.root = Path(root)
         self.transforms = transforms
         self.patch_size = patch_size
@@ -52,7 +52,7 @@ class PerineuralNetsSegmDataset(ConcatDataset):
         splits = itertools.cycle(splits)
 
         stride = patch_size - overlap
-        kwargs = dict(patch_size=patch_size, stride=stride, random_offset=random_offset, gt_params=gt_params, max_cache_mem=max_cache_mem)
+        kwargs = dict(patch_size=patch_size, stride=stride, random_offset=random_offset, with_targets=with_targets, gt_params=gt_params, max_cache_mem=max_cache_mem)
         datasets = [_PerineuralNetsSegmImage(image_path, self.annot, split=s, **kwargs) for image_path, s in zip(image_files, splits)]
         super(self.__class__, self).__init__(datasets)
 
@@ -100,10 +100,11 @@ class _PerineuralNetsSegmImage(Dataset):
         'lambda_sep': 50,     # multiplier for the separation weights (before being summed to the other loss weights)
     }
     
-    def __init__(self, h5_path, annotations, patch_size=640, stride=None, split='left', random_offset=0, max_cache_mem=None, gt_params={}):
+    def __init__(self, h5_path, annotations, patch_size=640, stride=None, split='left', random_offset=0, with_targets=True, max_cache_mem=None, gt_params={}):
         
         self.h5_path = h5_path
         self.random_offset = random_offset
+        self.with_targets = with_targets
         
         # groundtruth parameters
         self.gt_params = deepcopy(self.DEFAULT_GT_PARAMS)
@@ -163,28 +164,35 @@ class _PerineuralNetsSegmImage(Dataset):
         patch = self.data[sy:ey, sx:ex] / np.array(255., dtype=np.float32)
         patch_hw = np.array(patch.shape)  # before padding
 
-        # gather annotations
-        selector = self.annot.X.between(sx, ex) & self.annot.Y.between(sy, ey)
-        locations = self.annot.loc[selector, ['Y', 'X']].values
-        patch_locations = locations - start_yx
+        # patch coordinates in the region space (useful for reconstructing the full region)
+        local_start_yx = start_yx - self.origin_yx
 
-        # build target maps
-        segmentation, weights = self._build_target_maps(patch, patch_locations)
+        if self.with_targets:
+            # gather annotations
+            selector = self.annot.X.between(sx, ex) & self.annot.Y.between(sy, ey)
+            locations = self.annot.loc[selector, ['Y', 'X']].values
+            patch_locations = locations - start_yx
+
+            # build target maps
+            segmentation, weights = self._build_target_maps(patch, patch_locations)
 
         # pad patch (in case of patches in last col/rows)
         py, px = - patch_hw % self.patch_hw
         pad = ((0, py), (0, px))
 
         patch = np.pad(patch, pad)  # defaults to zero padding
-        segmentation = np.pad(segmentation, pad)
-        weights = np.pad(weights, pad)  # 0 in loss weight = don't care
 
-        # stack in a unique RGB-like tensor, useful for applying data augmentation
-        input_and_target = np.stack((patch, segmentation, weights), axis=-1)
+        if self.with_targets:
+            segmentation = np.pad(segmentation, pad)
+            weights = np.pad(weights, pad)  # 0 in loss weight = don't care
 
-        # patch coordinates in the region space (useful for reconstructing the full region)
-        local_start_yx = start_yx - self.origin_yx
-        return input_and_target, patch_hw, local_start_yx, self.region_hw, self.image_id
+            # stack in a unique RGB-like tensor, useful for applying data augmentation
+            input_and_target = np.stack((patch, segmentation, weights), axis=-1)
+            datum = input_and_target
+        else:
+            datum = np.expand_dims(patch, axis=-1)  # add channels dimension
+
+        return datum, patch_hw, local_start_yx, self.region_hw, self.image_id
 
     def _build_target_maps(self, patch, locations):
         """ This builds the segmantation and loss weights maps, as described
@@ -259,7 +267,7 @@ class _PerineuralNetsSegmImage(Dataset):
         # combined weights
         weights = weights_balance + lambda_sep * weights_separation
         weights = weights.astype(np.float32)  # ensure float32
-        
+
         # set ignore regions as bg in the segmentation map
         segmentation[segmentation < 0] = 0
         return segmentation, weights
@@ -362,11 +370,17 @@ class _PerineuralNetsSegmImage(Dataset):
 
 if __name__ == "__main__":
     from torch.utils.data import DataLoader
+    from torchvision.transforms import ToTensor
     from tqdm import tqdm
 
-    data_root = 'data/perineuronal_nets'
-    dataset = PerineuralNetsSegmDataset(data_root, split='train', patch_size=640, overlap=120, max_cache_mem=8*1024**3)  # bytes = 8 GiB
-    dataloader = DataLoader(dataset, batch_size=8, shuffle=False, num_workers=8)
+    data_root = 'data/perineuronal_nets_test'
+
+    for split in ('train', 'validation', 'train-specular', 'validation-specular', 'all'):
+        dataset = PerineuralNetsSegmDataset(data_root, split=split)
+        print(split, len(dataset))
+
+    dataset = PerineuralNetsSegmDataset(data_root, split='all', patch_size=640, overlap=120, random_offset=320, with_targets=False, transforms=ToTensor(), max_cache_mem=8*1024**3)  # bytes = 8 GiB
+    dataloader = DataLoader(dataset, batch_size=8, shuffle=True, num_workers=0)
 
     for _ in tqdm(dataloader):
         pass
