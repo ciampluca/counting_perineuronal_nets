@@ -67,8 +67,9 @@ def dice_jaccard(y_true, y_pred, smooth=1, thr=None):
 def train(model, dataloader, optimizer, device, cfg, writer, epoch):
     """ Trains the model for one epoch. """
     model.train()
+    optimizer.zero_grad()
 
-    metrics = {}
+    metrics = []
     n_batches = len(dataloader)
     progress = tqdm(dataloader, desc='TRAIN')
     for i, sample in enumerate(progress):
@@ -82,9 +83,7 @@ def train(model, dataloader, optimizer, device, cfg, writer, epoch):
         predictions = torch.sigmoid(logits)
         soft_dice, soft_jaccard = dice_jaccard(targets, predictions)
 
-        optimizer.zero_grad()
         loss.backward()
-        optimizer.step()
 
         batch_metrics = {
             'loss': loss.item(),
@@ -96,6 +95,10 @@ def train(model, dataloader, optimizer, device, cfg, writer, epoch):
 
         postfix = {metric: f'{value:.3f}' for metric, value in batch_metrics.items()}
         progress.set_postfix(postfix)
+
+        if (i + 1) % cfg.optim.batch_accumulation == 0:
+            optimizer.step()
+            optimizer.zero_grad()
 
         if (i + 1) % cfg.optim.log_every == 0:
             batch_metrics.update({'lr': optimizer.param_groups[0]['lr']})
