@@ -1,80 +1,78 @@
 # @package _group_
 dataset:
-    train:
-        name: perineural_nets
-        params:
-            root: ${hydra:runtime.cwd}/data/perineuronal_nets
-            split: train-specular
-            patch_size: 320
-            overlap: 0
-            random_offset: 320  # if != 0, patch are randomized s.t. no pad is ever needed
-            max_cache_mem: 8_589_934_592  # 8GiB in bytes
-            gt_params:
-                radius: 25         # radius (in px) of the dot placed on a cell in the segmentation map
-                radius_ignore: 30  # radius (in px) of the 'ignore' zone surrounding the cell
-                v_bal: 0.1         # weight of the loss of bg pixels
-                sigma_bal: 10      # gaussian stddev (in px) to blur loss weights of bg pixels near fg pixels
-                sep_width: 1       # width (in px) of bg ridge separating two overlapping foreground cells
-                sigma_sep: 6       # gaussian stddev (in px) to blur loss weights of bg pixels near bg ridge pixels
-                lambda_sep: 50     # multiplier for the separation weights (before being summed to the other loss weights)
+  train:
+    name: perineural_nets
+    params:
+      root: ${hydra:runtime.cwd}/data/perineuronal_nets
+      split: train-specular
+      patch_size: 320
+      overlap: 0
+      random_offset: null  # auto-determined as patch_size / 2
+      max_cache_mem: 8_589_934_592  # 8GiB in bytes
+      gt_params:
+        radius: 20         # radius (in px) of the dot placed on a cell in the segmentation map
+        radius_ignore: 25  # radius (in px) of the 'ignore' zone surrounding the cell
+        v_bal: 0.1         # weight of the loss of bg pixels
+        sigma_bal: 10      # gaussian stddev (in px) to blur loss weights of bg pixels near fg pixels
+        sep_width: 1       # width (in px) of bg ridge separating two overlapping foreground cells
+        sigma_sep: 6       # gaussian stddev (in px) to blur loss weights of bg pixels near bg ridge pixels
+        lambda_sep: 50     # multiplier for the separation weights (before being summed to the other loss weights)
 
-    validation:
-        name: perineural_nets
-        params:
-            root: ${hydra:runtime.cwd}/data/perineuronal_nets
-            split: validation-specular
-            patch_size: 320
-            overlap: 120
-            random_offset: 0
-            max_cache_mem: 8_589_934_592  # 8GiB in bytes
-            gt_params:
-                radius: 25         # radius (in px) of the dot placed on a cell in the segmentation map
-                radius_ignore: 30  # radius (in px) of the 'ignore' zone surrounding the cell
-                v_bal: 0.1         # weight of the loss of bg pixels
-                sigma_bal: 10      # gaussian stddev (in px) to blur loss weights of bg pixels near fg pixels
-                sep_width: 1       # width (in px) of bg ridge separating two overlapping foreground cells
-                sigma_sep: 6       # gaussian stddev (in px) to blur loss weights of bg pixels near bg ridge pixels
-                lambda_sep: 50     # multiplier for the separation weights (before being summed to the other loss weights)
+  validation:
+    name: perineural_nets
+    params:
+      root: ${hydra:runtime.cwd}/data/perineuronal_nets
+      split: validation-specular
+      patch_size: 320
+      overlap: null        # auto-determined as 4 * gt_params.radius_ignore
+      random_offset: 0
+      max_cache_mem: 8_589_934_592  # 8GiB in bytes
+      gt_params:
+        radius: 20         # radius (in px) of the dot placed on a cell in the segmentation map
+        radius_ignore: 25  # radius (in px) of the 'ignore' zone surrounding the cell
+        v_bal: 0.1         # weight of the loss of bg pixels
+        sigma_bal: 10      # gaussian stddev (in px) to blur loss weights of bg pixels near fg pixels
+        sep_width: 1       # width (in px) of bg ridge separating two overlapping foreground cells
+        sigma_sep: 6       # gaussian stddev (in px) to blur loss weights of bg pixels near bg ridge pixels
+        lambda_sep: 50     # multiplier for the separation weights (before being summed to the other loss weights)
 
 
 model:
-    name: UNet
-    cache_folder: ./model_zoo
-    pretrained: null     # path to pretrained weights, optimizer states will not restored
-    resume: null    # path to last trained model, will restore optimizer states
-    params:
-        in_channels: 1
-        n_classes: 1
-        padding: True
-        batch_norm: True
+  name: UNet
+  cache_folder: ./model_zoo
+  pretrained: null     # path to pretrained weights, optimizer states will not restored
+  resume: null    # path to last trained model, will restore optimizer states
+  params:
+    in_channels: 1
+    n_classes: 1
+    padding: True
+    batch_norm: True
 
 optim:
-    optimizer: 
-        name: Adam    
-        params:
-            lr: 0.1
+  optimizer:
+    name: Adam
+    params:
+      lr: 0.01
 
-    lr_scheduler:
-        name: MultiStepLR
-        params:
-            milestones: [50, 75, 100]
-            gamma: 0.1
+  lr_scheduler:
+    name: MultiStepLR
+    params:
+      milestones: [50, 75, 100]
+      gamma: 0.1
 
-    batch_size: 8
-    epochs: 100
-    
-    val_freq: 1
-    val_batch_size: 8
-    val_device: cpu
-    
-    num_workers: 8
-    
-    debug: true
-    debug_freq: 100
-    log_every: 20
+  batch_size: 8
+  batch_accumulation: 1
+  epochs: 100
+  
+  val_freq: 1
+  val_batch_size: null  # null = same as 'batch_size'
+  val_device: cpu
+  
+  num_workers: 8
+  
+  debug: true
+  debug_freq: 700
+  log_every: 20
 
 seed: 47
 gpu : 0      # index of the gpu you want to use, null for cpu
-
-
-
