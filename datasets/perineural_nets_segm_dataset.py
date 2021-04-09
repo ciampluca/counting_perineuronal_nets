@@ -17,12 +17,39 @@ class PerineuralNetsSegmDataset(ConcatDataset):
     """ Dataset that provides per-patch iteration of bunch of big image files,
         implemented as a concatenation of single-file datasets. """
 
-    def __init__(self, root='data/perineuronal_nets', split='all', patch_size=640, overlap=0, random_offset=0, with_targets=True, gt_params={}, transforms=None, max_cache_mem=None):
+    # params for groundtruth segmentation maps generation
+    DEFAULT_GT_PARAMS = {
+        'radius': 20,         # radius (in px) of the dot placed on a cell in the segmentation map
+        'radius_ignore': 25,  # radius (in px) of the 'ignore' zone surrounding the cell
+        'v_bal': 0.1,         # weight of the loss of bg pixels
+        'sigma_bal': 10,      # gaussian stddev (in px) to blur loss weights of bg pixels near fg pixels
+        'sep_width': 1,       # width (in px) of bg ridge separating two overlapping foreground cells
+        'sigma_sep': 6,       # gaussian stddev (in px) to blur loss weights of bg pixels near bg ridge pixels
+        'lambda_sep': 50,     # multiplier for the separation weights (before being summed to the other loss weights)
+    }
+
+    def __init__(self,
+                 root='data/perineuronal_nets',
+                 split='all',
+                 with_targets=True,
+                 patch_size=640,
+                 overlap=None,
+                 random_offset=None,
+                 gt_params={},
+                 transforms=None,
+                 max_cache_mem=None):
+
         self.root = Path(root)
         self.transforms = transforms
         self.patch_size = patch_size
-        self.overlap = overlap
-        self.random_offset = random_offset
+        self.random_offset = random_offset if random_offset is not None else patch_size // 2
+
+        # groundtruth parameters
+        self.gt_params = deepcopy(self.DEFAULT_GT_PARAMS)
+        self.gt_params.update(gt_params)
+
+        self.overlap = overlap if overlap is not None else 4 * self.gt_params['radius_ignore']
+
         assert split in ('train', 'validation', 'train-specular', 'validation-specular', 'all'), \
             "split must be one of ('train', 'validation', 'train-specular', 'validation-specular', 'all')"
         self.split = split
@@ -37,11 +64,9 @@ class PerineuralNetsSegmDataset(ConcatDataset):
             max_cache_mem /= len(image_files)
 
         splits = ('all',)
-        if self.split == 'train':
-            # remove validation images from list: ttVtt, V removed
+        if self.split == 'train':  # remove validation images from list: ttVtt, V removed
             del image_files[2::5]
-        elif self.split == 'validation':
-            # keep only validation elements: ttVtt, only V kept
+        elif self.split == 'validation':  # keep only validation elements: ttVtt, only V kept
             image_files = image_files[2::5]
         if self.split == 'train-specular':
             splits = ('left', 'right')
@@ -51,8 +76,15 @@ class PerineuralNetsSegmDataset(ConcatDataset):
             # pass
         splits = itertools.cycle(splits)
 
-        stride = patch_size - overlap
-        kwargs = dict(patch_size=patch_size, stride=stride, random_offset=random_offset, with_targets=with_targets, gt_params=gt_params, max_cache_mem=max_cache_mem)
+        stride = patch_size - self.overlap
+        kwargs = dict(
+            with_targets=with_targets,
+            patch_size=patch_size,
+            stride=stride,
+            random_offset=self.random_offset,
+            gt_params=self.gt_params,
+            max_cache_mem=max_cache_mem
+        )
         datasets = [_PerineuralNetsSegmImage(image_path, self.annot, split=s, **kwargs) for image_path, s in zip(image_files, splits)]
         super(self.__class__, self).__init__(datasets)
 
@@ -65,7 +97,7 @@ class PerineuralNetsSegmDataset(ConcatDataset):
         return sample       
 
 
-# find cliques in graphs
+# find cliques in graphs, used for building the target segmentation maps
 # from https://en.wikipedia.org/wiki/Bron%E2%80%93Kerbosch_algorithm
 def find_cliques(adj_matrix):
     N = {i: set(np.nonzero(row)[0]) for i, row in enumerate(adj_matrix)}
@@ -78,8 +110,7 @@ def find_cliques(adj_matrix):
             yield R
         while P:
             v = P.pop()
-            yield from BronKerbosch1(
-                P=P.intersection(N[v]), R=R.union([v]), X=X.intersection(N[v]))
+            yield from BronKerbosch1(P=P.intersection(N[v]), R=R.union([v]), X=X.intersection(N[v]))
             X.add(v)
 
     P = N.keys()
@@ -88,27 +119,22 @@ def find_cliques(adj_matrix):
 
 class _PerineuralNetsSegmImage(Dataset):
     """ Dataset that provides per-patch iteration of a single big image file. """
-
-    # params for groundtruth segmentation maps generation
-    DEFAULT_GT_PARAMS = {
-        'radius': 25,         # radius (in px) of the dot placed on a cell in the segmentation map
-        'radius_ignore': 30,  # radius (in px) of the 'ignore' zone surrounding the cell
-        'v_bal': 0.1,         # weight of the loss of bg pixels
-        'sigma_bal': 10,      # gaussian stddev (in px) to blur loss weights of bg pixels near fg pixels
-        'sep_width': 1,       # width (in px) of bg ridge separating two overlapping foreground cells
-        'sigma_sep': 6,       # gaussian stddev (in px) to blur loss weights of bg pixels near bg ridge pixels
-        'lambda_sep': 50,     # multiplier for the separation weights (before being summed to the other loss weights)
-    }
     
-    def __init__(self, h5_path, annotations, patch_size=640, stride=None, split='left', random_offset=0, with_targets=True, max_cache_mem=None, gt_params={}):
+    def __init__(self,
+                 h5_path,
+                 annotations,
+                 split='left',
+                 with_targets=True,
+                 patch_size=640,
+                 stride=None,
+                 random_offset=0,
+                 gt_params=None,
+                 max_cache_mem=None):
         
         self.h5_path = h5_path
         self.random_offset = random_offset
         self.with_targets = with_targets
-        
-        # groundtruth parameters
-        self.gt_params = deepcopy(self.DEFAULT_GT_PARAMS)
-        self.gt_params.update(gt_params)
+        self.gt_params = gt_params if gt_params is not None else PerineuralNetsSegmDataset.DEFAULT_GT_PARAMS
         
         assert split in ('left', 'right', 'all'), "split must be one of ('left', 'right', 'all')"
         self.split = split
