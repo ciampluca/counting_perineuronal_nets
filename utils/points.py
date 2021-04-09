@@ -26,7 +26,8 @@ def _linear_sum_assignment_with_inf(cost_matrix):
         if min_inf:
             place_holder = (m + (n - 1) * (m - M)) - positive
 
-    cost_matrix[np.isinf(cost_matrix)] = place_holder
+        cost_matrix[np.isinf(cost_matrix)] = place_holder
+
     return linear_sum_assignment(cost_matrix)
 
 
