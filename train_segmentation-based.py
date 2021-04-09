@@ -25,6 +25,7 @@ from omegaconf import DictConfig
 import hydra
 
 from datasets.perineural_nets_segm_dataset import PerineuralNetsSegmDataset
+from utils import points
 
 # Creating logger
 log = logging.getLogger(__name__)
@@ -63,29 +64,11 @@ def dice_jaccard(y_true, y_pred, smooth=1, thr=None):
     return dice.mean(), jaccard.mean()
 
 
-def game(df_pred, df_true, image_hw, L):
-    """ Computes Grid Average Mean absolute Error (GAME) from localizations (pandas DataFrames). """
-    val = 0.0
-    image_h, image_w = image_hw
-    patch_h, patch_w = image_h / 2**L, image_w / 2**L
-    for r in range(2**L):
-        sy, ey = patch_h * r, patch_h * (r + 1)
-        row_filtered_pred = df_pred[df_pred.Y.between(sy, ey)]
-        row_filtered_true = df_true[df_true.Y.between(sy, ey)]
-        for c in range(2**L):
-            sx, ex = patch_w * c, patch_w * (c + 1)
-            pred = row_filtered_pred.X.between(sx, ex).sum()
-            true = row_filtered_true.X.between(sx, ex).sum()
-            val += abs(pred - true)
-    
-    return val
-
-
 def train(model, dataloader, optimizer, device, cfg, writer, epoch):
     """ Trains the model for one epoch. """
     model.train()
 
-    metrics = collections.defaultdict(float)  # defaults to 0.0
+    metrics = {}
     n_batches = len(dataloader)
     progress = tqdm(dataloader, desc='TRAIN')
     for i, sample in enumerate(progress):
@@ -109,8 +92,7 @@ def train(model, dataloader, optimizer, device, cfg, writer, epoch):
             'soft_jaccard': soft_jaccard.item()
         }
 
-        for metric, value in batch_metrics.items():
-            metrics[metric] += value
+        metrics.append(batch_metrics)
 
         postfix = {metric: f'{value:.3f}' for metric, value in batch_metrics.items()}
         progress.set_postfix(postfix)
@@ -126,7 +108,7 @@ def train(model, dataloader, optimizer, device, cfg, writer, epoch):
                 writer.add_images('train/targets', targets, n_iter)
                 writer.add_images('train/predictions', predictions, n_iter)
 
-    metrics = {metric: value / n_batches for metric, value in metrics.items()}
+    metrics = pd.DataFrame(metrics).mean(axis=0).to_dict()
     return metrics
 
 
@@ -157,146 +139,132 @@ def validate(model, dataloader, device, cfg, epoch):
     processed_batches = BackgroundGenerator(processed_batches, max_prefetch=15000)  # prefetch batches using threading
     processed_samples = _unbatch(processed_batches)
 
-    metrics = collections.defaultdict(list)  # defaults to empty list
+    metrics = []
+    thr_metrics = []
     
     # group by image_id (and image_hw for convenience) --> iterate over full images
     grouper = lambda x: (x[0], x[1].tolist())  # group by (image_id, image_hw)
     groups = itertools.groupby(processed_samples, key=grouper)
     progress = tqdm(groups, total=len(dataloader.dataset.datasets), desc='EVAL', leave=False)
     for (image_id, image_hw), image_patches in progress:
-            # full_image = torch.empty(image_hw, dtype=torch.float32, device=validation_device)
-            full_segm_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
-            full_target_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
-            full_weight_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
-            normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
+        # full_image = torch.empty(image_hw, dtype=torch.float32, device=validation_device)
+        full_segm_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
+        full_target_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
+        full_weight_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
+        normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
 
-            # build full maps from patches
-            progress.set_description('EVAL (patches)')
-            for _, _, patch, target, weights, prediction, patch_hw, start_yx in image_patches:
-                (y, x), (h, w) = start_yx, patch_hw
-                # full_image[y:y+h, x:x+w] = patch[:h, :w]
-                full_segm_map[y:y+h, x:x+w] += prediction[:h, :w]
-                full_target_map[y:y+h, x:x+w] += target[:h, :w]
-                full_weight_map[y:y+h, x:x+w] += weights[:h, :w]
-                normalization_map[y:y+h, x:x+w] += 1.0
+        # build full maps from patches
+        progress.set_description('EVAL (patches)')
+        for _, _, patch, target, weights, prediction, patch_hw, start_yx in image_patches:
+            (y, x), (h, w) = start_yx, patch_hw
+            # full_image[y:y+h, x:x+w] = patch[:h, :w]
+            full_segm_map[y:y+h, x:x+w] += prediction[:h, :w]
+            full_target_map[y:y+h, x:x+w] += target[:h, :w]
+            full_weight_map[y:y+h, x:x+w] += weights[:h, :w]
+            normalization_map[y:y+h, x:x+w] += 1.0
 
-            # full_image /= normalization_map
-            full_segm_map /= normalization_map
-            full_target_map /= normalization_map
-            full_weight_map /= normalization_map
+        # full_image /= normalization_map
+        full_segm_map /= normalization_map
+        full_target_map /= normalization_map
+        full_weight_map /= normalization_map
 
-            full_segm_map = torch.clamp(full_segm_map, 0, 1)  # XXX to fix, sporadically something goes off limits
-            del normalization_map
+        full_segm_map = torch.clamp(full_segm_map, 0, 1)  # XXX to fix, sporadically something goes off limits
+        del normalization_map
 
-            # compute metrics
-            progress.set_description('EVAL (metrics)')
+        # compute metrics
+        progress.set_description('EVAL (metrics)')
 
-            ## threshold-free metrics
-            weighted_bce_loss = F.binary_cross_entropy(full_segm_map, full_target_map, full_weight_map)
-            soft_dice, soft_jaccard = dice_jaccard(full_target_map, full_segm_map)
-            
-            ## threshold-dependent metrics
-            thrs = torch.linspace(0, 1, 21).tolist() + [2,]
+        ## threshold-free metrics
+        weighted_bce_loss = F.binary_cross_entropy(full_segm_map, full_target_map, full_weight_map)
+        soft_dice, soft_jaccard = dice_jaccard(full_target_map, full_segm_map)
+        
+        ## threshold-dependent metrics
+        thrs = torch.linspace(0, 1, 21).tolist() + [2,]
 
-            thr_metrics = collections.defaultdict(list)  # defaults to empty list
+        image_thr_metrics = []
+        progress_thrs = tqdm(thrs, desc='thr', leave=False)
+        for thr in progress_thrs:
+            full_bin_segm_map = full_segm_map >= thr
 
-            progress_thrs = tqdm(thrs, desc='thr', leave=False)
-            for thr in progress_thrs:
-                full_bin_segm_map = full_segm_map >= thr
+            # segmentation metrics
+            progress_thrs.set_description(f'thr={thr:.2f} (segm)')
+            dice, jaccard = dice_jaccard(full_target_map, full_bin_segm_map)
 
-                # segmentation metrics
-                progress_thrs.set_description(f'thr={thr:.2f} (segm)')
-                dice, jaccard = dice_jaccard(full_target_map, full_bin_segm_map)
+            segm_metrics = {
+                'segm/dice': dice.item(),
+                'segm/jaccard': jaccard.item()
+            }
+        
+            # counting metrics
+            progress_thrs.set_description(f'thr={thr:.2f} (count)')
+            labeled_map, num_components = measure.label(full_bin_segm_map.cpu().numpy(), return_num=True, connectivity=1)
+            localizations = measure.regionprops_table(labeled_map, properties=('centroid',))
+            localizations = pd.DataFrame(localizations).rename({'centroid-0':'Y', 'centroid-1':'X'}, axis=1)
+            groundtruth = dataloader.dataset.annot.loc[image_id]
 
-                thr_metrics['segm/dice'] += [dice.item()]
-                thr_metrics['segm/jaccard'] += [jaccard.item()]
-            
-                # counting metrics
-                progress_thrs.set_description(f'thr={thr:.2f} (count)')
-                labeled_map, num_components = measure.label(full_bin_segm_map.cpu().numpy(), return_num=True, connectivity=1)
-                localizations = measure.regionprops_table(labeled_map, properties=('centroid',))
-                localizations = pd.DataFrame(localizations).rename({'centroid-0':'Y', 'centroid-1':'X'}, axis=1)
-                groundtruth = dataloader.dataset.annot.loc[image_id]
+            tolerance = 1.25 * cfg.dataset.validation.params.gt_params.radius  # min distance to match points
+            groundtruth_and_predictions = points.match(groundtruth, localizations, tolerance)
+            count_pdet_metrics = points.compute_metrics(groundtruth_and_predictions, image_hw=image_hw)
 
-                counting_error = len(localizations) - len(groundtruth)
-                counting_abs_error = abs(counting_error)
-                counting_squared_error = counting_error ** 2
-                counting_abs_relative_error = abs(counting_error) / max(len(groundtruth), 1)
-                counting_game = {f'count/game-{l}': game(localizations, groundtruth, image_hw, L=l) for l in range(6)}
+            image_thr_metrics.append({
+                'image_id': image_id,
+                'thr': thr,
+                **segm_metrics,
+                **count_pdet_metrics
+            })
+        
+        pr = pd.DataFrame(image_thr_metrics).sort_values('pdet/recall', ascending=False)
+        recalls = pr['pdet/recall'].values
+        precisions = pr['pdet/precision'].values
+        average_precision = - np.sum(np.diff(recalls) * precisions[:-1])  # sklearn's ap
 
-                thr_metrics['count/err'] += [counting_error]
-                thr_metrics['count/mae'] += [counting_abs_error]
-                thr_metrics['count/mse'] += [counting_squared_error]
-                thr_metrics['count/mare'] += [counting_abs_relative_error]
-                for key, value in counting_game.items():
-                    thr_metrics[key] += [value]
+        # accumulate full image metrics
+        metrics.append({
+            'image_id': image_id,
+            'segm/weighted_bce_loss': weighted_bce_loss.item(),
+            'segm/soft_dice': soft_dice.item(),
+            'segm/soft_jaccard': soft_jaccard.item(),
+            'pdet/average_precision': average_precision.item(),
+        })
 
-                # point detection metrics
-                progress_thrs.set_description(f'thr={thr:.2f} (pdet)')
-
-                groundtruth_and_predictions = groundtruth.copy().reset_index()
-                groundtruth_and_predictions['Xp'] = np.nan
-                groundtruth_and_predictions['Yp'] = np.nan
-
-                gt_points = groundtruth[['X', 'Y']].values
-                pred_points = localizations[['X', 'Y']].values
-
-                tolerance = (1.25 * cfg.dataset.validation.params.gt_params.radius)  # min distance to match points
-                distance_matrix = cdist(gt_points, pred_points, 'euclidean')
-                matches = distance_matrix < tolerance
-                matched_pred = matches.any(axis=0)
-                matched_gt = matches.any(axis=1)
-
-                true_positives = 0
-                false_positives = np.logical_not(matched_pred).sum()
-                false_negatives = np.logical_not(matched_gt).sum()
-
-                if matched_gt.any():
-                    # run hungarian algo to best match groundtruth and predictions that matches
-                    matched_distance_matrix = distance_matrix[matched_gt][:, matched_pred]
-                    gt_idx, pred_idx = linear_sum_assignment(matched_distance_matrix)
-                    distances = matched_distance_matrix[gt_idx, pred_idx]
-                    # the algorithm may assign distant couples, check the distances of the assignment
-                    real_matches = distances < tolerance
-                    true_positives = real_matches.sum()
-                    false_positives += np.logical_not(real_matches).sum()
-
-                if thr < 2:
-                    precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0.
-                    recall = true_positives / (true_positives + false_negatives)
-                else:
-                    precision, recall = 1., 0.
-                f1_score = true_positives / (true_positives + false_negatives + false_positives)
-
-                thr_metrics['pdet/precision'] += [precision]
-                thr_metrics['pdet/recall'] += [recall]
-                thr_metrics['pdet/f1_score'] += [f1_score]
-
-            recalls = thr_metrics['pdet/recall']
-            precisions = thr_metrics['pdet/precision']
-            average_precision = - np.sum(np.diff(recalls) * np.array(precisions)[:-1])
-
-            # accumulate full image metrics
-            metrics['segm/weighted_bce_loss'] += [weighted_bce_loss.item()]
-            metrics['segm/soft_dice'] += [soft_dice.item()]
-            metrics['segm/soft_jaccard'] += [soft_jaccard.item()]
-            metrics['pdet/average_precision'] += [average_precision.item()]
-            for metric, values in thr_metrics.items():
-                metrics[metric] += [values]
+        thr_metrics.extend(image_thr_metrics)
 
     # average among images
-    metrics = {metric: np.mean(values, axis=0) for metric, values in metrics.items()}
+    metrics = pd.DataFrame(metrics).set_index('image_id')
+    metrics = metrics.mean(axis=0).to_dict()
 
     # pick best threshold metrics
-    for metric in thr_metrics.keys():
-        values = metrics.pop(metric)
-        if 'segm/' in metric or 'pdet/' in metric:  
-            best_idx = np.argmax(values)  # higher is better
-        else:
-            best_idx = np.argmin(values)  # lower is better
+    thr_metrics = pd.DataFrame(thr_metrics).set_index(['image_id', 'thr'])
+    mean_thr_metrics = thr_metrics.pivot_table(index='thr', values=thr_metrics.columns, aggfunc='mean')
+    
+    best_thr_metrics = mean_thr_metrics.aggregate({
+        'segm/dice': max,
+        'segm/jaccard': max,
+        'pdet/precision': max,
+        'pdet/recall': max,
+        'pdet/f1_score': max,
+        'count/err': lambda x: min(x, key=abs),
+        'count/mae': min,
+        'count/mse': min,
+        'count/mare': min,
+        **{f'count/game-{l}': min for l in range(6)}
+    }).rename(lambda i: i + '_best').to_dict()
 
-        metrics[f'{metric}_best'] = values[best_idx]
-        metrics[f'{metric}_best_thr'] = thrs[best_idx]
+    best_thrs = mean_thr_metrics.aggregate({
+        'segm/dice': 'idxmax',
+        'segm/jaccard': 'idxmax',
+        'pdet/precision': 'idxmax',
+        'pdet/recall': 'idxmax',
+        'pdet/f1_score': 'idxmax',
+        'count/err': lambda x: x.abs().idxmin(),
+        'count/mae': 'idxmin',
+        'count/mse': 'idxmin',
+        'count/mare': 'idxmin',
+        **{f'count/game-{l}': 'idxmin' for l in range(6)}
+    }).rename(lambda i: i + '_best_thr').to_dict()
+
+    metrics.update(best_thr_metrics)
+    metrics.update(best_thrs)
 
     return metrics
 
@@ -382,6 +350,12 @@ def main(hydra_cfg: DictConfig) -> None:
     best_metrics_epoch = {}
     best_thresholds = {}
 
+    train_log_path = 'train_log.csv'
+    valid_log_path = 'valid_log.csv'
+
+    train_log = pd.DataFrame()
+    valid_log = pd.DataFrame()
+
     # optionally resume from a saved checkpoint
     if cfg.model.resume:
         log.info(f"Resuming training from checkpoint: {cfg.model.resume}")
@@ -395,6 +369,9 @@ def main(hydra_cfg: DictConfig) -> None:
         best_metrics_epoch = checkpoint['best_metrics_epoch']
         if 'best_thresholds' in checkpoint:
             best_thresholds = checkpoint['best_thresholds']
+        
+        train_log = pd.read_csv(train_log_path)
+        valid_log = pd.read_csv(valid_log_path)
 
     # Train loop
     log.info(f"Start training")
@@ -403,6 +380,10 @@ def main(hydra_cfg: DictConfig) -> None:
         # train
         train_metrics = train(model, train_loader, optimizer, device, cfg, writer, epoch)
         scheduler.step() # update lr scheduler
+
+        train_metrics['epoch'] = epoch
+        train_log = train_log.append(train_metrics, ignore_index=True)
+        train_log.to_csv(train_log_path, index=False)
 
         # evaluation
         if (epoch + 1) % cfg.optim.val_freq == 0:
@@ -424,7 +405,7 @@ def main(hydra_cfg: DictConfig) -> None:
                     best_metrics_epoch[metric] = epoch
                     best_thresholds[metric] = valid_metrics.get(f'{metric}_thr', None)
 
-                    ckpt_path = best_models_folder / f'best_model_{cfg.dataset.validation.name}_metric_{metric.replace('/', '-')}.pth'
+                    ckpt_path = best_models_folder / f"best_model_{cfg.dataset.validation.name}_metric_{metric.replace('/', '-')}.pth"
                     torch.save({
                         'model': model.state_dict(),
                         'optimizer': optimizer.state_dict(),
@@ -442,6 +423,12 @@ def main(hydra_cfg: DictConfig) -> None:
                 'best_metrics_epoch': best_metrics_epoch,
                 'best_thresholds': best_thresholds
             }, 'last.pth')
+
+            valid_metrics['epoch'] = epoch
+            valid_log = valid_log.append(valid_metrics, ignore_index=True)
+            valid_log.to_csv(valid_log_path, index=False)
+
+
 
     log.info("Training ended. Exiting....")
 
