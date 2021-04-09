@@ -134,7 +134,7 @@ class _PerineuralNetsSegmImage(Dataset):
         elif split == 'left':
             self.region_hw = image_half_hw
         else:  # split == 'right':
-            self.region_hw = image_hw - image_half_hw
+            self.region_hw = image_hw - np.array((0, image_half_hw[1]))
 
         # the origin and limits of the region (split) of interest
         self.origin_yx = np.array((0, image_half_hw[1]) if self.split == 'right' else (0, 0))
