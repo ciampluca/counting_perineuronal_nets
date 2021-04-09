@@ -314,9 +314,10 @@ def main(hydra_cfg: DictConfig) -> None:
     # create validation dataset and dataloader
     log.info(f"Loading validation data")
     params = cfg.dataset.validation.params
+    valid_batch_size = cfg.optim.val_batch_size if cfg.optim.val_batch_size else cfg.optim.batch_size
     valid_transform = ToTensor()
     valid_dataset = PerineuralNetsSegmDataset(transforms=valid_transform, **params)
-    valid_loader = DataLoader(valid_dataset, batch_size=cfg.optim.val_batch_size, shuffle=False, num_workers=cfg.optim.num_workers)
+    valid_loader = DataLoader(valid_dataset, batch_size=valid_batch_size, shuffle=False, num_workers=cfg.optim.num_workers)
     log.info(f"Found {len(valid_dataset)} samples in validation dataset")
 
     # create model
