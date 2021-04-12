@@ -176,10 +176,11 @@ def main(args):
     params = cfg.dataset.validation.params
     params.root = 'data/perineuronal_nets_test'
     params.split = 'all'
-    params.overlap = 160
+    params.overlap = params.patch_size / 2
+    test_batch_size = cfg.optim.val_batch_size if cfg.optim.val_batch_size else cfg.optim.batch_size
     test_transform = ToTensor()
     test_dataset = PerineuralNetsSegmDataset(transforms=test_transform, with_targets=False, **params)
-    test_loader = DataLoader(test_dataset, batch_size=cfg.optim.val_batch_size, shuffle=False, num_workers=cfg.optim.num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=test_batch_size, shuffle=False, num_workers=cfg.optim.num_workers)
     print(f"Found {len(test_dataset)} samples in validation dataset")
 
     # create model
