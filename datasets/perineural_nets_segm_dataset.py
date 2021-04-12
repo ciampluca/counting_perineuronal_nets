@@ -48,7 +48,7 @@ class PerineuralNetsSegmDataset(ConcatDataset):
         self.gt_params = deepcopy(self.DEFAULT_GT_PARAMS)
         self.gt_params.update(gt_params)
 
-        self.overlap = overlap if overlap is not None else 4 * self.gt_params['radius_ignore']
+        self.overlap = overlap if overlap is not None else int(4 * self.gt_params['radius_ignore'])
 
         assert split in ('train', 'validation', 'train-specular', 'validation-specular', 'all'), \
             "split must be one of ('train', 'validation', 'train-specular', 'validation-specular', 'all')"
@@ -144,10 +144,10 @@ class _PerineuralNetsSegmImage(Dataset):
         self.annot = annotations.loc[self.image_id]
 
         # patch size (height and width)
-        self.patch_hw = np.array((patch_size, patch_size))
+        self.patch_hw = np.array((patch_size, patch_size), dtype=np.int64)
 
         # windows stride size (height and width)
-        self.stride_hw = np.array((stride, stride)) if stride else self.patch_hw
+        self.stride_hw = np.array((stride, stride), dtype=np.int64) if stride else self.patch_hw
 
         # hdf5 dataset
         self.data = h5py.File(h5_path, 'r', rdcc_nbytes=max_cache_mem)['data']
@@ -167,7 +167,7 @@ class _PerineuralNetsSegmImage(Dataset):
         self.limits_yx = image_half_hw if self.split == 'left' else image_hw
 
         # the number of patches in a row and a column
-        self.num_patches = np.ceil(1 + ((self.region_hw - self.patch_hw) / self.stride_hw)).astype(int)
+        self.num_patches = np.ceil(1 + ((self.region_hw - self.patch_hw) / self.stride_hw)).astype(np.int64)
         
     def __len__(self):
         # total number of patches
@@ -314,7 +314,8 @@ class _PerineuralNetsSegmImage(Dataset):
         
         if n_points == 2:  # ridge is perpendicular bisector
             a, b = points
-            yield self._find_ridge_between_two(a, b, region_hw, region_start_yx)
+            if not np.allclose(a, b):  # discard duplicate points
+                yield self._find_ridge_between_two(a, b, region_hw, region_start_yx)
             
         else:  # ridge is found using voronoi partitioning
             # this was useful: https://gist.github.com/Sklavit/e05f0b61cb12ac781c93442fbea4fb55
@@ -356,7 +357,8 @@ class _PerineuralNetsSegmImage(Dataset):
                 # 3+ points that do not span the plane => collinear, we separate them in pairs
                 sorted_points = points[np.lexsort(points.T)]
                 for a, b in zip(sorted_points[:-1], sorted_points[1:]):
-                    yield self._find_ridge_between_two(a, b, region_hw, region_start_yx)
+                    if not np.allclose(a, b):  # discard duplicate points
+                        yield self._find_ridge_between_two(a, b, region_hw, region_start_yx)
     
     def _find_ridge_between_two(self, a, b, region_hw, region_start_yx):
         """ helper function for _find_ridges() when only 2 points overlap """
