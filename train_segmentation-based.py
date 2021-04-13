@@ -139,7 +139,7 @@ def validate(model, dataloader, device, cfg, epoch):
             yield from zip(*batch)
 
     processed_batches = map(_predict, dataloader)
-    processed_batches = BackgroundGenerator(processed_batches, max_prefetch=15000)  # prefetch batches using threading
+    processed_batches = BackgroundGenerator(processed_batches, max_prefetch=5000)  # prefetch batches using threading
     processed_samples = _unbatch(processed_batches)
 
     metrics = []
@@ -274,6 +274,8 @@ def validate(model, dataloader, device, cfg, epoch):
 
 @hydra.main(config_path="conf/segmentation_based", config_name="config")
 def main(hydra_cfg: DictConfig) -> None:
+    log.info(f"Run path: {Path.cwd()}")
+
     cfg = copy.deepcopy(hydra_cfg.technique)
     for _, v in hydra_cfg.items():
         update_dict(cfg, v)
@@ -309,6 +311,7 @@ def main(hydra_cfg: DictConfig) -> None:
     # create train dataset and dataloader
     log.info(f"Loading training data")
     params = cfg.dataset.train.params
+    log.info("Train input size: {0}x{0}".format(params.patch_size))
     train_transform = Compose([ToTensor(), RandomHorizontalFlip()])
     train_dataset = PerineuralNetsSegmDataset(transforms=train_transform, **params)
     train_loader = DataLoader(train_dataset, batch_size=cfg.optim.batch_size, shuffle=True, num_workers=cfg.optim.num_workers)
@@ -317,6 +320,7 @@ def main(hydra_cfg: DictConfig) -> None:
     # create validation dataset and dataloader
     log.info(f"Loading validation data")
     params = cfg.dataset.validation.params
+    log.info("Validation input size: {0}x{0}".format(params.patch_size))
     valid_batch_size = cfg.optim.val_batch_size if cfg.optim.val_batch_size else cfg.optim.batch_size
     valid_transform = ToTensor()
     valid_dataset = PerineuralNetsSegmDataset(transforms=valid_transform, **params)
@@ -361,9 +365,10 @@ def main(hydra_cfg: DictConfig) -> None:
     valid_log = pd.DataFrame()
 
     # optionally resume from a saved checkpoint
-    if cfg.model.resume:
-        log.info(f"Resuming training from checkpoint: {cfg.model.resume}")
-        checkpoint = torch.load(cfg.model.resume, map_location=device)
+    # if cfg.model.resume:
+    if Path('last.pth').exists():
+        log.info(f"Resuming training from last checkpoint.")
+        checkpoint = torch.load('last.pth', map_location=device)
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         if scheduler is not None:
