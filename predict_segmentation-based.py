@@ -71,7 +71,7 @@ def process_per_patch(dataloader, process_fn):
 
 
 @torch.no_grad()
-def predict(model, dataloader, thr, device, cfg):
+def predict(model, dataloader, thr, device, cfg, args):
     """ Make predictions on data. """
     model.eval()
 
@@ -111,8 +111,9 @@ def predict(model, dataloader, thr, device, cfg):
         groundtruth_and_predictions = points.match(groundtruth, localizations, tolerance)
 
         # filter by agreement
-        # majority = groundtruth_and_predictions.agreement.fillna(np.inf) > 6
-        # groundtruth_and_predictions = groundtruth_and_predictions[majority]
+        selector = groundtruth_and_predictions.agreement.between(4, 7)  # select by agreement
+        selector = selector | groundtruth_and_predictions.agreement.isna()  # always keep false positives
+        groundtruth_and_predictions = groundtruth_and_predictions[majority]
 
         # compute metrics
         metrics = points.compute_metrics(groundtruth_and_predictions, image_hw=image_hw)
@@ -169,8 +170,7 @@ def main(args):
     cfg_path = run_path / '.hydra' / 'config.yaml'
     cfg = OmegaConf.load(cfg_path)['technique']
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(cfg.gpu)
-    device = torch.device(f'cuda' if cfg.gpu is not None else 'cpu')
+    device = torch.device(args.device)
     
     # create test dataset and dataloader
     params = cfg.dataset.validation.params
@@ -205,6 +205,8 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Predict')
     parser.add_argument('run', help='Path to run dir')
+    parser.add_argument('-d', '--device', default='cuda', help='device to use for prediction')
+
     args = parser.parse_args()
     main(args)
 
