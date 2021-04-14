@@ -71,7 +71,7 @@ def process_per_patch(dataloader, process_fn):
 
 
 @torch.no_grad()
-def predict(model, dataloader, thr, device, cfg, args):
+def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
     """ Make predictions on data. """
     model.eval()
 
@@ -82,6 +82,7 @@ def predict(model, dataloader, thr, device, cfg, args):
 
     ids = []
     results = []
+    all_gt_and_preds = []
     # thr_metrics = []
     # thrs = np.linspace(0, 1, 21).tolist() + [2]
     for image_id, image, segmentation_map in process_per_patch(dataloader, process_fn):
@@ -94,11 +95,11 @@ def predict(model, dataloader, thr, device, cfg, args):
         # for t in tqdm(thrs):
         hard_segmentation_map = segmentation_map >= thr
 
-        if True:  # debug
-            os.makedirs('debug/', exist_ok=True)
-            io.imsave(f'debug/{image_id}', image)
-            io.imsave(f'debug/segm_{image_id}', (255*segmentation_map).astype(np.uint8))
-            io.imsave(f'debug/hard_segm_{image_id}', hard_segmentation_map.astype(np.uint8)*255)
+        if outdir and debug:  # debug
+            outdir.mkdir(parents=True, exist_ok=True)
+            io.imsave(outdir / image_id, image)
+            io.imsave(outdir / f'segm_{image_id}', (255 * segmentation_map).astype(np.uint8))
+            io.imsave(outdir / f'hard_segm_{image_id}', 255 * hard_segmentation_map.astype(np.uint8))
             # skimage.measure.find_contours.find_contours(array, level, fully_connected='low', positive_orientation='low')
 
         # find connected components and centroids
@@ -109,11 +110,13 @@ def predict(model, dataloader, thr, device, cfg, args):
         # match groundtruths and predictions
         tolerance = 1.25 * cfg.dataset.validation.params.gt_params.radius  # min distance to match points
         groundtruth_and_predictions = points.match(groundtruth, localizations, tolerance)
+        groundtruth_and_predictions['imgName'] = groundtruth_and_predictions.imgName.fillna(image_id)
+        all_gt_and_preds.append(groundtruth_and_predictions)
 
         # filter by agreement
         selector = groundtruth_and_predictions.agreement.between(4, 7)  # select by agreement
         selector = selector | groundtruth_and_predictions.agreement.isna()  # always keep false positives
-        groundtruth_and_predictions = groundtruth_and_predictions[majority]
+        groundtruth_and_predictions = groundtruth_and_predictions[selector]
 
         # compute metrics
         metrics = points.compute_metrics(groundtruth_and_predictions, image_hw=image_hw)
@@ -125,8 +128,8 @@ def predict(model, dataloader, thr, device, cfg, args):
         ids.append(image_id)
         results.append(metrics)
 
-        if True:  # debug
-            os.makedirs('debug/', exist_ok=True)
+        if outdir and debug:
+            outdir.mkdir(parents=True, exist_ok=True)
             image = np.stack((image, image, image), axis=-1)
             radius = 10
 
@@ -151,16 +154,36 @@ def predict(model, dataloader, thr, device, cfg, args):
                     rr, cc, val = draw.line_aa(r_gt, c_gt, r_p, c_p)
                     draw.set_color(image, (rr, cc), YELLOW, alpha=val)
 
-            io.imsave(f'debug/annot_{image_id}', image)
+            io.imsave(outdir / f'annot_{image_id}', image)
 
     results = pd.DataFrame(results, index=ids)
     print(results)
     print()
     print(results.describe().loc[['mean', 'std']].transpose())
 
-    if True:  # debug
-        os.makedirs('debug/', exist_ok=True)
-        results.to_csv('debug/results.csv')
+    all_gp = pd.concat(all_gt_and_preds, ignore_index=True)
+
+    inA = ~all_gp.X.isna()
+    inB = ~all_gp.Xp.isna()
+    all_gp['tp'] = inA & inB
+    all_gp['fp'] = ~inA & inB
+    all_gp['fn'] = inA & ~inB
+    all_gp['agreement'] = all_gp.agreement.map('{:g}'.format).replace('nan', 'none')
+    by_agree = all_gp.pivot_table(index='agreement', values=['tp','fp','fn'], aggfunc='sum')
+    by_agree['support'] = by_agree.sum(axis=1)
+    by_agree['micro-tpr'] = by_agree.tp / (by_agree.tp + by_agree.fn)
+    by_agree['fdr'] = by_agree.fp / (by_agree.fp + by_agree.tp.sum())
+
+    # eye-candy
+    table = by_agree.fillna(0).replace(0,'-')
+    with pd.option_context('display.float_format', '{:.1%}'.format):
+        print(table)
+    
+    if outdir:
+        outdir.mkdir(parents=True, exist_ok=True)
+        results.to_csv(outdir / 'results.csv')
+        all_gp.to_csv(outdir / 'all_gt_preds.csv')
+        table.to_latex(outdir / 'metrics_by_agreement.csv')
 
     import pdb; pdb.set_trace()
 
@@ -193,19 +216,23 @@ def main(args):
     # optionally resume from a saved checkpoint
     best_models_folder = run_path / 'best_models'
     ckpt_path = max(best_models_folder.glob('*.pth'), key=lambda x: x.stat().st_mtime)
-    print(f"Resuming training from checkpoint: {ckpt_path}")
+    print(f"Loading checkpoint: {ckpt_path}")
     checkpoint = torch.load(ckpt_path, map_location=device)
     model.load_state_dict(checkpoint['model'])
     validation_metrics = checkpoint['metrics']
 
     thr = validation_metrics['segm/dice_best_thr']
-    predict(model, test_loader, thr, device, cfg)
+    outdir = (run_path / 'test_predictions') if args.save else None
+    predict(model, test_loader, thr, device, cfg, outdir, debug=args.debug)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Predict')
     parser.add_argument('run', help='Path to run dir')
     parser.add_argument('-d', '--device', default='cuda', help='device to use for prediction')
+    parser.add_argument('--no-save', action='store_false', dest='save', help='draw images with predictions')
+    parser.add_argument('--debug', action='store_true', default=False, help='draw images with predictions')
+    parser.set_defaults(save=True)
 
     args = parser.parse_args()
     main(args)
