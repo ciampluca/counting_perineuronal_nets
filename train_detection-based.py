@@ -1,33 +1,40 @@
 # -*- coding: utf-8 -*-
-import os
-import sys
-import math
-import copy
-from PIL import ImageDraw, ImageFont
-import tqdm
-import timeit
-import numpy as np
 import logging
-from omegaconf import DictConfig
-import hydra
+import copy
+import os
+import math
+import sys
+import numpy as np
+from pathlib import Path
+import collections
+import pandas as pd
+from tqdm import tqdm, trange
+import itertools
+from PIL import ImageDraw
 
 import torch
 import torchvision
 from torch.utils.tensorboard import SummaryWriter
-from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torch.utils.data import DataLoader
-from torchvision.transforms.functional import to_pil_image
 from torchvision.models.detection.rpn import AnchorGenerator
+from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+from torchvision.transforms.functional import to_pil_image
 from torchvision.ops import boxes as box_ops
 
-from datasets.perineural_nets_bbox_dataset import PerineuralNetsBBoxDataset
-import utils.misc as utils
-from utils.misc import update_dict, random_seed, get_bbox_transforms, save_checkpoint, check_empty_images, coco_evaluate, compute_map, compute_dice_and_jaccard
+from omegaconf import DictConfig
+import hydra
+
+from prefetch_generator import BackgroundGenerator, background
+
+from datasets.det_transforms import Compose, RandomHorizontalFlip, ToTensor
+from datasets.perineural_nets_det_dataset import PerineuralNetsDetDataset
 from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet101_fpn
-from utils.transforms_bbs import CropToFixedSize, PadToSize
+from utils.misc import reduce_dict
+from utils import points
+
 
 # Creating logger
-log = logging.getLogger("Counting Nets")
+log = logging.getLogger(__name__)
 
 
 def get_model_detection(num_classes, cfg, load_custom_model=False):
@@ -63,9 +70,9 @@ def get_model_detection(num_classes, cfg, load_custom_model=False):
         model = fasterrcnn_resnet50_fpn(
             pretrained=model_pretrained,
             pretrained_backbone=backbone_pretrained,
-            box_detections_per_img=cfg.model.max_dets_per_image,
-            box_nms_thresh=cfg.model.nms,
-            box_score_thresh=cfg.model.det_thresh,
+            box_detections_per_img=cfg.model.params.max_dets_per_image,
+            box_nms_thresh=cfg.model.params.nms,
+            box_score_thresh=cfg.model.params.det_thresh,
             model_dir=os.path.join(hydra.utils.get_original_cwd(), cfg.model.cache_folder),
             rpn_anchor_generator=rpn_anchor_generator,
             box_roi_pool=roi_pooler,
@@ -74,9 +81,9 @@ def get_model_detection(num_classes, cfg, load_custom_model=False):
         model = fasterrcnn_resnet101_fpn(
             pretrained=model_pretrained,
             pretrained_backbone=backbone_pretrained,
-            box_detections_per_img=cfg.model.max_dets_per_image,
-            box_nms_thresh=cfg.model.nms,
-            box_score_thresh=cfg.model.det_thresh,
+            box_detections_per_img=cfg.model.params.max_dets_per_image,
+            box_nms_thresh=cfg.model.params.nms,
+            box_score_thresh=cfg.model.params.det_thresh,
             model_dir=os.path.join(hydra.utils.get_original_cwd(), cfg.model.cache_folder),
             rpn_anchor_generator=rpn_anchor_generator,
             box_roi_pool=roi_pooler,
@@ -96,21 +103,78 @@ def get_model_detection(num_classes, cfg, load_custom_model=False):
     return model
 
 
-def train_one_epoch(model, optimizer, data_loader, device, epoch, cfg, tensorboard_writer):
+def check_empty_images(targets):
+    if targets[0]['boxes'].is_cuda:
+        device = targets[0]['boxes'].get_device()
+    else:
+        device = torch.device("cpu")
+
+    for target in targets:
+        if target['boxes'].nelement() == 0:
+            target['boxes'] = torch.as_tensor([[0, 1, 2, 3]], dtype=torch.float32, device=device)
+            target['labels'] = torch.zeros((1,), dtype=torch.int64, device=device)
+            target['iscrowd'] = torch.zeros((1,), dtype=torch.int64, device=device)
+
+    return targets
+
+
+def seed_everything(seed):
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.deterministic = True
+
+
+def update_dict(d, u):
+    for k, v in u.items():
+        if isinstance(v, collections.abc.Mapping):
+            d[k] = update_dict(d.get(k, {}), v)
+        else:
+            d[k] = v
+    return d
+
+
+def dice_jaccard(y_true, y_pred, y_pred_scores, shape, smooth=1, thr=None):
+    """ Computes Dice and Jaccard coefficients for image segmentation. """
+
+    gt_seg_map = np.zeros(shape, dtype=np.float32)
+    for gt_bb in y_true:
+        gt_seg_map[int(gt_bb[1]):int(gt_bb[3]) + 1, int(gt_bb[0]):int(gt_bb[2]) + 1] = 1.0
+
+    det_seg_map = np.zeros_like(gt_seg_map)
+    for det_bb, score in zip(y_pred, y_pred_scores):
+        if thr is not None:
+            if score < thr:
+                continue
+        det_seg_map[int(det_bb[1]):int(det_bb[3]) + 1, int(det_bb[0]):int(det_bb[2]) + 1] = \
+            np.maximum(det_seg_map[int(det_bb[1]):int(det_bb[3]) + 1, int(det_bb[0]):int(det_bb[2]) + 1], score)
+
+    intersection = np.sum(gt_seg_map * det_seg_map)
+    sum_ = np.sum(gt_seg_map) + np.sum(det_seg_map)
+    union = sum_ - intersection
+
+    jaccard = (intersection + smooth) / (union + smooth)
+    dice = 2. * (intersection + smooth) / (sum_ + smooth)
+
+    return dice.mean(), jaccard.mean()
+
+
+def train_one_epoch(model, dataloader, optimizer, device, cfg, writer, epoch):
+    """ Trains the model for one epoch. """
     model.train()
-    metric_logger = utils.MetricLogger(delimiter="  ")
-    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    header = 'Epoch: [{}]'.format(epoch)
+    optimizer.zero_grad()
 
-    lr_scheduler = None
-    if epoch == 0:
-        warmup_factor = 1. / 1000
-        warmup_iters = min(1000, len(data_loader) - 1)
-
-        lr_scheduler = utils.warmup_lr_scheduler(optimizer, warmup_iters, warmup_factor)
-
-    for train_iteration, (images, targets) in enumerate(metric_logger.log_every(data_loader, cfg.training.print_freq, header)):
-        images = list(image.to(device) for image in images)
+    metrics = []
+    n_batches = len(dataloader)
+    progress = tqdm(dataloader, desc='TRAIN')
+    for i, sample in enumerate(progress):
+        input_and_target, patch_hw, start_yx, image_hw, image_id = sample
+        # splits input and target building them to be coco compliant
+        images, targets = dataloader.dataset.build_coco_compliant_batch(input_and_target)
+        images = list(img.to(device) for img in images)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
         # In case of empty images (i.e, without bbs), we handle them as negative images
@@ -122,326 +186,351 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, cfg, tensorboa
         loss_dict = model(images, targets)
 
         losses = sum(loss for loss in loss_dict.values())
-
         # reduce losses over all GPUs for logging purposes
-        loss_dict_reduced = utils.reduce_dict(loss_dict)
+        loss_dict_reduced = reduce_dict(loss_dict)
         losses_reduced = sum(loss for loss in loss_dict_reduced.values())
-
         loss_value = losses_reduced.item()
 
         if not math.isfinite(loss_value):
             log.error(f"Loss is {loss_value}, stopping training")
             sys.exit(1)
 
-        optimizer.zero_grad()
         losses.backward()
+
+        batch_metrics = {
+            'loss': loss_value
+        }
+
+        metrics.append(batch_metrics)
+
+        postfix = {metric: f'{value:.3f}' for metric, value in batch_metrics.items()}
+        progress.set_postfix(postfix)
+
         torch.nn.utils.clip_grad_norm_(model.parameters(), 50)
-        optimizer.step()
 
-        if lr_scheduler is not None:
-            lr_scheduler.step()
+        if (i + 1) % cfg.train.batch_accumulation == 0:
+            optimizer.step()
+            optimizer.zero_grad()
 
-        metric_logger.update(loss=losses_reduced, **loss_dict_reduced)
-        metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+        if (i + 1) % cfg.train.log_every == 0:
+            batch_metrics.update({'lr': optimizer.param_groups[0]['lr']})
+            n_iter = epoch * n_batches + i
+            for metric, value in batch_metrics.items():
+                writer.add_scalar(f'train/{metric}', value, n_iter)
 
-        if train_iteration % cfg.training.log_loss == 0:
-            tensorboard_writer.add_scalar('Training/Detection-based Learning Rate', optimizer.param_groups[0]["lr"], epoch * len(data_loader) + train_iteration)
-            tensorboard_writer.add_scalar('Training/Detection-based Reduced Sum Losses', losses_reduced, epoch * len(data_loader) + train_iteration)
-            tensorboard_writer.add_scalars('Training/Detection-based All Losses', loss_dict, epoch * len(data_loader) + train_iteration)
+    metrics = pd.DataFrame(metrics).mean(axis=0).to_dict()
+
+    return metrics
 
 
 @torch.no_grad()
-def validate(model, val_dataloader, device, cfg, epoch):
-    # Validation
+def validate(model, dataloader, device, cfg, epoch):
+    """ Evaluate model on validation data. """
     model.eval()
-    log.info(f"Start validation of the epoch {epoch}")
-    start = timeit.default_timer()
+    validation_device = cfg.train.val_device
 
-    epoch_mae, epoch_mse, epoch_are = 0.0, 0.0, 0.0
-    epoch_dets_for_coco_eval = []
-    epoch_dets_for_map_eval = {}
+    @torch.no_grad()
+    def _predict(batch):
+        input_and_target, patch_hw, start_yx, image_hw, image_id = batch
+        # splits input and target building them to be coco compliant
+        images, targets = dataloader.dataset.build_coco_compliant_batch(input_and_target)
+        images = list(img.to(device) for img in images)
 
-    crop_width, crop_height = cfg.dataset.validation.params.input_size
-    stride_w = crop_width - cfg.dataset.validation.params.patches_overlap
-    stride_h = crop_height - cfg.dataset.validation.params.patches_overlap
+        predictions = model(images)
 
-    for images, targets in tqdm.tqdm(val_dataloader):
-        images = list(image.to(device) for image in images)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        # prepare data for validation
+        images = torch.stack(images)
+        images = images.squeeze(dim=1).to(validation_device)
+        targets_bbs = [t['boxes'].to(validation_device) for t in targets]
+        predictions_bbs = [p['boxes'].to(validation_device) for p in predictions]
+        predictions_scores = [p['scores'].to(validation_device) for p in predictions]
 
-        for image, target in zip(images, targets):
-            img_gt_num = len(target['boxes'])
-            img_id = target['image_id'].item()
-            img_name = val_dataloader.dataset.image_files[img_id]
+        processed_batch = (image_id, image_hw, images, targets_bbs, predictions_bbs, predictions_scores, patch_hw, start_yx)
 
-            # Image is divided in patches
-            img_w, img_h = image.shape[2], image.shape[1]
-            img_det_num = 0
-            img_det_bbs, img_det_scores, img_det_labels = [], [], []
+        return processed_batch
 
-            num_h_patches, num_v_patches = math.ceil(img_w / stride_w), math.ceil(img_h / stride_h)
-            img_w_padded = stride_w * num_h_patches + (crop_width - stride_w)
-            img_h_padded = stride_h * num_v_patches + (crop_height - stride_h)
+    def _unbatch(batches):
+        for batch in batches:
+            yield from zip(*batch)
 
-            padded_image, padded_target = PadToSize()(
-                image=image,
-                min_width=img_w_padded,
-                min_height=img_h_padded,
-                target=copy.deepcopy(target)
+    def _is_empty(l):
+        return all(_is_empty(i) if isinstance(i, list) else False for i in l)
+
+    processed_batches = map(_predict, dataloader)
+    processed_batches = BackgroundGenerator(processed_batches, max_prefetch=5000)  # prefetch batches using threading
+    processed_samples = _unbatch(processed_batches)
+
+    metrics = []
+    thr_metrics = []
+
+    # group by image_id (and image_hw for convenience) --> iterate over full images
+    grouper = lambda x: (x[0], x[1].tolist())  # group by (image_id, image_hw)
+    groups = itertools.groupby(processed_samples, key=grouper)
+    progress = tqdm(groups, total=len(dataloader.dataset.datasets), desc='EVAL', leave=False)
+    for (image_id, image_hw), image_patches in progress:
+        full_image = torch.empty(image_hw, dtype=torch.float32, device=validation_device)
+        normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
+        full_image_det_bbs, full_image_target_bbs = \
+            torch.empty(0, 4, dtype=torch.float32), torch.empty(0, 4, dtype=torch.float32)
+        full_image_det_scores = torch.empty(0, dtype=torch.float32)
+
+        # build full maps from patches
+        progress.set_description('EVAL (patches)')
+        for _, _, patch, target_bbs, prediction_bbs, prediction_scores, patch_hw, start_yx in image_patches:
+            (y, x), (h, w) = start_yx, patch_hw
+            full_image[y:y+h, x:x+w] = patch[:h, :w]
+            normalization_map[y:y+h, x:x+w] += 1.0
+            if prediction_bbs.nelement() != 0:
+                prediction_bbs[:, 0:1] += x
+                prediction_bbs[:, 2:3] += x
+                prediction_bbs[:, 1:2] += y
+                prediction_bbs[:, 3:4] += y
+                full_image_det_bbs = torch.cat((full_image_det_bbs, prediction_bbs))
+                full_image_det_scores = torch.cat((full_image_det_scores, prediction_scores))
+            if target_bbs.nelement() != 0:
+                target_bbs[:, 0:1] += x
+                target_bbs[:, 2:3] += x
+                target_bbs[:, 1:2] += y
+                target_bbs[:, 3:4] += y
+                full_image_target_bbs = torch.cat((full_image_target_bbs, target_bbs))
+
+        full_image /= normalization_map
+
+        # Removing bbs outside image and clipping
+        # TODO ask why?
+        full_image_filtered_det_bbs = torch.empty(0, 4, dtype=torch.float32)
+        full_image_filtered_det_scores = torch.empty(0, dtype=torch.float32)
+        l = torch.tensor([[0.0, 0.0, 0.0, 0.0]])      # Setting the lower and upper bound per column
+        u = torch.tensor([[image_hw[1], image_hw[0], image_hw[1], image_hw[0]]])
+        for bb, score in zip(full_image_det_bbs, full_image_det_scores):
+            bb_w, bb_h = bb[2] - bb[0], bb[3] - bb[1]
+            x_c, y_c = int(bb[0] + (bb_w / 2)), int(bb[1] + (bb_h / 2))
+            if x_c > image_hw[1] or y_c > image_hw[0]:
+                continue
+            bb = torch.max(torch.min(bb, u), l)
+            full_image_filtered_det_bbs = torch.cat((full_image_filtered_det_bbs, bb))
+            full_image_filtered_det_scores = torch.cat((full_image_filtered_det_scores, torch.Tensor([score.item()])))
+
+        # Performing filtering of the bbs in the overlapped areas using nms
+        in_overlap_areas_indices = []
+        in_overlap_areas_det_bbs, full_image_final_det_bbs = \
+            torch.empty(0, 4, dtype=torch.float32), torch.empty(0, 4, dtype=torch.float32)
+        in_overlap_areas_det_scores, full_image_final_det_scores = \
+            torch.empty(0, dtype=torch.float32), torch.empty(0, dtype=torch.float32)
+        for i, (det_bb, det_score) in enumerate(zip(full_image_filtered_det_bbs, full_image_filtered_det_scores)):
+            bb_w, bb_h = det_bb[2] - det_bb[0], det_bb[3] - det_bb[1]
+            x_c, y_c = int(det_bb[0] + (bb_w / 2)), int(det_bb[1] + (bb_h / 2))
+            if normalization_map[y_c, x_c] != 1.0:
+                in_overlap_areas_indices.append(i)
+                in_overlap_areas_det_bbs = torch.cat((in_overlap_areas_det_bbs, torch.Tensor([det_bb.cpu().numpy()])))
+                in_overlap_areas_det_scores = torch.cat((in_overlap_areas_det_scores, torch.Tensor([det_score.item()])))
+            else:
+                full_image_final_det_bbs = torch.cat((full_image_final_det_bbs, torch.Tensor([det_bb.cpu().numpy()])))
+                full_image_final_det_scores = torch.cat((full_image_final_det_scores, torch.Tensor([det_score.item()])))
+
+        # non-maximum suppression
+        if in_overlap_areas_indices:
+            keep_in_overlap_areas_indices = box_ops.nms(
+                in_overlap_areas_det_bbs,
+                in_overlap_areas_det_scores,
+                iou_threshold=cfg.model.params.nms
             )
 
-            normalization_map = torch.zeros_like(padded_image)
-            reconstructed_image = torch.zeros_like(padded_image)
+        if in_overlap_areas_indices:
+            for i in keep_in_overlap_areas_indices:
+                full_image_final_det_bbs = torch.cat((full_image_final_det_bbs, torch.Tensor([in_overlap_areas_det_bbs[i].cpu().numpy()])))
+                full_image_final_det_scores = torch.cat((full_image_final_det_scores, torch.Tensor([in_overlap_areas_det_scores[i].item()])))
 
-            for i in range(0, img_h, stride_h):
-                for j in range(0, img_w, stride_w):
-                    image_patch, target_patch = CropToFixedSize()(
-                        padded_image,
-                        x_min=j,
-                        y_min=i,
-                        x_max=j + crop_width,
-                        y_max=i + crop_height,
-                        min_visibility=cfg.training.bbox_discard_min_vis,
-                        target=copy.deepcopy(padded_target),
-                    )
+        # Cleaning
+        del full_image_det_bbs
+        del full_image_det_scores
+        del full_image_filtered_det_bbs
+        del full_image_filtered_det_scores
+        del in_overlap_areas_det_bbs
+        del in_overlap_areas_det_scores
+        del normalization_map
 
-                    reconstructed_image[:, i:i + crop_height, j:j + crop_width] += image_patch
-                    normalization_map[:, i:i + crop_height, j:j + crop_width] += 1.0
-
-                    det_outputs = model([image_patch.to(device)])
-
-                    bbs, scores, labels = det_outputs[0]['boxes'].data.cpu().tolist(), \
-                                          det_outputs[0]['scores'].data.cpu().tolist(), \
-                                          det_outputs[0]['labels'].data.cpu().tolist()
-
-                    img_det_bbs.extend([[bb[0] + j, bb[1] + i, bb[2] + j, bb[3] + i] for bb in bbs])
-                    img_det_labels.extend(labels)
-                    img_det_scores.extend(scores)
-
-            reconstructed_image /= normalization_map
-            overlapping_map = np.where(normalization_map[0].cpu().numpy() != 1.0, 1, 0)
-
-            # Performing filtering of the bbs in the overlapped areas using nms
-            keep_overlap = []
-            for i, det_bb in enumerate(img_det_bbs):
-                bb_w, bb_h = det_bb[2] - det_bb[0], det_bb[3] - det_bb[1]
-                x_c, y_c = int(det_bb[0] + (bb_w/2)), int(det_bb[1] + (bb_h/2))
-                if overlapping_map[y_c, x_c] == 1:
-                    keep_overlap.append(i)
-
-            bbs_in_overlapped_areas = [img_det_bbs[i] for i in keep_overlap]
-            scores_in_overlapped_areas = [img_det_scores[i] for i in keep_overlap]
-            labels_in_overlapped_areas = [img_det_labels[i] for i in keep_overlap]
-            final_bbs = [bb for i, bb in enumerate(img_det_bbs) if i not in keep_overlap]
-            final_scores = [score for i, score in enumerate(img_det_scores) if i not in keep_overlap]
-            final_labels = [label for i, label in enumerate(img_det_labels) if i not in keep_overlap]
-
-            # non-maximum suppression
-            if keep_overlap:
-                keep_overlap = box_ops.nms(
-                    torch.as_tensor(bbs_in_overlapped_areas, dtype=torch.float32),
-                    torch.as_tensor(scores_in_overlapped_areas, dtype=torch.float32),
-                    iou_threshold=cfg.model.nms
-                )
-
-            bbs_in_overlapped_areas = [bbs_in_overlapped_areas[i] for i in keep_overlap]
-            final_bbs.extend(bbs_in_overlapped_areas)
-            scores_in_overlapped_areas = [scores_in_overlapped_areas[i] for i in keep_overlap]
-            final_scores.extend(scores_in_overlapped_areas)
-            labels_in_overlapped_areas = [labels_in_overlapped_areas[i] for i in keep_overlap]
-            final_labels.extend(labels_in_overlapped_areas)
-
-            pad_w_to_remove, pad_h_to_remove = int((img_w_padded - img_w)) / 2, int((img_h_padded - img_h) / 2)
-            final_bbs = [
-                [bb[0] - pad_w_to_remove, bb[1] - pad_h_to_remove, bb[2] - pad_w_to_remove, bb[3] - pad_h_to_remove] for
-                bb in final_bbs]
-
-            for det_bb, det_score in zip(final_bbs, final_scores):
-                if float(det_score) > cfg.training.det_thresh_for_counting:
-                    img_det_num += 1
-
-            if cfg.training.debug and epoch % cfg.training.debug_freq == 0:
-                debug_dir = os.path.join(os.getcwd(), 'output_debug')
-                if not os.path.exists(debug_dir):
-                    os.makedirs(debug_dir)
-                # Removing pad from image
-                h_pad_top = int((img_h_padded - img_h) / 2.0)
-                h_pad_bottom = img_h_padded - img_h - h_pad_top
-                w_pad_left = int((img_w_padded - img_w) / 2.0)
-                w_pad_right = img_w_padded - img_w - w_pad_left
-                # Drawing det bbs
-                reconstructed_image = reconstructed_image[:, h_pad_top:img_h_padded - h_pad_bottom,
-                                      w_pad_left:img_w_padded - w_pad_right]
-                # Drawing det bbs
-                pil_reconstructed_image = to_pil_image(reconstructed_image)
-                draw = ImageDraw.Draw(pil_reconstructed_image)
-                for bb in final_bbs:
-                    draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='red', width=3)
-                gt_bboxes = target['boxes'].data.cpu().tolist()
+        if cfg.train.debug and epoch % cfg.train.debug == 0:
+            debug_dir = os.path.join(os.getcwd(), 'output_debug')
+            if not os.path.exists(debug_dir):
+                os.makedirs(debug_dir)
+            gt_bboxes = full_image_target_bbs.tolist()
+            det_bboxes = full_image_final_det_bbs.tolist()
+            pil_image = to_pil_image(full_image.cpu()).convert("RGB")
+            draw = ImageDraw.Draw(pil_image)
+            if not _is_empty(gt_bboxes):
                 for bb in gt_bboxes:
+                    draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='red', width=3)
+            if not _is_empty(det_bboxes):
+                for bb in det_bboxes:
                     draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='green', width=3)
-                # Add text to image
-                text = f"Det Num of Nets: {img_det_num}, GT Num of Nets: {img_gt_num}"
-                font_path = os.path.join(hydra.utils.get_original_cwd(), "./font/LEMONMILK-RegularItalic.otf")
-                font = ImageFont.truetype(font_path, 100)
-                draw.text((75, 75), text=text, font=font, fill=(0, 191, 255))
-                pil_reconstructed_image.save(
-                    os.path.join(debug_dir, "reconstructed_{}_with_bbs_epoch_{}.png".format(img_name.rsplit(".", 1)[0], epoch)))
+            pil_image.save(os.path.join(debug_dir, image_id))
 
-            # Updating errors
-            img_mae = abs(img_det_num - img_gt_num)
-            img_mse = (img_det_num - img_gt_num) ** 2
-            img_are = abs(img_det_num - img_gt_num) / np.clip(img_gt_num, 1, a_max=None)
-            epoch_mae += img_mae
-            epoch_mse += img_mse
-            epoch_are += img_are
+        # compute metrics
+        progress.set_description('EVAL (metrics)')
 
-            # Updating list of dets for coco eval
-            epoch_dets_for_coco_eval.append({
-                'boxes': torch.as_tensor(final_bbs, dtype=torch.float32),
-                'scores': torch.as_tensor(final_scores, dtype=torch.float32),
-                'labels': torch.as_tensor(final_labels, dtype=torch.int64),
-            })
+        # threshold-dependent metrics
+        thrs = torch.linspace(0, 1, 21).tolist() + [2, ]
 
-            # Updating dets for map evaluation
-            epoch_dets_for_map_eval[img_id] = {
-                'pred_bbs': final_bbs,
-                'scores': final_scores,
-                'labels': final_labels,
-                'gt_bbs': target['boxes'].data.cpu().tolist(),
-                'img_dim': (img_w, img_h),
+        image_thr_metrics = []
+        progress_thrs = tqdm(thrs, desc='thr', leave=False)
+        full_image_final_det_bbs = full_image_final_det_bbs.cpu().tolist()
+        full_image_final_det_scores = full_image_final_det_scores.cpu().tolist()
+        full_image_target_bbs = full_image_target_bbs.cpu().tolist()
+        for thr in progress_thrs:
+            full_image_final_det_bbs_thr = [bb for bb, score in
+                                            zip(full_image_final_det_bbs, full_image_final_det_scores) if
+                                            score > thr]
+            full_image_final_det_scores_thr = [score for score in full_image_final_det_scores if score > thr]
+
+            # segmentation metrics
+            progress_thrs.set_description(f'thr={thr:.2f} (segm)')
+            dice, jaccard = dice_jaccard(
+                full_image_target_bbs, full_image_final_det_bbs_thr, full_image_final_det_scores_thr, image_hw, thr=thr)
+
+            segm_metrics = {
+                'segm/dice': dice.item(),
+                'segm/jaccard': jaccard.item()
             }
 
-    stop = timeit.default_timer()
-    total_time = stop - start
-    mins, secs = divmod(total_time, 60)
-    hours, mins = divmod(mins, 60)
-    log.info(f"Validation epoch {epoch} ended. Total running time: {hours}:{mins}:{secs}.")
+            # counting metrics
+            groundtruth = dataloader.dataset.annot.loc[image_id]
+            localizations = [[bb[1], bb[0]] for bb in full_image_final_det_bbs_thr]
+            localizations = pd.DataFrame(localizations, columns=['Y', 'X'])
 
-    # Computing mean of the errors
-    epoch_mae /= len(val_dataloader.dataset)
-    epoch_mse /= len(val_dataloader.dataset)
-    epoch_are /= len(val_dataloader.dataset)
+            tolerance = 1.25 * (cfg.dataset.validation.params.gt_params.side / 2)  # min distance to match points
+            groundtruth_and_predictions = points.match(groundtruth, localizations, tolerance)
+            count_pdet_metrics = points.compute_metrics(groundtruth_and_predictions, image_hw=image_hw)
 
-    # Computing COCO mAP
-    coco_det_map = coco_evaluate(val_dataloader, epoch_dets_for_coco_eval, max_dets=cfg.training.coco_max_dets, folder_to_save=os.getcwd())
+            image_thr_metrics.append({
+                'image_id': image_id,
+                'thr': thr,
+                **segm_metrics,
+                **count_pdet_metrics
+            })
 
-    # Computing map
-    det_map = compute_map(epoch_dets_for_map_eval)
+        pr = pd.DataFrame(image_thr_metrics).sort_values('pdet/recall', ascending=False)
+        recalls = pr['pdet/recall'].values
+        precisions = pr['pdet/precision'].values
+        average_precision = - np.sum(np.diff(recalls) * precisions[:-1])  # sklearn's ap
 
-    # Computing dice score and jaccard index
-    dice_score, jaccard_index = compute_dice_and_jaccard(epoch_dets_for_map_eval)
+        # accumulate full image metrics
+        metrics.append({
+            'image_id': image_id,
+            'pdet/average_precision': average_precision.item(),
+        })
 
-    return epoch_mae, epoch_mse, epoch_are, coco_det_map, det_map, dice_score, jaccard_index
+        thr_metrics.extend(image_thr_metrics)
+
+    # average among images
+    metrics = pd.DataFrame(metrics).set_index('image_id')
+    metrics = metrics.mean(axis=0).to_dict()
+
+    # pick best threshold metrics
+    thr_metrics = pd.DataFrame(thr_metrics).set_index(['image_id', 'thr'])
+    mean_thr_metrics = thr_metrics.pivot_table(index='thr', values=thr_metrics.columns, aggfunc='mean')
+
+    best_thr_metrics = mean_thr_metrics.aggregate({
+        'segm/dice': max,
+        'segm/jaccard': max,
+        'pdet/precision': max,
+        'pdet/recall': max,
+        'pdet/f1_score': max,
+        'count/err': lambda x: min(x, key=abs),
+        'count/mae': min,
+        'count/mse': min,
+        'count/mare': min,
+        **{f'count/game-{l}': min for l in range(6)}
+    }).rename(lambda i: i + '_best').to_dict()
+
+    best_thrs = mean_thr_metrics.aggregate({
+        'segm/dice': 'idxmax',
+        'segm/jaccard': 'idxmax',
+        'pdet/precision': 'idxmax',
+        'pdet/recall': 'idxmax',
+        'pdet/f1_score': 'idxmax',
+        'count/err': lambda x: x.abs().idxmin(),
+        'count/mae': 'idxmin',
+        'count/mse': 'idxmin',
+        'count/mare': 'idxmin',
+        **{f'count/game-{l}': 'idxmin' for l in range(6)}
+    }).rename(lambda i: i + '_best_thr').to_dict()
+
+    metrics.update(best_thr_metrics)
+    metrics.update(best_thrs)
+
+    return metrics
 
 
 @hydra.main(config_path="conf/detection_based", config_name="config")
 def main(hydra_cfg: DictConfig) -> None:
+    log.info(f"Run path: {Path.cwd()}")
+
     cfg = copy.deepcopy(hydra_cfg.technique)
     for _, v in hydra_cfg.items():
         update_dict(cfg, v)
 
-    experiment_name = f"{cfg.model.name}_{cfg.model.backbone}_coco_pretrained-{cfg.model.coco_model_pretrained}" \
-                      f"_{cfg.dataset.training.name}_specular_split-{cfg.training.specular_split}" \
-                      f"_input_size-{cfg.dataset.training.params.input_size}_nms-{cfg.model.nms}" \
-                      f"_val_patches_overlap-${cfg.dataset.validation.params.patches_overlap}" \
-                      f"_det_thresh_for_counting-{cfg.training.det_thresh_for_counting}_batch_size-${cfg.training.batch_size}"
+    experiment_name = f"{cfg.model.name}_{cfg.model.backbone}_coco_pretrained-{cfg.model.coco_model_pretrained}_" \
+                      f"{cfg.dataset.train.name}_split-{cfg.dataset.train.params.split}_" \
+                      f"input_size-{cfg.dataset.train.params.patch_size}_nms-{cfg.model.params.nms}_" \
+                      f"overlap-{cfg.dataset.validation.params.overlap}_" \
+                      f"batch_size-{cfg.train.batch_size}"
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(cfg.gpu)
     device = torch.device(f'cuda' if cfg.gpu is not None else 'cpu')
     log.info(f"Use device {device} for training")
 
-    torch.hub.set_dir(os.path.join(hydra.utils.get_original_cwd(), cfg.model.cache_folder))
-    best_models_folder = os.path.join(os.getcwd(), 'best_models')
-    if not os.path.exists(best_models_folder):
-        os.makedirs(best_models_folder)
+    model_cache_dir = Path(hydra.utils.get_original_cwd()) / cfg.model.cache_folder
+    torch.hub.set_dir(model_cache_dir)
+    best_models_folder = Path('best_models')
+    best_models_folder.mkdir(parents=True, exist_ok=True)
 
     # No possible to set checkpoint and pre-trained model at the same time
-    if cfg.model.resume and cfg.model.pretrained:
-        log.error(f"You can't set checkpoint and pretrained-model at the same time")
-        exit(1)
+    assert not (cfg.model.resume and cfg.model.pretrained), "Only one between 'pretrained' and 'resume' can be specified."
 
     # Reproducibility
-    seed = cfg.seed
-    if device.type == "cuda":
-        random_seed(seed, True)
-    elif device.type == "cpu":
-        random_seed(seed, False)
+    seed_everything(cfg.seed)
+    torch.set_default_dtype(torch.float32)
 
-    # Creating tensorboard writer
+    # create tensorboard writer
     writer = SummaryWriter(comment="_" + experiment_name)
 
     # Creating training dataset and dataloader
     log.info(f"Loading training data")
-    training_crop_width, training_crop_height = cfg.dataset.training.params.input_size
-    if training_crop_width != training_crop_height:
-        logging.error(f"Crops must be squares")
-        exit(1)
-    list_frames = cfg.dataset.training.params.all_frames
-    list_train_frames = cfg.dataset.training.params.train_frames
-    if cfg.training.specular_split:
-        list_train_frames = list_frames
-
-    train_dataset = PerineuralNetsBBoxDataset(
-        data_root=cfg.dataset.training.root,
-        dataset_name=cfg.dataset.training.name,
-        transforms=get_bbox_transforms(train=True, crop_width=training_crop_width, crop_height=training_crop_height, min_visibility=cfg.training.bbox_discard_min_vis),
-        list_frames=list_train_frames,
-        min_visibility=cfg.training.bbox_discard_min_vis,
-        load_in_memory=cfg.dataset.training.params.load_in_memory,
-        with_patches=cfg.training.precomputed_patches,
-        specular_split=cfg.training.specular_split,
-        percentage=cfg.dataset.training.params.percentage,
+    params = cfg.dataset.train.params
+    log.info("Train input size: {0}x{0}".format(params.patch_size))
+    train_transform = Compose([RandomHorizontalFlip(), ToTensor()])
+    train_dataset = PerineuralNetsDetDataset(
+        transforms=train_transform,
+        **params,
     )
-
-    train_dataloader = DataLoader(
+    train_loader = DataLoader(
         train_dataset,
-        batch_size=cfg.training.batch_size,
+        batch_size=cfg.train.batch_size,
         shuffle=True,
-        num_workers=cfg.training.num_workers,
-        collate_fn=train_dataset.standard_collate_fn,
+        num_workers=cfg.train.num_workers,
+        collate_fn=train_dataset.custom_collate_fn,
     )
-
     log.info(f"Found {len(train_dataset)} samples in training dataset")
 
-    # Creating validation dataset and dataloader
+    # create validation dataset and dataloader
     log.info(f"Loading validation data")
-    val_crop_width, val_crop_height = cfg.dataset.validation.params.input_size
-    if val_crop_width != val_crop_height or val_crop_width % 32 != 0 or val_crop_height % 32 != 0:
-        logging.error(f"Crops must be squares and in validation mode crop dim must be multiple of 32")
-        exit(1)
-    list_frames = cfg.dataset.validation.params.all_frames
-    list_val_frames = cfg.dataset.validation.params.val_frames
-    if cfg.training.specular_split:
-        list_val_frames = list_frames
-
-    val_dataset = PerineuralNetsBBoxDataset(
-        data_root=cfg.dataset.validation.root,
-        dataset_name=cfg.dataset.validation.name,
-        transforms=get_bbox_transforms(train=False),
-        list_frames=list_val_frames,
-        load_in_memory=False,
-        min_visibility=cfg.training.bbox_discard_min_vis,
-        with_patches=False,
-        specular_split=cfg.training.specular_split,
+    params = cfg.dataset.validation.params
+    log.info("Validation input size: {0}x{0}".format(params.patch_size))
+    valid_batch_size = cfg.train.val_batch_size if cfg.train.val_batch_size else cfg.train.batch_size
+    valid_transform = ToTensor()
+    valid_dataset = PerineuralNetsDetDataset(
+        transforms=valid_transform,
+        **params,
     )
-
-    val_dataloader = DataLoader(
-        val_dataset,
-        batch_size=cfg.training.val_batch_size,
+    valid_loader = DataLoader(
+        valid_dataset,
+        batch_size=valid_batch_size,
         shuffle=False,
-        num_workers=cfg.training.num_workers,
-        collate_fn=val_dataset.standard_collate_fn,
+        num_workers=cfg.train.num_workers,
+        collate_fn=valid_dataset.custom_collate_fn,
     )
-
-    log.info(f"Found {len(val_dataset)} samples in validation dataset")
-
-    # Initializing validation metrics
-    best_validation_mae = float(sys.maxsize)
-    best_validation_mse = float(sys.maxsize)
-    best_validation_are = float(sys.maxsize)
-    best_validation_map, best_validation_coco_map, best_validation_dice, best_validation_jaccard = 0.0, 0.0, 0.0, 0.0
-    min_mae_epoch, min_mse_epoch, min_are_epoch, best_map_epoch, best_coco_map_epoch, best_dice_epoch, best_jaccard_epoch = -1, -1, -1, -1, -1, -1, -1
+    log.info(f"Found {len(valid_dataset)} samples in validation dataset")
 
     # Creating model
     log.info(f"Creating model")
@@ -457,7 +546,6 @@ def main(hydra_cfg: DictConfig) -> None:
     optimizer = hydra.utils.get_class(f"torch.optim.{cfg.optimizer.name}")
     optimizer = optimizer(filter(lambda p: p.requires_grad,
                                  model.parameters()), **cfg.optimizer.params)
-
     scheduler = None
     if cfg.optimizer.scheduler is not None:
         scheduler = hydra.utils.get_class(
@@ -467,7 +555,6 @@ def main(hydra_cfg: DictConfig) -> None:
             {**{"optimizer": optimizer},
              **cfg.optimizer.scheduler.params})
 
-    start_epoch = 0
     # Eventually resuming a pre-trained model
     if cfg.model.pretrained:
         log.info(f"Resuming pre-trained model")
@@ -478,154 +565,91 @@ def main(hydra_cfg: DictConfig) -> None:
             pre_trained_model = torch.load(cfg.model.pretrained, map_location=device)
         model.load_state_dict(pre_trained_model['model'])
 
-    # Eventually resuming from a saved checkpoint
-    if cfg.model.resume:
-        log.info(f"Resuming from a checkpoint")
-        checkpoint = torch.load(cfg.model.resume, map_location=device)
+    start_epoch = 0
+    best_validation_metrics = {}
+    best_metrics_epoch = {}
+    best_thresholds = {}
+
+    train_log_path = 'train_log.csv'
+    valid_log_path = 'valid_log.csv'
+
+    train_log = pd.DataFrame()
+    valid_log = pd.DataFrame()
+
+    # optionally resume from a saved checkpoint
+    # if cfg.model.resume:
+    if Path('last.pth').exists():
+        log.info(f"Resuming training from last checkpoint.")
+        checkpoint = torch.load('last.pth', map_location=device)
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         if scheduler is not None:
             scheduler.load_state_dict(checkpoint['lr_scheduler'])
         start_epoch = checkpoint['epoch']
-        best_validation_mae = checkpoint['best_mae']
-        best_validation_mse = checkpoint['best_mse']
-        best_validation_are = checkpoint['best_are']
-        best_validation_map = checkpoint['best_map']
-        best_validation_coco_map = checkpoint['best_coco_map']
-        best_validation_dice = checkpoint['best_dice']
-        best_validation_jaccard = checkpoint['best_jaccard']
-        min_mae_epoch = checkpoint['min_mae_epoch']
-        min_mse_epoch = checkpoint['min_mse_epoch']
-        min_are_epoch = checkpoint['min_are_epoch']
-        best_map_epoch = checkpoint['best_map_epoch']
-        best_coco_map_epoch = checkpoint['best_coco_map_epoch']
-        best_dice_epoch = checkpoint['best_dice_epoch']
-        best_jaccard_epoch = checkpoint['best_jaccard_epoch']
+        best_validation_metrics = checkpoint['best_validation_metrics']
+        best_metrics_epoch = checkpoint['best_metrics_epoch']
+        if 'best_thresholds' in checkpoint:
+            best_thresholds = checkpoint['best_thresholds']
 
-    ################
-    ################
-    # Training
+        train_log = pd.read_csv(train_log_path)
+        valid_log = pd.read_csv(valid_log_path)
+
+    # Train loop
     log.info(f"Start training")
-    for epoch in range(start_epoch, cfg.training.epochs):
-        # Training for one epoch
-        train_one_epoch(model, optimizer, train_dataloader, device, epoch, cfg, writer)
+    progress = trange(start_epoch, cfg.train.epochs, initial=start_epoch)
+    for epoch in progress:
+        # train
+        train_metrics = train_one_epoch(model, train_loader, optimizer, device, cfg, writer, epoch)
+        scheduler.step()    # update lr scheduler
 
-        # Updating lr scheduler
-        scheduler.step()
+        train_metrics['epoch'] = epoch
+        train_log = train_log.append(train_metrics, ignore_index=True)
+        train_log.to_csv(train_log_path, index=False)
 
-        # Validating
-        if epoch % cfg.training.val_freq == 0:
-            epoch_mae, epoch_mse, epoch_are, epoch_coco_evaluator, epoch_det_map, epoch_dice, epoch_jaccard = \
-                validate(model, val_dataloader, device, cfg, epoch)
+        # validation
+        if (epoch + 1) % cfg.train.val_freq == 0:
+            valid_metrics = validate(model, valid_loader, device, cfg, epoch)
+            for metric, value in valid_metrics.items():
+                writer.add_scalar(f'valid/{metric}', value, epoch)  # log to tensorboard
 
-            # Updating tensorboard
-            writer.add_scalar('Validation on {}/MAE'.format(cfg.dataset.validation.name), epoch_mae, epoch)
-            writer.add_scalar('Validation on {}/MSE'.format(cfg.dataset.validation.name), epoch_mse, epoch)
-            writer.add_scalar('Validation on {}/ARE'.format(cfg.dataset.validation.name), epoch_are, epoch)
-            epoch_coco_map_05 = epoch_coco_evaluator.coco_eval['bbox'].stats[1]
-            writer.add_scalar('Validation on {}/COCO mAP'.format(cfg.dataset.validation.name), epoch_coco_map_05, epoch)
-            writer.add_scalar('Validation on {}/Det mAP'.format(cfg.dataset.validation.name), epoch_det_map, epoch)
-            writer.add_scalar('Validation on {}/Dice Score'.format(cfg.dataset.validation.name), epoch_dice, epoch)
-            writer.add_scalar('Validation on {}/Jaccard Index'.format(cfg.dataset.validation.name), epoch_jaccard, epoch)
+            for metric, value in valid_metrics.items():
+                cur_best = best_validation_metrics.get(metric, None)
+                if ('thr' in metric) or ('count/err' in metric):
+                    continue  # ignore metric
+                elif ('jaccard' in metric) or ('dice' in metric) or ('pdet' in metric):
+                    is_new_best = cur_best is None or value > cur_best  # higher is better
+                else:
+                    is_new_best = cur_best is None or value < cur_best  # lower is better
 
-            # Eventually saving best models
-            if epoch_mae < best_validation_mae:
-                best_validation_mae = epoch_mae
-                min_mae_epoch = epoch
-                save_checkpoint({
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'epoch': epoch,
-                    'best_mae': epoch_mae,
-                }, best_models_folder, best_model=cfg.dataset.validation.name + "_mae")
-            if epoch_mse < best_validation_mse:
-                best_validation_mse = epoch_mse
-                min_mse_epoch = epoch
-                save_checkpoint({
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'epoch': epoch,
-                    'best_mse': epoch_mse,
-                }, best_models_folder, best_model=cfg.dataset.validation.name + "_mse")
-            if epoch_are < best_validation_are:
-                best_validation_are = epoch_are
-                min_are_epoch = epoch
-                save_checkpoint({
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'epoch': epoch,
-                    'best_mse': epoch_are,
-                }, best_models_folder, best_model=cfg.dataset.validation.name + "_are")
-            if epoch_det_map >= best_validation_map:
-                best_validation_map = epoch_det_map
-                best_map_epoch = epoch
-                save_checkpoint({
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'epoch': epoch,
-                    'best_map': epoch_det_map,
-                }, best_models_folder, best_model=cfg.dataset.validation.name + "_map")
-            if epoch_coco_map_05 >= best_validation_coco_map:
-                best_validation_coco_map = epoch_coco_map_05
-                best_coco_map_epoch = epoch
-                save_checkpoint({
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'epoch': epoch,
-                    'best_coco_map': epoch_coco_map_05,
-                }, best_models_folder, best_model=cfg.dataset.validation.name + "_coco_map_05")
-            if epoch_dice >= best_validation_dice:
-                best_validation_dice = epoch_dice
-                best_dice_epoch = epoch
-                save_checkpoint({
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'epoch': epoch,
-                    'best_dice': epoch_dice,
-                }, best_models_folder, best_model=cfg.dataset.validation.name + "_dice")
-            if epoch_jaccard >= best_validation_jaccard:
-                best_validation_jaccard = epoch_jaccard
-                best_jaccard_epoch = epoch
-                save_checkpoint({
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'epoch': epoch,
-                    'best_jaccard': epoch_jaccard,
-                }, best_models_folder, best_model=cfg.dataset.validation.name + "_jaccard")
-            nl = '\n'
-            log.info(f"Epoch: {epoch}, Dataset: {cfg.dataset.validation.name}, MAE: {epoch_mae}, MSE: {epoch_mse}, "
-                     f"ARE: {epoch_are}, {nl} mAP: {epoch_det_map}, COCO mAP 0.5: {epoch_coco_map_05},"
-                     f"Dice Score: {epoch_dice}, Jaccard Coefficient: {epoch_jaccard}, {nl} "
-                     f"Min MAE: {best_validation_mae}, Min MAE Epoch: {min_mae_epoch}, {nl} "
-                     f"Min MSE: {best_validation_mse}, Min MSE Epoch: {min_mse_epoch}, {nl} "
-                     f"Min ARE: {best_validation_are}, Min ARE Epoch: {min_are_epoch}, {nl} "
-                     f"Best mAP: {best_validation_map}, Best mAP Epoch: {best_map_epoch}, {nl} "
-                     f"Best COCO mAP: {best_validation_coco_map}, Best COCO mAP Epoch: {best_coco_map_epoch}, {nl} "
-                     f"Best Dice: {best_validation_dice}, Best Dice Epoch: {best_dice_epoch}, {nl} "
-                     f"Best Jaccard: {best_validation_jaccard}, Best Jaccard Epoch: {best_jaccard_epoch}")
+                if is_new_best:  # save if new best metric is achieved
+                    best_validation_metrics[metric] = value
+                    best_metrics_epoch[metric] = epoch
+                    best_thresholds[metric] = valid_metrics.get(f'{metric}_thr', None)
 
-            # Saving last model
-            save_checkpoint({
+                    ckpt_path = best_models_folder / f"best_model_{cfg.dataset.validation.name}_metric_{metric.replace('/', '-')}.pth"
+                    torch.save({
+                        'model': model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'epoch': epoch,
+                        'metrics': valid_metrics
+                    }, ckpt_path)
+
+            # save last checkpoint for resuming
+            torch.save({
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'lr_scheduler': scheduler.state_dict(),
                 'epoch': epoch,
-                'best_mae': best_validation_mae,
-                'best_mse': best_validation_mse,
-                'best_are': best_validation_are,
-                'best_map': best_validation_map,
-                'best_coco_map': best_validation_coco_map,
-                'best_dice': best_validation_dice,
-                'best_jaccard': best_validation_jaccard,
-                'min_mae_epoch': min_mae_epoch,
-                'min_mse_epoch': min_mse_epoch,
-                'min_are_epoch': min_are_epoch,
-                'best_map_epoch': best_map_epoch,
-                'best_coco_map_epoch': best_coco_map_epoch,
-                'best_dice_epoch': best_dice_epoch,
-                'best_jaccard_epoch': best_jaccard_epoch,
-                'tensorboard_working_dir': writer.get_logdir()
-            }, os.getcwd())
+                'best_validation_metrics': best_validation_metrics,
+                'best_metrics_epoch': best_metrics_epoch,
+                'best_thresholds': best_thresholds
+            }, 'last.pth')
+
+            valid_metrics['epoch'] = epoch
+            valid_log = valid_log.append(valid_metrics, ignore_index=True)
+            valid_log.to_csv(valid_log_path, index=False)
+
+    log.info("Training ended. Exiting....")
 
 
 if __name__ == "__main__":
