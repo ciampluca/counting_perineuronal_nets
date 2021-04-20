@@ -16,7 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 
 from utils.misc import random_seed, get_dmap_transforms, save_checkpoint, normalize, compute_GAME, update_dict
-from datasets.perineural_nets_dmap_dataset import PerineuralNetsDmapDataset
+from datasets.perineural_nets_dmap_dataset_old import PerineuralNetsDmapDataset
 from utils.transforms_dmaps import PadToSize, CropToFixedSize
 
 # Creating logger

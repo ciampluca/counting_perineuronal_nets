@@ -10,7 +10,8 @@ import collections
 import pandas as pd
 from tqdm import tqdm, trange
 import itertools
-from PIL import ImageDraw
+from PIL import ImageDraw, ImageFont
+from functools import partial
 
 import torch
 import torchvision
@@ -24,7 +25,7 @@ from torchvision.ops import boxes as box_ops
 from omegaconf import DictConfig
 import hydra
 
-from prefetch_generator import BackgroundGenerator, background
+from prefetch_generator import BackgroundGenerator
 
 from datasets.det_transforms import Compose, RandomHorizontalFlip, ToTensor
 from datasets.perineural_nets_det_dataset import PerineuralNetsDetDataset
@@ -32,6 +33,8 @@ from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet101_fpn
 from utils.misc import reduce_dict
 from utils import points
 
+tqdm = partial(tqdm, dynamic_ncols=True)
+trange = partial(trange, dynamic_ncols=True)
 
 # Creating logger
 log = logging.getLogger(__name__)
@@ -169,7 +172,7 @@ def train_one_epoch(model, dataloader, optimizer, device, cfg, writer, epoch):
 
     metrics = []
     n_batches = len(dataloader)
-    progress = tqdm(dataloader, desc='TRAIN')
+    progress = tqdm(dataloader, desc='TRAIN', leave=False)
     for i, sample in enumerate(progress):
         input_and_target, patch_hw, start_yx, image_hw, image_id = sample
         # splits input and target building them to be coco compliant
@@ -257,7 +260,7 @@ def validate(model, dataloader, device, cfg, epoch):
         return all(_is_empty(i) if isinstance(i, list) else False for i in l)
 
     processed_batches = map(_predict, dataloader)
-    processed_batches = BackgroundGenerator(processed_batches, max_prefetch=5000)  # prefetch batches using threading
+    processed_batches = BackgroundGenerator(processed_batches, max_prefetch=7500)  # prefetch batches using threading
     processed_samples = _unbatch(processed_batches)
 
     metrics = []
@@ -294,10 +297,9 @@ def validate(model, dataloader, device, cfg, epoch):
                 target_bbs[:, 3:4] += y
                 full_image_target_bbs = torch.cat((full_image_target_bbs, target_bbs))
 
-        full_image /= normalization_map
+        # full_image /= normalization_map
 
         # Removing bbs outside image and clipping
-        # TODO ask why?
         full_image_filtered_det_bbs = torch.empty(0, 4, dtype=torch.float32)
         full_image_filtered_det_scores = torch.empty(0, dtype=torch.float32)
         l = torch.tensor([[0.0, 0.0, 0.0, 0.0]])      # Setting the lower and upper bound per column
@@ -361,9 +363,16 @@ def validate(model, dataloader, device, cfg, epoch):
             if not _is_empty(gt_bboxes):
                 for bb in gt_bboxes:
                     draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='red', width=3)
+                img_gt_num = len(gt_bboxes)
             if not _is_empty(det_bboxes):
                 for bb in det_bboxes:
                     draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='green', width=3)
+                img_det_num = len(det_bboxes)
+            # Add text to image
+            text = f"Det Num of Nets: {img_det_num}, GT Num of Nets: {img_gt_num}"
+            font_path = os.path.join(hydra.utils.get_original_cwd(), "./font/LEMONMILK-RegularItalic.otf")
+            font = ImageFont.truetype(font_path, 100)
+            draw.text((75, 75), text=text, font=font, fill=(0, 191, 255))
             pil_image.save(os.path.join(debug_dir, image_id))
 
         # compute metrics

@@ -16,21 +16,13 @@ class PerineuralNetsDetDataset(ConcatDataset):
     """ Dataset that provides per-patch iteration of bunch of big image files,
         implemented as a concatenation of single-file datasets. """
 
-    # params for groundtruth segmentation maps generation
+    # params for groundtruth bbs generation
     DEFAULT_GT_PARAMS = {
         'side': 60,         # side (in px) of the bounding box localizing a cell
     }
 
-    def __init__(self,
-                 root='data/perineuronal_nets',
-                 split='all',
-                 with_targets=True,
-                 patch_size=640,
-                 overlap=None,
-                 random_offset=None,
-                 gt_params={},
-                 transforms=None,
-                 max_cache_mem=None):
+    def __init__(self, root='data/perineuronal_nets', split='all', with_targets=True, patch_size=640, overlap=None,
+                 random_offset=None, gt_params={}, transforms=None, max_cache_mem=None):
 
         self.root = Path(root)
         self.transforms = transforms
@@ -119,27 +111,15 @@ class PerineuralNetsDetDataset(ConcatDataset):
 class _PerineuralNetsDetImage(Dataset):
     """ Dataset that provides per-patch iteration of a single big image file. """
 
-    def __init__(self,
-                 h5_path,
-                 annotations,
-                 split='left',
-                 with_targets=True,
-                 patch_size=640,
-                 stride=None,
-                 random_offset=0,
-                 gt_params=None,
-                 max_cache_mem=None):
+    def __init__(self, h5_path, annotations, split='left', with_targets=True, patch_size=640, stride=None,
+                 random_offset=0, gt_params=None, max_cache_mem=None):
         self.h5_path = h5_path
         self.random_offset = random_offset
         self.with_targets = with_targets
-        self.gt_params = gt_params if gt_params is not None else PerineuralNetsSegmDataset.DEFAULT_GT_PARAMS
+        self.gt_params = gt_params if gt_params is not None else PerineuralNetsDetDataset.DEFAULT_GT_PARAMS
 
         assert split in ('left', 'right', 'all'), "split must be one of ('left', 'right', 'all')"
         self.split = split
-
-        # keep only annotations of this image
-        self.image_id = Path(h5_path).with_suffix('.tif').name
-        self.annot = annotations.loc[self.image_id]
 
         # patch size (height and width)
         self.patch_hw = np.array((patch_size, patch_size), dtype=np.int64)
@@ -163,6 +143,12 @@ class _PerineuralNetsDetImage(Dataset):
         # the origin and limits of the region (split) of interest
         self.origin_yx = np.array((0, image_half_hw[1]) if self.split == 'right' else (0, 0))
         self.limits_yx = image_half_hw if self.split == 'left' else image_hw
+
+        # keep only annotations of this image
+        self.image_id = Path(h5_path).with_suffix('.tif').name
+        annot = annotations.loc[self.image_id]
+        in_split = ((annot[['Y', 'X']] >= self.origin_yx) & (annot[['Y', 'X']] < self.limits_yx)).all(axis=1)
+        self.annot = annot[in_split]
 
         # the number of patches in a row and a column
         self.num_patches = np.ceil(1 + ((self.region_hw - self.patch_hw) / self.stride_hw)).astype(np.int64)

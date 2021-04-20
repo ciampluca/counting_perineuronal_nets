@@ -1,305 +1,281 @@
-import os
-from tifffile import imread
+from pathlib import Path
+from copy import deepcopy
+import itertools
+import pandas as pd
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
-import tqdm
-import math
-import copy
+import h5py
+import os
+import cv2
+from math import floor
 
-import torch
-from torchvision.datasets import VisionDataset
-from torch.utils.data import DataLoader
-import torch.nn.functional as nnf
+from torch.utils.data import Dataset, ConcatDataset
 from torchvision.transforms.functional import to_pil_image
 
-from utils import transforms_dmaps as custom_T
-from utils.misc import normalize
 
+class PerineuralNetsDMapDataset(ConcatDataset):
+    """ Dataset that provides per-patch iteration of bunch of big image files,
+        implemented as a concatenation of single-file datasets. """
 
-class PerineuralNetsDmapDataset(VisionDataset):
+    # params for groundtruth segmentation maps generation
+    DEFAULT_GT_PARAMS = {
+        'k_size': 51,         # size (in px) of the kernel of the gaussian localizing a perineural nets
+        'sigma': 30,            # sigma of the gaussian
+    }
 
-    def __init__(self, data_root, transforms=None, list_frames=None, with_patches=True, load_in_memory=False,
-                 percentage=None, dataset_name=None, specular_split=True):
-        super().__init__(data_root, transforms)
+    def __init__(self, root='data/perineuronal_nets', split='all', with_targets=True, patch_size=640, overlap=None,
+                 random_offset=None, gt_params={}, transforms=None, max_cache_mem=None):
 
-        self.resize_factor = 32
-        self.load_in_memory = load_in_memory
-        if dataset_name:
-            self.dataset_name = dataset_name
+        self.root = Path(root)
+        self.transforms = transforms
+        self.patch_size = patch_size
+        self.random_offset = random_offset if random_offset is not None else patch_size // 2
 
-        if with_patches and not specular_split:
-            self.path_imgs = os.path.join(data_root, 'random_patches')
-            self.path_targets = os.path.join(data_root, 'annotation', 'random_patches_dmaps')
-        elif with_patches and specular_split:
-            self.path_imgs = os.path.join(data_root, 'specular_patches')
-            self.path_targets = os.path.join(data_root, 'annotation', 'specular_patches_dmaps')
-        elif not with_patches and not specular_split:
-            self.path_imgs = os.path.join(data_root, 'fullFrames')
-            self.path_targets = os.path.join(data_root, 'annotation', 'dmaps')
-        elif not with_patches and specular_split:
-            self.path_imgs = os.path.join(data_root, 'specular_fullFrames')
-            self.path_targets = os.path.join(data_root, 'annotation', 'specular_dmaps')
+        # groundtruth parameters
+        self.gt_params = deepcopy(self.DEFAULT_GT_PARAMS)
+        self.gt_params.update(gt_params)
 
-        self.image_files = sorted([file for file in os.listdir(self.path_imgs) if file.endswith(".tif")])
+        self.overlap = overlap if overlap is not None else 0
 
-        if list_frames is not None:
-            self.image_files = sorted([file for file in self.image_files if file.split("_", 1)[0] in list_frames])
-            if specular_split and with_patches:
-                left_frames, right_frames = list_frames[::2], list_frames[1::2]
-                left_image_files = sorted([file for file in self.image_files
-                                           if file.split("_", 1)[0] in left_frames and file.split("_")[4] == "left"])
-                right_image_files = sorted([file for file in self.image_files
-                                           if file.split("_", 1)[0] in right_frames and file.split("_")[4] == "right"])
-                self.image_files = left_image_files + right_image_files
-            elif specular_split and not with_patches:
-                right_frames, left_frames = list_frames[::2], list_frames[1::2]
-                left_image_files = sorted([file for file in self.image_files
-                                           if file.split("_", 1)[0] in left_frames and file.split("_")[4].rsplit(".", 1)[0] == "left"])
-                right_image_files = sorted([file for file in self.image_files
-                                           if file.split("_", 1)[0] in right_frames and file.split("_")[4].rsplit(".", 1)[0] == "right"])
-                self.image_files = left_image_files + right_image_files
+        assert split in ('train', 'validation', 'train-specular', 'validation-specular', 'all'), \
+            "split must be one of ('train', 'validation', 'train-specular', 'validation-specular', 'all')"
+        self.split = split
 
-        if percentage is not None:
-            # only keep num images of the provided percentage
-            num_images = int((len(self.image_files) / 100) * percentage)
-            indices = torch.randperm(len(self.image_files)).tolist()
-            indices = indices[-num_images:]
-            self.image_files = [self.image_files[index] for index in indices]
+        annot_path = self.root / 'annotation' / 'annotations.csv'
+        self.annot = pd.read_csv(annot_path, index_col=0)
 
-        if load_in_memory:
-            print("Loading dataset in memory!")
-            # load all the data into memory
-            self.images, self.dmaps = [], []
-            for img_f in tqdm.tqdm(self.image_files):
-                img, dmap = self._load_sample(img_f)
-                self.images.append(img)
-                self.dmaps.append(dmap)
+        image_files = sorted((self.root / 'fullFramesH5').glob('*.h5'))
+        assert len(image_files) > 0, "No images found"
 
-    def _load_sample(self, img_f):
-        # Loading image
-        img = imread(os.path.join(self.path_imgs, img_f))
-        img = np.stack((img,) * 3, axis=-1)
+        if max_cache_mem:
+            max_cache_mem /= len(image_files)
 
-        # Loading dmap
-        dmap = np.load(os.path.join(self.path_targets, img_f.rsplit(".", 1)[0] + ".npy")).astype(np.float32)
+        splits = ('all',)
+        if self.split == 'train':  # remove validation images from list: ttVtt, V removed
+            del image_files[2::5]
+        elif self.split == 'validation':  # keep only validation elements: ttVtt, only V kept
+            image_files = image_files[2::5]
+        if self.split == 'train-specular':
+            splits = ('left', 'right')
+        elif self.split == 'validation-specular':
+            splits = ('right', 'left')
+        # elif self.split == 'all':
+            # pass
+        splits = itertools.cycle(splits)
 
-        return img, dmap
-
-    def __len__(self):
-        return len(self.image_files)
+        stride = patch_size - self.overlap
+        kwargs = dict(
+            with_targets=with_targets,
+            patch_size=patch_size,
+            stride=stride,
+            random_offset=self.random_offset,
+            gt_params=self.gt_params,
+            max_cache_mem=max_cache_mem
+        )
+        datasets = [_PerineuralNetsDMapImage(image_path, self.annot, split=s, **kwargs) for image_path, s in zip(image_files, splits)]
+        super(self.__class__, self).__init__(datasets)
 
     def __getitem__(self, index):
-        if self.load_in_memory:
-            img, dmap = self.images[index], self.dmaps[index]
+        sample = super(self.__class__, self).__getitem__(index)
+
+        if self.transforms:
+            sample = (self.transforms(sample[0]),) + sample[1:]
+
+        return sample
+
+
+class _PerineuralNetsDMapImage(Dataset):
+    """ Dataset that provides per-patch iteration of a single big image file. """
+
+    def __init__(self, h5_path, annotations, split='left', with_targets=True, patch_size=640, stride=None,
+                 random_offset=0, gt_params=None, max_cache_mem=None):
+        self.h5_path = h5_path
+        self.random_offset = random_offset
+        self.with_targets = with_targets
+        self.gt_params = gt_params if gt_params is not None else PerineuralNetsDMapDataset.DEFAULT_GT_PARAMS
+
+        assert split in ('left', 'right', 'all'), "split must be one of ('left', 'right', 'all')"
+        self.split = split
+
+        # patch size (height and width)
+        self.patch_hw = np.array((patch_size, patch_size), dtype=np.int64)
+
+        # windows stride size (height and width)
+        self.stride_hw = np.array((stride, stride), dtype=np.int64) if stride else self.patch_hw
+
+        # hdf5 dataset
+        self.data = h5py.File(h5_path, 'r', rdcc_nbytes=max_cache_mem)['data']
+
+        # size of the region from which we take patches
+        image_hw = np.array(self.data.shape)
+        image_half_hw = image_hw // np.array((1, 2))  # half only width
+        if split == 'all':
+            self.region_hw = image_hw
+        elif split == 'left':
+            self.region_hw = image_half_hw
+        else:  # split == 'right':
+            self.region_hw = image_hw - np.array((0, image_half_hw[1]))
+
+        # the origin and limits of the region (split) of interest
+        self.origin_yx = np.array((0, image_half_hw[1]) if self.split == 'right' else (0, 0))
+        self.limits_yx = image_half_hw if self.split == 'left' else image_hw
+
+        # keep only annotations of this image
+        self.image_id = Path(h5_path).with_suffix('.tif').name
+        annot = annotations.loc[self.image_id]
+        in_split = ((annot[['Y', 'X']] >= self.origin_yx) & (annot[['Y', 'X']] < self.limits_yx)).all(axis=1)
+        self.annot = annot[in_split]
+
+        # the number of patches in a row and a column
+        self.num_patches = np.ceil(1 + ((self.region_hw - self.patch_hw) / self.stride_hw)).astype(np.int64)
+
+    def __len__(self):
+        # total number of patches
+        return self.num_patches.prod().item()
+
+    def __getitem__(self, index):
+        n_rows, n_cols = self.num_patches
+        # row and col indices of the patch
+        row_col_idx = np.array((index // n_cols, index % n_cols))
+
+        # patch boundaries
+        start_yx = self.origin_yx + self.stride_hw * row_col_idx
+        if self.random_offset:
+            start_yx += np.random.randint(-self.random_offset, self.random_offset, size=2)
+            start_yx = np.clip(start_yx, (0, 0), self.limits_yx - self.patch_hw)
+        end_yx = np.minimum(start_yx + self.patch_hw, self.limits_yx)
+        (sy, sx), (ey, ex) = start_yx, end_yx
+
+        # read patch
+        patch = self.data[sy:ey, sx:ex] / np.array(255., dtype=np.float32)
+        patch_hw = np.array(patch.shape)  # before padding
+
+        # patch coordinates in the region space (useful for reconstructing the full region)
+        local_start_yx = start_yx - self.origin_yx
+
+        if self.with_targets:
+            # gather annotations
+            selector = self.annot.X.between(sx, ex) & self.annot.Y.between(sy, ey)
+            locations = self.annot.loc[selector, ['Y', 'X']].values
+            patch_locations = locations - start_yx
+
+            # build target
+            dmap = self._build_target_dmap(patch, patch_locations)
+
+        # pad patch (in case of patches in last col/rows)
+        py, px = - patch_hw % self.patch_hw
+        pad = ((0, py), (0, px))
+
+        patch = np.pad(patch, pad)  # defaults to zero padding
+
+        if self.with_targets:
+            dmap = np.pad(dmap, pad)
+
+            # stack in a unique RGB-like tensor, useful for applying data augmentation
+            input_and_target = np.stack((patch, dmap), axis=-1)
+            datum = input_and_target
         else:
-            img_f = self.image_files[index]
-            img, dmap = self._load_sample(img_f)
+            datum = np.expand_dims(patch, axis=-1)  # add channels dimension
 
-        # Applying transforms
-        if self.transforms is not None:
-            img, dmap = self.transforms(img, dmap)
+        return datum, patch_hw, local_start_yx, self.region_hw, self.image_id
 
-        # Building target
-        target = {}
-        target['dmap'] = dmap
-        target['img_id'] = torch.as_tensor(index, dtype=torch.int32)
+    def _build_target_dmap(self, patch, locations):
+        """ This builds the density map, putting a gaussian over each dots localizing a perineural net
+        """
 
-        return img, target
+        kernel_size = self.gt_params['k_size']
+        sigma = self.gt_params['sigma']
 
-    def custom_collate_fn(self, batch):
-        # Padding images to the max size of the image in the batch.
-        imgs = [item[0] for item in batch]
-        targets = [item[1] for item in batch]
-        shapes = [list(img.shape) for img in imgs]
+        shape = patch.shape
+        dmap = np.zeros(shape, dtype=np.float32)
 
-        maxes = shapes[0]
-        for sublist in shapes[1:]:
-            for index, item in enumerate(sublist):
-                maxes[index] = max(maxes[index], item)
+        if len(locations) == 0:  # empty patch
+            return dmap
 
-        max_h = maxes[1]
-        max_w = maxes[2]
+        for i, center in enumerate(locations):
+            H = np.multiply(cv2.getGaussianKernel(kernel_size, sigma),
+                            (cv2.getGaussianKernel(kernel_size, sigma)).T)
 
-        padded_images = []
-        for img in imgs:
-            pad_w = max_w - img.shape[2]
-            pad_h = max_h - img.shape[1]
-            p2d = (int(pad_w / 2), pad_w - int(pad_w / 2), int(pad_h / 2), pad_h - int(pad_h / 2))
-            padded_images.append(nnf.pad(img, p2d, "constant", 0))
-        collated_images = torch.stack(padded_images, dim=0)
+            x = min(shape[1], max(1, abs(int(floor(center[1])))))
+            y = min(shape[0], max(1, abs(int(floor(center[0])))))
 
-        padded_dmaps, img_ids = [], []
-        for target in targets:
-            dmap = target['dmap']
-            pad_w = max_w - dmap.shape[2]
-            pad_h = max_h - dmap.shape[1]
-            p2d = (int(pad_w / 2), pad_w - int(pad_w / 2), int(pad_h / 2), pad_h - int(pad_h / 2))
-            padded_dmaps.append(nnf.pad(dmap, p2d, "constant", 0))
-            img_ids.append(target['img_id'])
+            if x > shape[1] or y > shape[0]:
+                continue
 
-        collated_targets = dict()
-        collated_targets['dmap'] = torch.stack(padded_dmaps, dim=0)
-        collated_targets['img_id'] = torch.stack(img_ids)
+            x1 = x - int(floor(kernel_size / 2))
+            y1 = y - int(floor(kernel_size / 2))
+            x2 = x + int(floor(kernel_size / 2))
+            y2 = y + int(floor(kernel_size / 2))
+            dfx1 = 0
+            dfy1 = 0
+            dfx2 = 0
+            dfy2 = 0
+            change_H = False
 
-        return [collated_images, collated_targets]
+            if x1 < 0:
+                dfx1 = abs(x1)
+                x1 = 0
+                change_H = True
+            if y1 < 0:
+                dfy1 = abs(y1)
+                y1 = 0
+                change_H = True
+            if x2 > shape[1] - 1:
+                dfx2 = x2 - (shape[1] - 1)
+                x2 = shape[1] - 1
+                change_H = True
+            if y2 > shape[0] - 1:
+                dfy2 = y2 - (shape[0] - 1)
+                y2 = shape[0] - 1
+                change_H = True
+
+            x1h = 1 + dfx1
+            y1h = 1 + dfy1
+            x2h = kernel_size - dfx2
+            y2h = kernel_size - dfy2
+            if change_H is True:
+                H = np.multiply(cv2.getGaussianKernel(int(y2h - y1h + 1), sigma),
+                                (cv2.getGaussianKernel(int(x2h - x1h + 1), sigma)).T)  # H.shape == (r, c)
+
+            dmap[y1: y2 + 1, x1: x2 + 1] = dmap[y1: y2 + 1, x1: x2 + 1] + H
+
+        return dmap
 
 
-# Testing code
+# Debug code
 if __name__ == "__main__":
-    NUM_WORKERS = 0
-    BATCH_SIZE = 1
-    DEVICE = "cpu"
-    SPECULAR_SPLIT = True
-    train_frames = ['014', '015', '017', '019', '020', '021', '023', '026', '027', '028', '035', '036', '041', '042', '044', '048', '049', '050', '052', '053']
-    val_frames = ['016', '022', '034', '043', '051']
-    all_frames = ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
-    if SPECULAR_SPLIT:
-        train_frames = val_frames = all_frames
-    data_root = "/mnt/Dati_SSD_2/datasets/perineural_nets"
-    CROP_WIDTH = 640
-    CROP_HEIGHT = 640
-    STRIDE_W, STRIDE_H = CROP_WIDTH, CROP_HEIGHT
-    OVERLAPPING_PATCHES = True
-    if OVERLAPPING_PATCHES:
-        STRIDE_W, STRIDE_H = CROP_WIDTH - 120, CROP_HEIGHT - 120
+    from torch.utils.data import DataLoader
+    from tqdm import tqdm
+    from torchvision.transforms import ToTensor, RandomHorizontalFlip, Compose
+    from utils.misc import normalize
+    from PIL import Image
 
-    assert CROP_WIDTH % 32 == 0 and CROP_HEIGHT % 32 == 0, "In validation mode, crop dim must be multiple of 32"
+    data_root = '/home/luca/luca-cnr/mnt/datino/perineural_nets'
+    device = "cpu"
+    output_folder = "output/gt/dmaps_patches"
 
-    train_transforms = custom_T.Compose([
-            custom_T.RandomHorizontalFlip(),
-            custom_T.RandomCrop(width=CROP_WIDTH, height=CROP_HEIGHT),
-            custom_T.PadToResizeFactor(),
-            custom_T.ToTensor(),
-    ])
+    # for split in ('train', 'validation', 'train-specular', 'validation-specular', 'all'):
+    #     dataset = PerineuralNetsDMapDataset(data_root, split=split)
+    #     print(split, len(dataset))
 
-    val_transforms = custom_T.Compose([
-        # custom_T.PadToResizeFactor(resize_factor=CROP_WIDTH),
-        custom_T.ToTensor(),
-    ])
+    dataset = PerineuralNetsDMapDataset(data_root, split='all', patch_size=640, overlap=120, random_offset=320, with_targets=True, transforms=Compose([ToTensor(), RandomHorizontalFlip()]), max_cache_mem=8*1024**3)  # bytes = 8 GiB
+    dataloader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=0)
 
-    dataset = PerineuralNetsDmapDataset(
-        data_root=data_root,
-        transforms=train_transforms,
-        list_frames=train_frames,
-        with_patches=True,
-        load_in_memory=False,
-        specular_split=SPECULAR_SPLIT,
-    )
+    progress = tqdm(dataloader, desc='TRAIN', leave=False)
+    for i, sample in enumerate(progress):
+        input_and_target, patch_hw, start_yx, image_hw, image_id = sample
+        input_and_target = input_and_target.to(device)
+        # split channels to get input, target, and loss weights
+        images, targets = input_and_target.split(1, dim=1)
 
-    data_loader = DataLoader(
-            dataset,
-            batch_size=BATCH_SIZE,
-            shuffle=True,
-            num_workers=NUM_WORKERS,
-            collate_fn=dataset.custom_collate_fn,
-    )
+        for img, dmap, img_id in zip(images, targets, image_id):
+            img_name = img_id.rsplit(".", 1)[0] + "_{}.png".format(i)
+            dmap_name = img_id.rsplit(".", 1)[0] + "_{}_dmap.png".format(i)
 
-    val_dataset = PerineuralNetsDmapDataset(
-        data_root=data_root,
-        transforms=val_transforms,
-        list_frames=val_frames,
-        with_patches=False,
-        load_in_memory=False,
-        specular_split=SPECULAR_SPLIT,
-    )
+            pil_image = to_pil_image(img.cpu())
+            pil_image.save(os.path.join(output_folder, img_name))
 
-    val_data_loader = DataLoader(
-        val_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=NUM_WORKERS,
-        collate_fn=val_dataset.custom_collate_fn,
-    )
-
-    # Training
-    # for images, targets in data_loader:
-    #     images = list(image.to(DEVICE) for image in images)
-    #     gt_dmaps = list(dmap.to(DEVICE) for dmap in targets['dmap'])
-    #     img_names = list(dataset.image_files[img_id] for img_id in targets['img_id'])
-    #
-    #     for img, dmap, img_name in zip(images, gt_dmaps, img_names):
-    #         pil_image = to_pil_image(img.cpu())
-    #         pil_image.save("./output/dataloading/{}.png".format(img_name.rsplit(".", 1)[0]))
-    #         pil_dmap = Image.fromarray(normalize(dmap.squeeze(dim=0).cpu().numpy()).astype('uint8'))
-    #         pil_dmap.save("./output/dataloading/{}_dmap.png".format(img_name.rsplit(".", 1)[0]))
-
-    # Validation
-    for images, targets in val_data_loader:
-        images = images.to(DEVICE)
-        gt_dmaps = targets['dmap'].to(DEVICE)
-        img_name = val_dataset.image_files[targets['img_id']]
-        print(img_name)
-        # Batch size in val mode is always 1
-        image = images.squeeze(dim=0)
-        gt_dmap = gt_dmaps.squeeze(dim=0)
-        to_pil_image(image).save("./output/dataloading/original_{}.png".format(img_name.rsplit(".", 1)[0]))
-        num_nets = torch.sum(gt_dmap)
-        pil_den_map = Image.fromarray(normalize(copy.deepcopy(gt_dmap).squeeze(dim=0).cpu().numpy()).astype('uint8'))
-        draw = ImageDraw.Draw(pil_den_map)
-        # Add text to image
-        text = "Num of Nets: {}".format(num_nets)
-        font_path = "./font/LEMONMILK-RegularItalic.otf"
-        font = ImageFont.truetype(font_path, 100)
-        draw.text((75, 75), text=text, font=font, fill=191)
-        pil_den_map.save(
-            "./output/dataloading/original_{}_dmap.png".format(img_name.rsplit(".", 1)[0])
-        )
-
-        # Image and dmap are divided in patches
-        img_w, img_h = image.shape[2], image.shape[1]
-        num_h_patches, num_v_patches = math.ceil(img_w / STRIDE_W), math.ceil(img_h / STRIDE_H)
-        img_w_padded = (num_h_patches - math.floor(img_w / STRIDE_W)) * (STRIDE_W * num_h_patches + (CROP_WIDTH-STRIDE_W))
-        img_h_padded = (num_v_patches - math.floor(img_h / STRIDE_H)) * (STRIDE_H * num_v_patches + (CROP_HEIGHT-STRIDE_H))
-        padded_image, padded_gt_dmap = custom_T.PadToSize()(
-            image=image,
-            min_width=img_w_padded,
-            min_height=img_h_padded,
-            dmap=gt_dmap
-        )
-
-        h_pad_top = int((img_h_padded - img_h) / 2.0)
-        h_pad_bottom = img_h_padded - img_h - h_pad_top
-        w_pad_left = int((img_w_padded - img_w) / 2.0)
-        w_pad_right = img_w_padded - img_w - w_pad_left
-
-        normalization_map = torch.zeros_like(padded_image)
-        reconstructed_image = torch.zeros_like(padded_image)
-        reconstructed_dmap = torch.zeros_like(padded_gt_dmap)
-
-        for i in range(0, img_h, STRIDE_H):
-            for j in range(0, img_w, STRIDE_W):
-                image_patch, dmap_patch = custom_T.CropToFixedSize()(
-                    padded_image,
-                    x_min=j,
-                    y_min=i,
-                    x_max=j + CROP_WIDTH,
-                    y_max=i + CROP_HEIGHT,
-                    dmap=copy.deepcopy(padded_gt_dmap)
-                )
-
-                reconstructed_image[:, i:i + CROP_HEIGHT, j:j + CROP_WIDTH] += image_patch
-                reconstructed_dmap[:, i:i + CROP_HEIGHT, j:j + CROP_WIDTH] += dmap_patch
-                normalization_map[:, i:i + CROP_HEIGHT, j:j + CROP_WIDTH] += 1.0
-
-        reconstructed_image /= normalization_map
-        reconstructed_dmap /= normalization_map[0].unsqueeze(dim=0)
-
-        reconstructed_image = reconstructed_image[:, h_pad_top:img_h_padded-h_pad_bottom, w_pad_left:img_w_padded-w_pad_right]
-        reconstructed_dmap = reconstructed_dmap[:, h_pad_top:img_h_padded-h_pad_bottom, w_pad_left:img_w_padded-w_pad_right]
-
-        to_pil_image(reconstructed_image).save(
-            "./output/dataloading/reconstructed_{}.png".format(img_name.rsplit(".", 1)[0]))
-        num_nets = torch.sum(reconstructed_dmap)
-        pil_reconstructed_dmap = Image.fromarray(normalize(reconstructed_dmap.squeeze(dim=0).cpu().numpy()).astype('uint8'))
-        draw = ImageDraw.Draw(pil_reconstructed_dmap)
-        # Add text to image
-        text = "Num of Nets: {}".format(num_nets)
-        font_path = "./font/LEMONMILK-RegularItalic.otf"
-        font = ImageFont.truetype(font_path, 100)
-        draw.text((75, 75), text=text, font=font, fill=191)
-        pil_reconstructed_dmap.save(
-            "./output/dataloading/reconstructed_{}_dmap.png".format(img_name.rsplit(".", 1)[0])
-        )
+            pil_dmap = Image.fromarray(normalize(dmap.squeeze(dim=0).cpu().numpy()).astype('uint8'))
+            pil_dmap.save(os.path.join(output_folder, dmap_name))
 
 
 

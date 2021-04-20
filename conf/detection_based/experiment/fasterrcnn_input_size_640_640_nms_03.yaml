@@ -7,11 +7,11 @@ detection_based_fasterrcnn:
   dataset:
     train:
       params:
-        root: "/mnt/datino/perineural_nets"
+        root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
         patch_size: 640
     validation:
       params:
-        root: "/mnt/datino/perineural_nets"
+        root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
         patch_size: 640
         overlap: 120
 
