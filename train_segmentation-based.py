@@ -5,7 +5,8 @@ import logging
 
 import collections
 import itertools
-from prefetch_generator import BackgroundGenerator, background
+from functools import partial
+from prefetch_generator import BackgroundGenerator
 from pathlib import Path
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
@@ -26,6 +27,9 @@ import hydra
 
 from datasets.perineural_nets_segm_dataset import PerineuralNetsSegmDataset
 from utils import points
+
+tqdm = partial(tqdm, dynamic_ncols=True)
+trange = partial(trange, dynamic_ncols=True)
 
 # Creating logger
 log = logging.getLogger(__name__)
@@ -71,7 +75,7 @@ def train(model, dataloader, optimizer, device, cfg, writer, epoch):
 
     metrics = []
     n_batches = len(dataloader)
-    progress = tqdm(dataloader, desc='TRAIN')
+    progress = tqdm(dataloader, desc='TRAIN', leave=False)
     for i, sample in enumerate(progress):
         input_and_target, patch_hw, start_yx, image_hw, image_id = sample
         input_and_target = input_and_target.to(device)
@@ -139,7 +143,7 @@ def validate(model, dataloader, device, cfg, epoch):
             yield from zip(*batch)
 
     processed_batches = map(_predict, dataloader)
-    processed_batches = BackgroundGenerator(processed_batches, max_prefetch=5000)  # prefetch batches using threading
+    processed_batches = BackgroundGenerator(processed_batches, max_prefetch=7500)  # prefetch batches using threading
     processed_samples = _unbatch(processed_batches)
 
     metrics = []
@@ -344,7 +348,7 @@ def main(hydra_cfg: DictConfig) -> None:
         scheduler = scheduler(optimizer, **cfg.optim.lr_scheduler.params)
 
     # optionally load pre-trained weights
-    if cfg.model.pretrained: 
+    if cfg.model.pretrained:
         log.info(f"Loading pre-trained model: {cfg.model.pretrained}")
         if cfg.model.pretrained.startswith('http://') or cfg.model.pretrained.startswith('https://'):
             pre_trained_model = torch.hub.load_state_dict_from_url(
