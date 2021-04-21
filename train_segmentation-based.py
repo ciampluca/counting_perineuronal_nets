@@ -377,7 +377,7 @@ def main(hydra_cfg: DictConfig) -> None:
         optimizer.load_state_dict(checkpoint['optimizer'])
         if scheduler is not None:
             scheduler.load_state_dict(checkpoint['lr_scheduler'])
-        start_epoch = checkpoint['epoch']
+        start_epoch = checkpoint['epoch'] + 1
         best_validation_metrics = checkpoint['best_validation_metrics']
         best_metrics_epoch = checkpoint['best_metrics_epoch']
         if 'best_thresholds' in checkpoint:
