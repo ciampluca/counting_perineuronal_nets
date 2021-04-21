@@ -86,7 +86,7 @@ class PerineuralNetsSegmDataset(ConcatDataset):
             max_cache_mem=max_cache_mem
         )
         datasets = [_PerineuralNetsSegmImage(image_path, all_annot, split=s, **kwargs) for image_path, s in zip(image_files, splits)]
-        self.annot = pd.concat([d.annot for d in datasets])
+        self.annot = pd.concat([d.split_annot for d in datasets])
 
         super(self.__class__, self).__init__(datasets)
 
@@ -166,9 +166,12 @@ class _PerineuralNetsSegmImage(Dataset):
 
         # keep only annotations of this image
         self.image_id = Path(h5_path).with_suffix('.tif').name
-        annot = annotations.loc[self.image_id]
-        in_split = ((annot[['Y', 'X']] >= self.origin_yx) & (annot[['Y', 'X']] < self.limits_yx)).all(axis=1)
-        self.annot = annot[in_split]
+        self.annot = annotations.loc[self.image_id]
+
+        # keep also annotations in the selected split (in split's coordinates)
+        in_split = ((self.annot[['Y', 'X']] >= self.origin_yx) & (self.annot[['Y', 'X']] < self.limits_yx)).all(axis=1)
+        self.split_annot = self.annot[in_split].copy()
+        self.split_annot[['Y', 'X']] -= self.origin_yx
 
         # the number of patches in a row and a column
         self.num_patches = np.ceil(1 + ((self.region_hw - self.patch_hw) / self.stride_hw)).astype(np.int64)
