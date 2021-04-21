@@ -55,7 +55,7 @@ class PerineuralNetsSegmDataset(ConcatDataset):
         self.split = split
 
         annot_path = self.root / 'annotation' / 'annotations.csv'
-        self.annot = pd.read_csv(annot_path, index_col=0)
+        all_annot = pd.read_csv(annot_path, index_col=0)
 
         image_files = sorted((self.root / 'fullFramesH5').glob('*.h5'))
         assert len(image_files) > 0, "No images found"
@@ -85,7 +85,9 @@ class PerineuralNetsSegmDataset(ConcatDataset):
             gt_params=self.gt_params,
             max_cache_mem=max_cache_mem
         )
-        datasets = [_PerineuralNetsSegmImage(image_path, self.annot, split=s, **kwargs) for image_path, s in zip(image_files, splits)]
+        datasets = [_PerineuralNetsSegmImage(image_path, all_annot, split=s, **kwargs) for image_path, s in zip(image_files, splits)]
+        self.annot = pd.concat([d.annot for d in datasets])
+
         super(self.__class__, self).__init__(datasets)
 
     def __getitem__(self, index):
