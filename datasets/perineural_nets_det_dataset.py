@@ -40,7 +40,7 @@ class PerineuralNetsDetDataset(ConcatDataset):
         self.split = split
 
         annot_path = self.root / 'annotation' / 'annotations.csv'
-        self.annot = pd.read_csv(annot_path, index_col=0)
+        all_annot = pd.read_csv(annot_path, index_col=0)
 
         image_files = sorted((self.root / 'fullFramesH5').glob('*.h5'))
         assert len(image_files) > 0, "No images found"
@@ -70,7 +70,10 @@ class PerineuralNetsDetDataset(ConcatDataset):
             gt_params=self.gt_params,
             max_cache_mem=max_cache_mem
         )
-        datasets = [_PerineuralNetsDetImage(image_path, self.annot, split=s, **kwargs) for image_path, s in zip(image_files, splits)]
+        datasets = [_PerineuralNetsDetImage(image_path, all_annot, split=s, **kwargs) for image_path, s in
+                    zip(image_files, splits)]
+        self.annot = pd.concat([d.split_annot for d in datasets])
+
         super(self.__class__, self).__init__(datasets)
 
     def __getitem__(self, index):
@@ -146,9 +149,12 @@ class _PerineuralNetsDetImage(Dataset):
 
         # keep only annotations of this image
         self.image_id = Path(h5_path).with_suffix('.tif').name
-        annot = annotations.loc[self.image_id]
-        in_split = ((annot[['Y', 'X']] >= self.origin_yx) & (annot[['Y', 'X']] < self.limits_yx)).all(axis=1)
-        self.annot = annot[in_split]
+        self.annot = annotations.loc[self.image_id]
+
+        # keep also annotations in the selected split (in split's coordinates)
+        in_split = ((self.annot[['Y', 'X']] >= self.origin_yx) & (self.annot[['Y', 'X']] < self.limits_yx)).all(axis=1)
+        self.split_annot = self.annot[in_split].copy()
+        self.split_annot[['Y', 'X']] -= self.origin_yx
 
         # the number of patches in a row and a column
         self.num_patches = np.ceil(1 + ((self.region_hw - self.patch_hw) / self.stride_hw)).astype(np.int64)

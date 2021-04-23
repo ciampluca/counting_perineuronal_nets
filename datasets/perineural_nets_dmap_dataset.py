@@ -23,7 +23,7 @@ class PerineuralNetsDMapDataset(ConcatDataset):
     }
 
     def __init__(self, root='data/perineuronal_nets', split='all', with_targets=True, patch_size=640, overlap=None,
-                 random_offset=None, gt_params={}, transforms=None, max_cache_mem=None):
+                 random_offset=None, gt_params={}, transforms=None, max_cache_mem=None, border_pad=None):
 
         self.root = Path(root)
         self.transforms = transforms
@@ -41,7 +41,7 @@ class PerineuralNetsDMapDataset(ConcatDataset):
         self.split = split
 
         annot_path = self.root / 'annotation' / 'annotations.csv'
-        self.annot = pd.read_csv(annot_path, index_col=0)
+        all_annot = pd.read_csv(annot_path, index_col=0)
 
         image_files = sorted((self.root / 'fullFramesH5').glob('*.h5'))
         assert len(image_files) > 0, "No images found"
@@ -71,7 +71,16 @@ class PerineuralNetsDMapDataset(ConcatDataset):
             gt_params=self.gt_params,
             max_cache_mem=max_cache_mem
         )
-        datasets = [_PerineuralNetsDMapImage(image_path, self.annot, split=s, **kwargs) for image_path, s in zip(image_files, splits)]
+
+        # border pad (for validation, useful for reconstructing the image)
+        if border_pad is not None:
+            assert border_pad % 32 == 0, "Border pad value must be divisible by 32"
+            self.border_pad = border_pad
+
+        datasets = [_PerineuralNetsDMapImage(image_path, all_annot, split=s, **kwargs) for image_path, s in
+                    zip(image_files, splits)]
+        self.annot = pd.concat([d.split_annot for d in datasets])
+
         super(self.__class__, self).__init__(datasets)
 
     def __getitem__(self, index):
@@ -97,6 +106,7 @@ class _PerineuralNetsDMapImage(Dataset):
         self.split = split
 
         # patch size (height and width)
+        assert patch_size % 32 == 0, "Patch size must be divisible by 32"
         self.patch_hw = np.array((patch_size, patch_size), dtype=np.int64)
 
         # windows stride size (height and width)
@@ -121,9 +131,12 @@ class _PerineuralNetsDMapImage(Dataset):
 
         # keep only annotations of this image
         self.image_id = Path(h5_path).with_suffix('.tif').name
-        annot = annotations.loc[self.image_id]
-        in_split = ((annot[['Y', 'X']] >= self.origin_yx) & (annot[['Y', 'X']] < self.limits_yx)).all(axis=1)
-        self.annot = annot[in_split]
+        self.annot = annotations.loc[self.image_id]
+
+        # keep also annotations in the selected split (in split's coordinates)
+        in_split = ((self.annot[['Y', 'X']] >= self.origin_yx) & (self.annot[['Y', 'X']] < self.limits_yx)).all(axis=1)
+        self.split_annot = self.annot[in_split].copy()
+        self.split_annot[['Y', 'X']] -= self.origin_yx
 
         # the number of patches in a row and a column
         self.num_patches = np.ceil(1 + ((self.region_hw - self.patch_hw) / self.stride_hw)).astype(np.int64)

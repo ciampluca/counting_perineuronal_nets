@@ -16,8 +16,8 @@ detection_based_fasterrcnn:
         overlap: 120
 
   train:
-    batch_size: 20
-    val_batch_size: 20
+    batch_size: 16
+    val_batch_size: 16
     batch_accumulation: 4
 
   model:

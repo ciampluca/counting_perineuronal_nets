@@ -142,7 +142,6 @@ def update_dict(d, u):
 
 def dice_jaccard(y_true, y_pred, y_pred_scores, shape, smooth=1, thr=None):
     """ Computes Dice and Jaccard coefficients for image segmentation. """
-
     gt_seg_map = np.zeros(shape, dtype=np.float32)
     for gt_bb in y_true:
         gt_seg_map[int(gt_bb[1]):int(gt_bb[3]) + 1, int(gt_bb[0]):int(gt_bb[2]) + 1] = 1.0
@@ -163,6 +162,32 @@ def dice_jaccard(y_true, y_pred, y_pred_scores, shape, smooth=1, thr=None):
     dice = 2. * (intersection + smooth) / (sum_ + smooth)
 
     return dice.mean(), jaccard.mean()
+
+
+def save_img_with_bbs(img, img_id, det_bbs, gt_bbs):
+
+    def _is_empty(l):
+        return all(_is_empty(i) if isinstance(i, list) else False for i in l)
+
+    debug_dir = os.path.join(os.getcwd(), 'output_debug')
+    if not os.path.exists(debug_dir):
+        os.makedirs(debug_dir)
+    pil_image = to_pil_image(img.cpu()).convert("RGB")
+    draw = ImageDraw.Draw(pil_image)
+    if not _is_empty(gt_bbs):
+        for bb in gt_bbs:
+            draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='red', width=3)
+        img_gt_num = len(gt_bbs)
+    if not _is_empty(det_bbs):
+        for bb in det_bbs:
+            draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='green', width=3)
+        img_det_num = len(det_bbs)
+    # Add text to image
+    text = f"Det Num of Nets: {img_det_num}, GT Num of Nets: {img_gt_num}"
+    font_path = os.path.join(hydra.utils.get_original_cwd(), "./font/LEMONMILK-RegularItalic.otf")
+    font = ImageFont.truetype(font_path, 100)
+    draw.text((75, 75), text=text, font=font, fill=(0, 191, 255))
+    pil_image.save(os.path.join(debug_dir, img_id))
 
 
 def train_one_epoch(model, dataloader, optimizer, device, cfg, writer, epoch):
@@ -256,9 +281,6 @@ def validate(model, dataloader, device, cfg, epoch):
         for batch in batches:
             yield from zip(*batch)
 
-    def _is_empty(l):
-        return all(_is_empty(i) if isinstance(i, list) else False for i in l)
-
     processed_batches = map(_predict, dataloader)
     processed_batches = BackgroundGenerator(processed_batches, max_prefetch=7500)  # prefetch batches using threading
     processed_samples = _unbatch(processed_batches)
@@ -273,13 +295,12 @@ def validate(model, dataloader, device, cfg, epoch):
     for (image_id, image_hw), image_patches in progress:
         full_image = torch.empty(image_hw, dtype=torch.float32, device=validation_device)
         normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
-        full_image_det_bbs, full_image_target_bbs = \
-            torch.empty(0, 4, dtype=torch.float32), torch.empty(0, 4, dtype=torch.float32)
+        full_image_det_bbs = torch.empty(0, 4, dtype=torch.float32)
         full_image_det_scores = torch.empty(0, dtype=torch.float32)
 
-        # build full maps from patches
+        # build full image with preds from patches
         progress.set_description('EVAL (patches)')
-        for _, _, patch, target_bbs, prediction_bbs, prediction_scores, patch_hw, start_yx in image_patches:
+        for _, _, patch, _, prediction_bbs, prediction_scores, patch_hw, start_yx in image_patches:
             (y, x), (h, w) = start_yx, patch_hw
             full_image[y:y+h, x:x+w] = patch[:h, :w]
             normalization_map[y:y+h, x:x+w] += 1.0
@@ -290,14 +311,6 @@ def validate(model, dataloader, device, cfg, epoch):
                 prediction_bbs[:, 3:4] += y
                 full_image_det_bbs = torch.cat((full_image_det_bbs, prediction_bbs))
                 full_image_det_scores = torch.cat((full_image_det_scores, prediction_scores))
-            if target_bbs.nelement() != 0:
-                target_bbs[:, 0:1] += x
-                target_bbs[:, 2:3] += x
-                target_bbs[:, 1:2] += y
-                target_bbs[:, 3:4] += y
-                full_image_target_bbs = torch.cat((full_image_target_bbs, target_bbs))
-
-        # full_image /= normalization_map
 
         # Removing bbs outside image and clipping
         full_image_filtered_det_bbs = torch.empty(0, 4, dtype=torch.float32)
@@ -352,29 +365,6 @@ def validate(model, dataloader, device, cfg, epoch):
         del in_overlap_areas_det_scores
         del normalization_map
 
-        if cfg.train.debug and epoch % cfg.train.debug == 0:
-            debug_dir = os.path.join(os.getcwd(), 'output_debug')
-            if not os.path.exists(debug_dir):
-                os.makedirs(debug_dir)
-            gt_bboxes = full_image_target_bbs.tolist()
-            det_bboxes = full_image_final_det_bbs.tolist()
-            pil_image = to_pil_image(full_image.cpu()).convert("RGB")
-            draw = ImageDraw.Draw(pil_image)
-            if not _is_empty(gt_bboxes):
-                for bb in gt_bboxes:
-                    draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='red', width=3)
-                img_gt_num = len(gt_bboxes)
-            if not _is_empty(det_bboxes):
-                for bb in det_bboxes:
-                    draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='green', width=3)
-                img_det_num = len(det_bboxes)
-            # Add text to image
-            text = f"Det Num of Nets: {img_det_num}, GT Num of Nets: {img_gt_num}"
-            font_path = os.path.join(hydra.utils.get_original_cwd(), "./font/LEMONMILK-RegularItalic.otf")
-            font = ImageFont.truetype(font_path, 100)
-            draw.text((75, 75), text=text, font=font, fill=(0, 191, 255))
-            pil_image.save(os.path.join(debug_dir, image_id))
-
         # compute metrics
         progress.set_description('EVAL (metrics)')
 
@@ -385,7 +375,14 @@ def validate(model, dataloader, device, cfg, epoch):
         progress_thrs = tqdm(thrs, desc='thr', leave=False)
         full_image_final_det_bbs = full_image_final_det_bbs.cpu().tolist()
         full_image_final_det_scores = full_image_final_det_scores.cpu().tolist()
-        full_image_target_bbs = full_image_target_bbs.cpu().tolist()
+        groundtruth = dataloader.dataset.annot.loc[image_id]
+        full_image_target_points = groundtruth.values.tolist()
+        half_bb_side = dataloader.dataset.gt_params['side'] / 2
+        full_image_target_bbs = \
+            [[center[0] - half_bb_side, center[1] - half_bb_side, center[0] + half_bb_side, center[1] + half_bb_side]
+             for center in full_image_target_points]
+        if cfg.train.debug and epoch % cfg.train.debug == 0:
+            save_img_with_bbs(full_image, image_id, full_image_final_det_bbs, full_image_target_bbs)
         for thr in progress_thrs:
             full_image_final_det_bbs_thr = [bb for bb, score in
                                             zip(full_image_final_det_bbs, full_image_final_det_scores) if
@@ -403,7 +400,6 @@ def validate(model, dataloader, device, cfg, epoch):
             }
 
             # counting metrics
-            groundtruth = dataloader.dataset.annot.loc[image_id]
             localizations = [[bb[1], bb[0]] for bb in full_image_final_det_bbs_thr]
             localizations = pd.DataFrame(localizations, columns=['Y', 'X'])
 
@@ -594,7 +590,7 @@ def main(hydra_cfg: DictConfig) -> None:
         optimizer.load_state_dict(checkpoint['optimizer'])
         if scheduler is not None:
             scheduler.load_state_dict(checkpoint['lr_scheduler'])
-        start_epoch = checkpoint['epoch']
+        start_epoch = checkpoint['epoch'] + 1
         best_validation_metrics = checkpoint['best_validation_metrics']
         best_metrics_epoch = checkpoint['best_metrics_epoch']
         if 'best_thresholds' in checkpoint:

@@ -1,26 +1,31 @@
 # @package _group_
 dataset:
-    training:
+    train:
         name: "perineural_nets"
-        root: "/home/modro/datino/perineural_nets"
         params:
-            all_frames  : ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
-            # Split ttVtt - ttVtt - .... --> used only if specular_split is false
-            train_frames: ['014', '015', '017', '019', '020', '021', '023', '026', '027', '028', '035', '036', '041', '042', '044', '048', '049', '050', '052', '053']
-            input_size: [640, 640]      # w, h
-            load_in_memory: False
-            percentage: null
+            root: ${hydra:runtime.cwd}/data/perineuronal_nets
+            split: train-specular
+            patch_size: 320     # must be divisible by 32
+            overlap: 0
+            random_offset: null  # auto-determined as patch_size / 2
+            max_cache_mem: 8_589_934_592  # 8GiB in bytes
+            gt_params:
+                'k_size': 51         # size (in px) of the kernel of the gaussian localizing a perineural nets
+                'sigma': 30            # sigma of the gaussian
+
     validation:
-        name: "perineural_nets"
-        root: "/home/modro/datino/perineural_nets"
+        name: perineural_nets
         params:
-            all_frames  : ['014', '015', '016', '017', '019', '020', '021', '022', '023', '026', '027', '028', '034', '035', '036', '041', '042', '043', '044', '048', '049', '050', '051', '052', '053']
-            # Split ttVtt - ttVtt - .... --> used only if specular_split is false
-            val_frames  : ['016', '022', '034', '043', '051']
-            input_size: [640, 640]      # w, h
-            load_in_memory: False
-            percentage: null
-            patches_overlap: 0      # in pixels
+            root: ${hydra:runtime.cwd}/data/perineuronal_nets
+            split: validation-specular
+            patch_size: 320     # must be divisible by 32
+            border_pad: 64      # must be divisible by 32
+            overlap: null        # auto-determined as 4 * gt_params.radius_ignore
+            random_offset: 0
+            max_cache_mem: 8_589_934_592  # 8GiB in bytes
+            gt_params:
+                'k_size': 51         # size (in px) of the kernel of the gaussian localizing a perineural nets
+                'sigma': 30            # sigma of the gaussian
 
 
 model:
@@ -28,14 +33,6 @@ model:
     cache_folder: ./model_zoo
     pretrained: null     # path to pretrained weights, optimizer states will not restored
     resume: null    # path to last trained model, will restore optimizer states
-    loss:
-        name:
-            MSELoss
-    aux_loss:
-        name: null      # can be "SSIM" or null
-        params:
-            windows_size: 11
-        lambda_multiplier: 10
     params:
         load_weights: False
 
@@ -47,21 +44,29 @@ optimizer:
     scheduler:
         name: MultiStepLR
         params:
-            milestones: [35, 45, 50]
+            milestones: [50, 75, 100]
             gamma: 0.1
+    loss:
+        name:
+            MSELoss
+    aux_loss:
+        name: null      # can be "SSIM" or null
+        params:
+            windows_size: 11
+        lambda_multiplier: 10
 
 
-training:
+train:
     batch_size: 8
-    val_batch_size: 1
+    val_batch_size: 8
     num_workers: 4
-    epochs: 50
+    epochs: 100
     val_freq: 1
     debug: true
-    debug_freq: 5
-    log_loss: 20
-    precomputed_patches: true
-    specular_split: true
+    debug_freq: 2
+    log_every: 20
+    batch_accumulation: 1
+    val_device: cpu
 
 
 seed: 10
