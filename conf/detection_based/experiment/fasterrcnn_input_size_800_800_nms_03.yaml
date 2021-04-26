@@ -1,22 +1,25 @@
 # @package _global_
 defaults:
-  - override /technique: density_based_csrnet
+  - override /technique: detection_based_fasterrcnn
 
 
-density_based_csrnet:
+detection_based_fasterrcnn:
   dataset:
     train:
       params:
         root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
-        patch_size: 640     # must be divisible by 32
+        patch_size: 800
     validation:
       params:
         root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
-        patch_size: 640     # must be divisible by 32
+        patch_size: 800
         overlap: 120
-        border_pad: 160      # must be divisible by 32
 
   train:
     batch_size: 8
     val_batch_size: 8
     batch_accumulation: 4
+
+  model:
+    params:
+      nms: 0.3

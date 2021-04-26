@@ -4,8 +4,6 @@ torch
 torchvision
 tensorboard
 matplotlib
-albumentations
-pycocotools
 hydra-core
 omegaconf
 h5py

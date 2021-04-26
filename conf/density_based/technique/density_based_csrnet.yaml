@@ -49,11 +49,6 @@ optimizer:
     loss:
         name:
             MSELoss
-    aux_loss:
-        name: null      # can be "SSIM" or null
-        params:
-            windows_size: 11
-        lambda_multiplier: 10
 
 
 train:

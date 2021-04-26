@@ -10,13 +10,13 @@ import collections
 import pandas as pd
 import itertools
 from PIL import ImageDraw, ImageFont, Image
+from skimage.metrics import structural_similarity as ssim
 
 import torch
 import torchvision
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision.transforms import ToTensor, RandomHorizontalFlip, Compose
-from datasets.perineural_nets_dmap_dataset import PerineuralNetsDMapDataset
 import torchvision.transforms.functional as F
 
 from omegaconf import DictConfig
@@ -26,8 +26,7 @@ from prefetch_generator import BackgroundGenerator
 
 from utils import dmaps as utils_dmaps
 from utils.misc import normalize
-
-import ssim
+from datasets.perineural_nets_dmap_dataset import PerineuralNetsDMapDataset
 
 tqdm = partial(tqdm, dynamic_ncols=True)
 trange = partial(trange, dynamic_ncols=True)
@@ -82,7 +81,7 @@ def save_img_and_dmaps(img, img_id, pred_dmap, gt_dmap):
     pil_gt_dmap.save(os.path.join(debug_dir, img_id.rsplit(".", 1)[0] + "_gt_dmap.png"))
 
 
-def train_one_epoch(model, dataloader, optimizer, criterion, aux_criterion, device, cfg, writer, epoch):
+def train_one_epoch(model, dataloader, optimizer, criterion, device, cfg, writer, epoch):
     """ Trains the model for one epoch. """
     model.train()
     optimizer.zero_grad()
@@ -105,17 +104,11 @@ def train_one_epoch(model, dataloader, optimizer, criterion, aux_criterion, devi
 
         # Computing loss and backwarding it
         loss = criterion(pred_dmaps, gt_dmaps)
-        if cfg.optimizer.aux_loss.name == "SSIM":
-            aux_loss = -aux_criterion(gt_dmaps, pred_dmaps)
-            loss += cfg.optimizer.aux_loss.lambda_multiplier * aux_loss
-
-        train_ssim = ssim.ssim(gt_dmaps, pred_dmaps)
 
         loss.backward()
 
         batch_metrics = {
-            'loss': loss.item(),
-            'ssim': train_ssim.item()
+            'loss': loss.item()
         }
 
         metrics.append(batch_metrics)
@@ -202,11 +195,10 @@ def validate(model, dataloader, criterion, device, cfg, epoch):
         full_gt_dmap /= normalization_map
         full_pred_dmap /= normalization_map
 
-        del normalization_map
-
         ## threshold-free metrics
         loss = criterion(full_pred_dmap, full_gt_dmap)
-        val_ssim = ssim.ssim(full_gt_dmap[None, None, :, :], full_pred_dmap[None, None, :, :])
+        val_ssim = ssim(full_gt_dmap.cpu().numpy(), full_pred_dmap.cpu().numpy(),
+                        data_range=np.max(full_pred_dmap.cpu().numpy()) - np.min(full_pred_dmap.cpu().numpy()))
 
         count_metrics = utils_dmaps.compute_metrics(full_gt_dmap, full_pred_dmap)
 
@@ -214,12 +206,18 @@ def validate(model, dataloader, criterion, device, cfg, epoch):
         metrics.append({
             'image_id': image_id,
             'density/mse_loss': loss.item(),
-            'density/ssim': val_ssim.item(),
+            'density/ssim': val_ssim,
             **count_metrics,
         })
 
         if cfg.train.debug and epoch % cfg.train.debug == 0:
             save_img_and_dmaps(full_image, image_id, full_pred_dmap, full_gt_dmap)
+
+        # Cleaning
+        del normalization_map
+        del full_gt_dmap
+        del full_pred_dmap
+        del full_image
 
     # average among images
     metrics = pd.DataFrame(metrics).set_index('image_id')
@@ -322,13 +320,6 @@ def main(hydra_cfg: DictConfig) -> None:
     # Setting criterion
     criterion = hydra.utils.get_class(
             f"torch.nn.{cfg.optimizer.loss.name}")()
-    aux_criterion = None
-    if cfg.optimizer.aux_loss.name:
-        aux_criterion = hydra.utils.get_class(
-            f"ssim.{cfg.optimizer.aux_loss.name}")
-        aux_criterion = aux_criterion(
-            **
-            {**cfg.optimizer.aux_loss.params})
 
     # Eventually resuming a pre-trained model
     if cfg.model.pretrained:
@@ -375,7 +366,7 @@ def main(hydra_cfg: DictConfig) -> None:
     for epoch in progress:
         # train
         train_metrics = \
-            train_one_epoch(model, train_loader, optimizer, criterion, aux_criterion, device, cfg, writer, epoch)
+            train_one_epoch(model, train_loader, optimizer, criterion, device, cfg, writer, epoch)
         scheduler.step()    # update lr scheduler
 
         train_metrics['epoch'] = epoch

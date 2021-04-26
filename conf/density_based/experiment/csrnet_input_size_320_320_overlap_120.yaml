@@ -14,7 +14,7 @@ density_based_csrnet:
         root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
         patch_size: 320     # must be divisible by 32
         overlap: 120
-        border_pad: 64      # must be divisible by 32
+        border_pad: 160      # must be divisible by 32
 
   train:
     batch_size: 10

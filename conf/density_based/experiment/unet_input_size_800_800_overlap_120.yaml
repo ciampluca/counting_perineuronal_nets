@@ -1,20 +1,20 @@
 # @package _global_
 defaults:
-  - override /technique: density_based_csrnet
+  - override /technique: density_based_unet
 
 
-density_based_csrnet:
+density_based_unet:
   dataset:
     train:
       params:
         root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
-        patch_size: 640     # must be divisible by 32
+        patch_size: 800
     validation:
       params:
         root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
-        patch_size: 640     # must be divisible by 32
+        patch_size: 800
         overlap: 120
-        border_pad: 160      # must be divisible by 32
+        border_pad: 160
 
   train:
     batch_size: 8

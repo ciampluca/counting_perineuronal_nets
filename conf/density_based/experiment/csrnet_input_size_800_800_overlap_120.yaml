@@ -8,11 +8,11 @@ density_based_csrnet:
     train:
       params:
         root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
-        patch_size: 640     # must be divisible by 32
+        patch_size: 800     # must be divisible by 32
     validation:
       params:
         root: "/mnt/Dati_SSD_2/datasets/perineural_nets"
-        patch_size: 640     # must be divisible by 32
+        patch_size: 800     # must be divisible by 32
         overlap: 120
         border_pad: 160      # must be divisible by 32
 
