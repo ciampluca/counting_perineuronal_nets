@@ -8,3 +8,4 @@ hydra-core
 omegaconf
 h5py
 pandas
+prefetch_generator

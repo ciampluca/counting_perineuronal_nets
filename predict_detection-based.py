@@ -110,12 +110,10 @@ def process_per_patch(dataloader, process_fn, cfg):
 
         processed_batch = (image_id, image_hw, patch, predictions_bbs, predictions_scores, patch_hw, start_yx)
 
-        # processed_batch = [t.cpu().numpy() if isinstance(t, torch.Tensor) else t for t in processed_batch]
-
         return processed_batch
 
     processed_batches = map(_process_batch, dataloader)
-    processed_batches = BackgroundGenerator(processed_batches, max_prefetch=15000)  # prefetch batches using threading
+    processed_batches = BackgroundGenerator(processed_batches, max_prefetch=5000)  # prefetch batches using threading
 
     def _unbatch(batches):
         for batch in batches:
@@ -144,57 +142,57 @@ def process_per_patch(dataloader, process_fn, cfg):
                 full_image_det_bbs = torch.cat((full_image_det_bbs, prediction_bbs))
                 full_image_det_scores = torch.cat((full_image_det_scores, prediction_scores))
 
-            # Removing bbs outside image and clipping
-            full_image_filtered_det_bbs = torch.empty(0, 4, dtype=torch.float32)
-            full_image_filtered_det_scores = torch.empty(0, dtype=torch.float32)
-            l = torch.tensor([[0.0, 0.0, 0.0, 0.0]])  # Setting the lower and upper bound per column
-            u = torch.tensor([[image_hw[1], image_hw[0], image_hw[1], image_hw[0]]])
-            for bb, score in zip(full_image_det_bbs, full_image_det_scores):
-                bb_w, bb_h = bb[2] - bb[0], bb[3] - bb[1]
-                x_c, y_c = int(bb[0] + (bb_w / 2)), int(bb[1] + (bb_h / 2))
-                if x_c > image_hw[1] or y_c > image_hw[0]:
-                    continue
-                bb = torch.max(torch.min(bb, u), l)
-                full_image_filtered_det_bbs = torch.cat((full_image_filtered_det_bbs, bb))
-                full_image_filtered_det_scores = torch.cat(
-                    (full_image_filtered_det_scores, torch.Tensor([score.item()])))
+        # Removing bbs outside image and clipping
+        full_image_filtered_det_bbs = torch.empty(0, 4, dtype=torch.float32)
+        full_image_filtered_det_scores = torch.empty(0, dtype=torch.float32)
+        l = torch.tensor([[0.0, 0.0, 0.0, 0.0]])  # Setting the lower and upper bound per column
+        u = torch.tensor([[image_hw[1], image_hw[0], image_hw[1], image_hw[0]]])
+        for bb, score in zip(full_image_det_bbs, full_image_det_scores):
+            bb_w, bb_h = bb[2] - bb[0], bb[3] - bb[1]
+            x_c, y_c = int(bb[0] + (bb_w / 2)), int(bb[1] + (bb_h / 2))
+            if x_c > image_hw[1] or y_c > image_hw[0]:
+                continue
+            bb = torch.max(torch.min(bb, u), l)
+            full_image_filtered_det_bbs = torch.cat((full_image_filtered_det_bbs, bb))
+            full_image_filtered_det_scores = torch.cat(
+                (full_image_filtered_det_scores, torch.Tensor([score.item()])))
 
-                # Performing filtering of the bbs in the overlapped areas using nms
-                in_overlap_areas_indices = []
-                in_overlap_areas_det_bbs, full_image_final_det_bbs = \
-                    torch.empty(0, 4, dtype=torch.float32), torch.empty(0, 4, dtype=torch.float32)
-                in_overlap_areas_det_scores, full_image_final_det_scores = \
-                    torch.empty(0, dtype=torch.float32), torch.empty(0, dtype=torch.float32)
-                for i, (det_bb, det_score) in enumerate(
-                        zip(full_image_filtered_det_bbs, full_image_filtered_det_scores)):
-                    bb_w, bb_h = det_bb[2] - det_bb[0], det_bb[3] - det_bb[1]
-                    x_c, y_c = int(det_bb[0] + (bb_w / 2)), int(det_bb[1] + (bb_h / 2))
-                    if normalization_map[y_c, x_c] != 1.0:
-                        in_overlap_areas_indices.append(i)
-                        in_overlap_areas_det_bbs = torch.cat(
-                            (in_overlap_areas_det_bbs, torch.Tensor([det_bb.cpu().numpy()])))
-                        in_overlap_areas_det_scores = torch.cat(
-                            (in_overlap_areas_det_scores, torch.Tensor([det_score.item()])))
-                    else:
-                        full_image_final_det_bbs = torch.cat(
-                            (full_image_final_det_bbs, torch.Tensor([det_bb.cpu().numpy()])))
-                        full_image_final_det_scores = torch.cat(
-                            (full_image_final_det_scores, torch.Tensor([det_score.item()])))
+        # Performing filtering of the bbs in the overlapped areas using nms
+        in_overlap_areas_indices = []
+        in_overlap_areas_det_bbs, full_image_final_det_bbs = \
+            torch.empty(0, 4, dtype=torch.float32), torch.empty(0, 4, dtype=torch.float32)
+        in_overlap_areas_det_scores, full_image_final_det_scores = \
+            torch.empty(0, dtype=torch.float32), torch.empty(0, dtype=torch.float32)
+        for i, (det_bb, det_score) in enumerate(
+                zip(full_image_filtered_det_bbs, full_image_filtered_det_scores)):
+            bb_w, bb_h = det_bb[2] - det_bb[0], det_bb[3] - det_bb[1]
+            x_c, y_c = int(det_bb[0] + (bb_w / 2)), int(det_bb[1] + (bb_h / 2))
+            if normalization_map[y_c, x_c] != 1.0:
+                in_overlap_areas_indices.append(i)
+                in_overlap_areas_det_bbs = torch.cat(
+                    (in_overlap_areas_det_bbs, torch.Tensor([det_bb.cpu().numpy()])))
+                in_overlap_areas_det_scores = torch.cat(
+                    (in_overlap_areas_det_scores, torch.Tensor([det_score.item()])))
+            else:
+                full_image_final_det_bbs = torch.cat(
+                    (full_image_final_det_bbs, torch.Tensor([det_bb.cpu().numpy()])))
+                full_image_final_det_scores = torch.cat(
+                    (full_image_final_det_scores, torch.Tensor([det_score.item()])))
 
-                # non-maximum suppression
-                if in_overlap_areas_indices:
-                    keep_in_overlap_areas_indices = box_ops.nms(
-                        in_overlap_areas_det_bbs,
-                        in_overlap_areas_det_scores,
-                        iou_threshold=cfg.model.params.nms
-                    )
+        # non-maximum suppression
+        if in_overlap_areas_indices:
+            keep_in_overlap_areas_indices = box_ops.nms(
+                in_overlap_areas_det_bbs,
+                in_overlap_areas_det_scores,
+                iou_threshold=cfg.model.params.nms
+            )
 
-                if in_overlap_areas_indices:
-                    for i in keep_in_overlap_areas_indices:
-                        full_image_final_det_bbs = torch.cat(
-                            (full_image_final_det_bbs, torch.Tensor([in_overlap_areas_det_bbs[i].cpu().numpy()])))
-                        full_image_final_det_scores = torch.cat(
-                            (full_image_final_det_scores, torch.Tensor([in_overlap_areas_det_scores[i].item()])))
+        if in_overlap_areas_indices:
+            for i in keep_in_overlap_areas_indices:
+                full_image_final_det_bbs = torch.cat(
+                    (full_image_final_det_bbs, torch.Tensor([in_overlap_areas_det_bbs[i].cpu().numpy()])))
+                full_image_final_det_scores = torch.cat(
+                    (full_image_final_det_scores, torch.Tensor([in_overlap_areas_det_scores[i].item()])))
 
         # Cleaning
         del normalization_map
@@ -227,7 +225,7 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
             outdir.mkdir(parents=True, exist_ok=True)
             io.imsave(outdir / image_id, image)
 
-        localizations = [[(bb[3]-bb[1])/2, (bb[2]-bb[0])/2] for bb in bbs]
+        localizations = [[bb[1] + ((bb[3]-bb[1])/2), bb[0] + ((bb[2]-bb[0])/2)] for bb in bbs]
         localizations = pd.DataFrame(localizations, columns=['Y', 'X'])
         tolerance = 1.25 * (cfg.dataset.validation.params.gt_params.side / 2)  # min distance to match points
         groundtruth_and_predictions = points.match(groundtruth, localizations, tolerance)
@@ -257,6 +255,8 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
                         start=(r_gt-bb_half_side, c_gt-bb_half_side),
                         end=(r_gt+bb_half_side, c_gt+bb_half_side)
                     )
+                    rr = np.clip(rr, 0, image_hw[0]-1)
+                    cc = np.clip(cc, 0, image_hw[1]-1)
                     color = GREEN if has_p else CYAN
                     image[rr, cc] = color
 
@@ -266,6 +266,8 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
                         start=(r_p-bb_half_side, c_p-bb_half_side),
                         end=(r_p+bb_half_side, c_p+bb_half_side)
                     )
+                    rr = np.clip(rr, 0, image_hw[0]-1)
+                    cc = np.clip(cc, 0, image_hw[1]-1)
                     color = RED if has_gt else MAGENTA
                     image[rr, cc] = color
 
