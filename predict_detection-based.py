@@ -5,6 +5,7 @@ import numpy as np
 from tqdm import tqdm
 import itertools
 import pandas as pd
+import os
 
 import torch
 import torchvision
@@ -96,7 +97,7 @@ def get_model_detection(num_classes, cfg, load_custom_model=False):
     return model
 
 
-def process_per_patch(dataloader, process_fn, cfg):
+def process_per_patch(dataloader, process_fn, cfg, threshold):
     validation_device = cfg.train.val_device
 
     def _process_batch(batch):
@@ -142,12 +143,14 @@ def process_per_patch(dataloader, process_fn, cfg):
                 full_image_det_bbs = torch.cat((full_image_det_bbs, prediction_bbs))
                 full_image_det_scores = torch.cat((full_image_det_scores, prediction_scores))
 
-        # Removing bbs outside image and clipping
+        # Removing bbs outside image and clipping; filtering bbs below threshold score
         full_image_filtered_det_bbs = torch.empty(0, 4, dtype=torch.float32)
         full_image_filtered_det_scores = torch.empty(0, dtype=torch.float32)
         l = torch.tensor([[0.0, 0.0, 0.0, 0.0]])  # Setting the lower and upper bound per column
         u = torch.tensor([[image_hw[1], image_hw[0], image_hw[1], image_hw[0]]])
         for bb, score in zip(full_image_det_bbs, full_image_det_scores):
+            if score < threshold:
+                continue
             bb_w, bb_h = bb[2] - bb[0], bb[3] - bb[1]
             x_c, y_c = int(bb[0] + (bb_w / 2)), int(bb[1] + (bb_h / 2))
             if x_c > image_hw[1] or y_c > image_hw[0]:
@@ -214,7 +217,7 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
     ids = []
     results = []
     all_gt_and_preds = []
-    for image_id, image, bbs, scores in process_per_patch(dataloader, process_fn, cfg):
+    for image_id, image, bbs, scores in process_per_patch(dataloader, process_fn, cfg, thr):
         image_hw = image.shape
         image = (255 * image).astype(np.uint8)
 
@@ -227,8 +230,17 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
 
         localizations = [[bb[1] + ((bb[3]-bb[1])/2), bb[0] + ((bb[2]-bb[0])/2)] for bb in bbs]
         localizations = pd.DataFrame(localizations, columns=['Y', 'X'])
+        localizations['score'] = scores
+
+        # match groundtruths and predictions
         tolerance = 1.25 * (cfg.dataset.validation.params.gt_params.side / 2)  # min distance to match points
         groundtruth_and_predictions = points.match(groundtruth, localizations, tolerance)
+
+        # filter by agreement
+        # selector = groundtruth_and_predictions.agreement.between(4, 7)  # select by agreement
+        # selector = selector | groundtruth_and_predictions.agreement.isna()  # always keep false positives
+        # groundtruth_and_predictions = groundtruth_and_predictions[selector]
+
         groundtruth_and_predictions['imgName'] = groundtruth_and_predictions.imgName.fillna(image_id)
         all_gt_and_preds.append(groundtruth_and_predictions)
 
@@ -304,7 +316,7 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
         outdir.mkdir(parents=True, exist_ok=True)
         results.to_csv(outdir / 'results.csv')
         all_gp.to_csv(outdir / 'all_gt_preds.csv')
-        table.to_latex(outdir / 'metrics_by_agreement.csv')
+        table.to_latex(outdir / 'metrics_by_agreement.tex')
 
 
 def main(args):
@@ -334,14 +346,17 @@ def main(args):
 
     # resume from a saved checkpoint
     best_models_folder = run_path / 'best_models'
-    ckpt_path = max(best_models_folder.glob('*.pth'), key=lambda x: x.stat().st_mtime)
+    # ckpt_path = max(best_models_folder.glob('*.pth'), key=lambda x: x.stat().st_mtime)
+    metric_name = args.best_on_metric.replace('/', '-')
+    ckpt_path = best_models_folder / f'best_model_perineural_nets_metric_{metric_name}.pth'
     print(f"Loading checkpoint: {ckpt_path}")
     checkpoint = torch.load(ckpt_path, map_location=device)
     model.load_state_dict(checkpoint['model'])
     validation_metrics = checkpoint['metrics']
 
-    thr = validation_metrics['count/game-3_best_thr']
-    outdir = (run_path / 'test_predictions') if args.save else None
+    thr = validation_metrics[f'{args.best_on_metric}_thr'] if args.custom_thr is False else args.custom_thr
+    print(f"Setting threshold: {thr}")
+    outdir = (run_path / f'test_predictions_{thr}') if args.save else None
     predict(model, test_loader, thr, device, cfg, outdir, debug=args.debug)
 
 
@@ -351,6 +366,8 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--device', default='cuda', help='device to use for prediction')
     parser.add_argument('--no-save', action='store_false', dest='save', help='draw images with predictions')
     parser.add_argument('--debug', action='store_true', default=False, help='draw images with predictions')
+    parser.add_argument('--best-on-metric', default='count/game-5_best', help='select snapshot that optimizes this metric')
+    parser.add_argument('--custom-thr', default=False, type=float, help='custom threshold for bbs filtering')
     parser.add_argument('--data-root', default='data/perineuronal_nets_test', help='root of the test subset')
     parser.set_defaults(save=True)
 
