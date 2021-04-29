@@ -106,7 +106,8 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
         labeled_map, num_components = measure.label(hard_segmentation_map, return_num=True, connectivity=1)
         localizations = measure.regionprops_table(labeled_map, properties=('centroid',))
         localizations = pd.DataFrame(localizations).rename({'centroid-0':'Y', 'centroid-1':'X'}, axis=1)
-        
+        localizations['score'] = 1.
+
         # match groundtruths and predictions
         tolerance = 1.25 * cfg.dataset.validation.params.gt_params.radius  # min distance to match points
         groundtruth_and_predictions = points.match(groundtruth, localizations, tolerance)
@@ -114,9 +115,9 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
         all_gt_and_preds.append(groundtruth_and_predictions)
 
         # filter by agreement
-        selector = groundtruth_and_predictions.agreement.between(4, 7)  # select by agreement
-        selector = selector | groundtruth_and_predictions.agreement.isna()  # always keep false positives
-        groundtruth_and_predictions = groundtruth_and_predictions[selector]
+        # selector = groundtruth_and_predictions.agreement.between(4, 7)  # select by agreement
+        # selector = selector | groundtruth_and_predictions.agreement.isna()  # always keep false positives
+        # groundtruth_and_predictions = groundtruth_and_predictions[selector]
 
         # compute metrics
         metrics = points.compute_metrics(groundtruth_and_predictions, image_hw=image_hw)
@@ -183,8 +184,8 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
         outdir.mkdir(parents=True, exist_ok=True)
         results.to_csv(outdir / 'results.csv')
         all_gp.to_csv(outdir / 'all_gt_preds.csv')
-        table.to_latex(outdir / 'metrics_by_agreement.csv')
-
+        table.to_latex(outdir / 'metrics_by_agreement.tex')
+    
     import pdb; pdb.set_trace()
 
             
@@ -215,13 +216,15 @@ def main(args):
 
     # optionally resume from a saved checkpoint
     best_models_folder = run_path / 'best_models'
-    ckpt_path = max(best_models_folder.glob('*.pth'), key=lambda x: x.stat().st_mtime)
+    # ckpt_path = max(best_models_folder.glob('*.pth'), key=lambda x: x.stat().st_mtime)
+    metric_name = args.best_on_metric.replace('/', '-')
+    ckpt_path = best_models_folder / f'best_model_perineural_nets_metric_{metric_name}.pth'
     print(f"Loading checkpoint: {ckpt_path}")
     checkpoint = torch.load(ckpt_path, map_location=device)
     model.load_state_dict(checkpoint['model'])
     validation_metrics = checkpoint['metrics']
 
-    thr = validation_metrics['segm/dice_best_thr']
+    thr = validation_metrics[f'{args.best_on_metric}_thr']
     outdir = (run_path / 'test_predictions') if args.save else None
     predict(model, test_loader, thr, device, cfg, outdir, debug=args.debug)
 
@@ -230,6 +233,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Predict')
     parser.add_argument('run', help='Path to run dir')
     parser.add_argument('-d', '--device', default='cuda', help='device to use for prediction')
+    parser.add_argument('--best-on-metric', default='count/game-5_best', help='select snapshot that optimizes this metric')
     parser.add_argument('--no-save', action='store_false', dest='save', help='draw images with predictions')
     parser.add_argument('--debug', action='store_true', default=False, help='draw images with predictions')
     parser.set_defaults(save=True)
