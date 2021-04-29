@@ -36,8 +36,8 @@ def match(groundtruth, predictions, threshold):
     Matches points between groundtruth and predictions based on distance.
 
     Args:
-        - groundtruth: a pandas DataFrame with X and Y columns (groundtruth points)
-        - predictions: a pandas DataFrame with X and Y columns (predicted points)
+        - groundtruth: a pandas DataFrame with 'X' and 'Y' columns (groundtruth points)
+        - predictions: a pandas DataFrame with 'X', 'Y', and 'score' columns (predicted points)
         - threshold: the maximum tolerated distance between matching points
     Returns:
         A copy of the groundtruth DataFrame, augmented with Xp and Yp columns
@@ -49,6 +49,7 @@ def match(groundtruth, predictions, threshold):
     groundtruth_and_predictions = groundtruth.copy().reset_index()
     groundtruth_and_predictions['Xp'] = np.nan
     groundtruth_and_predictions['Yp'] = np.nan
+    groundtruth_and_predictions['score'] = np.nan
 
     gt_points = groundtruth[['X', 'Y']].values
     pred_points = predictions[['X', 'Y']].values
@@ -76,7 +77,7 @@ def match(groundtruth, predictions, threshold):
         gt_idx = np.flatnonzero(matched_gt)[gt_idx]
         pred_idx = np.flatnonzero(matched_pred)[pred_idx]
 
-        groundtruth_and_predictions.loc[gt_idx, ['Xp', 'Yp']] = predictions.loc[pred_idx, ['X', 'Y']].values
+        groundtruth_and_predictions.loc[gt_idx, ['Xp', 'Yp', 'score']] = predictions.loc[pred_idx, ['X', 'Y', 'score']].values
         non_matched_predictions = predictions[~predictions.index.isin(pred_idx)]
     
     non_matched_predictions = non_matched_predictions.rename({'X':'Xp', 'Y':'Yp'}, axis=1)
