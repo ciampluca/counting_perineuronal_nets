@@ -6,6 +6,9 @@ import copy
 from skimage import io, draw
 from tqdm import tqdm
 import itertools
+import cv2
+from math import floor
+import pandas as pd
 
 import torch
 import torchvision
@@ -19,7 +22,71 @@ from omegaconf import OmegaConf
 from prefetch_generator import BackgroundGenerator
 
 from datasets.perineural_nets_dmap_dataset import PerineuralNetsDMapDataset
+from utils import dmaps as utils_dmaps
 from utils.misc import normalize
+
+
+def build_gt_dmap(image_hw, locations, cfg):
+    """ This builds the density map, putting a gaussian over each dots localizing a perineural net
+    """
+
+    kernel_size = cfg.dataset.train.params.gt_params.k_size
+    sigma = cfg.dataset.train.params.gt_params.sigma
+
+    shape = image_hw
+    dmap = np.zeros(shape, dtype=np.float32)
+
+    if len(locations) == 0:  # empty patch
+        return dmap
+
+    for i, center in enumerate(locations):
+        H = np.multiply(cv2.getGaussianKernel(kernel_size, sigma),
+                        (cv2.getGaussianKernel(kernel_size, sigma)).T)
+
+        x = min(shape[1], max(1, abs(int(floor(center[1])))))
+        y = min(shape[0], max(1, abs(int(floor(center[0])))))
+
+        if x > shape[1] or y > shape[0]:
+            continue
+
+        x1 = x - int(floor(kernel_size / 2))
+        y1 = y - int(floor(kernel_size / 2))
+        x2 = x + int(floor(kernel_size / 2))
+        y2 = y + int(floor(kernel_size / 2))
+        dfx1 = 0
+        dfy1 = 0
+        dfx2 = 0
+        dfy2 = 0
+        change_H = False
+
+        if x1 < 0:
+            dfx1 = abs(x1)
+            x1 = 0
+            change_H = True
+        if y1 < 0:
+            dfy1 = abs(y1)
+            y1 = 0
+            change_H = True
+        if x2 > shape[1] - 1:
+            dfx2 = x2 - (shape[1] - 1)
+            x2 = shape[1] - 1
+            change_H = True
+        if y2 > shape[0] - 1:
+            dfy2 = y2 - (shape[0] - 1)
+            y2 = shape[0] - 1
+            change_H = True
+
+        x1h = 1 + dfx1
+        y1h = 1 + dfy1
+        x2h = kernel_size - dfx2
+        y2h = kernel_size - dfy2
+        if change_H is True:
+            H = np.multiply(cv2.getGaussianKernel(int(y2h - y1h + 1), sigma),
+                            (cv2.getGaussianKernel(int(x2h - x1h + 1), sigma)).T)  # H.shape == (r, c)
+
+        dmap[y1: y2 + 1, x1: x2 + 1] = dmap[y1: y2 + 1, x1: x2 + 1] + H
+
+    return dmap
 
 
 def process_per_patch(dataloader, process_fn, cfg):
@@ -53,7 +120,7 @@ def process_per_patch(dataloader, process_fn, cfg):
         full_pred_dmap = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
         normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
 
-        for _, _, patch, gt_dmap, pred_dmap, patch_hw, start_yx in image_patches:
+        for _, _, patch, pred_dmap, patch_hw, start_yx in image_patches:
             (y, x), (h, w) = start_yx, patch_hw
             full_image[y:y+h, x:x+w] = patch[:h, :w]
             full_pred_dmap[y:y+h, x:x+w] += pred_dmap[:h, :w]
@@ -68,7 +135,7 @@ def process_per_patch(dataloader, process_fn, cfg):
 
 
 @torch.no_grad()
-def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
+def predict(model, dataloader, device, cfg, outdir, debug=False):
     """ Make predictions on data. """
     model.eval()
 
@@ -85,7 +152,6 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
 
     ids = []
     results = []
-    all_gt_and_preds = []
     for image_id, image, dmap in process_per_patch(dataloader, process_fn, cfg):
         image_hw = image.shape
         image = (255 * image).astype(np.uint8)
@@ -93,13 +159,30 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
         groundtruth = dataloader.dataset.annot.loc[image_id]
         groundtruth['agreement'] = groundtruth.loc[:, 'AV':'VT'].sum(axis=1)
 
+        # filter by agreement
+        # selector = groundtruth.agreement.between(4, 7)  # select by agreement
+        # groundtruth = groundtruth[selector]
+
+        groundtruth = groundtruth.reset_index()
+        groundtruth['imgName'] = groundtruth.imgName.fillna(image_id)
+        gt_points = groundtruth[['X', 'Y']].values
+        gt_dmap = build_gt_dmap(image_hw, gt_points, cfg)
+
+        # compute metrics
+        metrics = utils_dmaps.compute_metrics(gt_dmap, dmap)
+
+        ids.append(image_id)
+        results.append(metrics)
+
         if outdir and debug:  # debug
             outdir.mkdir(parents=True, exist_ok=True)
             io.imsave(outdir / image_id, image)
             io.imsave(outdir / f'dmap_{image_id}', (normalize(dmap)).astype(np.uint8))
 
-        # TODO
-        # to be decide how to evaluate
+    results = pd.DataFrame(results, index=ids)
+    print(results)
+    print()
+    print(results.describe().loc[['mean', 'std']].transpose())
 
 
 def main(args):
@@ -131,15 +214,15 @@ def main(args):
 
     # resume from a saved checkpoint
     best_models_folder = run_path / 'best_models'
-    ckpt_path = max(best_models_folder.glob('*.pth'), key=lambda x: x.stat().st_mtime)
+    # ckpt_path = max(best_models_folder.glob('*.pth'), key=lambda x: x.stat().st_mtime)
+    metric_name = args.best_on_metric.replace('/', '-')
+    ckpt_path = best_models_folder / f'best_model_perineural_nets_metric_{metric_name}.pth'
     print(f"Loading checkpoint: {ckpt_path}")
     checkpoint = torch.load(ckpt_path, map_location=device)
     model.load_state_dict(checkpoint['model'])
-    validation_metrics = checkpoint['metrics']
 
-    thr = validation_metrics['count/game-3_best_thr']
     outdir = (run_path / 'test_predictions') if args.save else None
-    predict(model, test_loader, thr, device, cfg, outdir, debug=args.debug)
+    predict(model, test_loader, device, cfg, outdir, debug=args.debug)
 
 
 if __name__ == "__main__":
@@ -148,6 +231,7 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--device', default='cuda', help='device to use for prediction')
     parser.add_argument('--no-save', action='store_false', dest='save', help='draw images with predictions')
     parser.add_argument('--debug', action='store_true', default=False, help='draw images with predictions')
+    parser.add_argument('--best-on-metric', default='count/game-5', help='select snapshot that optimizes this metric')
     parser.add_argument('--data-root', default='data/perineuronal_nets_test', help='root of the test subset')
     parser.set_defaults(save=True)
 

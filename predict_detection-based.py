@@ -257,7 +257,7 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
             bb_half_side = 10
 
             # iterate gt and predictions
-            for c_gt, r_gt, c_p, r_p in groundtruth_and_predictions[['X', 'Y', 'Xp', 'Yp']].values:
+            for c_gt, r_gt, c_p, r_p, score, agreement in groundtruth_and_predictions[['X', 'Y', 'Xp', 'Yp', 'score', 'agreement']].values:
                 has_gt = not np.isnan(r_gt)
                 has_p = not np.isnan(r_p)
 
@@ -356,7 +356,7 @@ def main(args):
 
     thr = validation_metrics[f'{args.best_on_metric}_thr'] if args.custom_thr is False else args.custom_thr
     print(f"Setting threshold: {thr}")
-    outdir = (run_path / f'test_predictions_{thr}') if args.save else None
+    outdir = (run_path / f'test_predictions') if args.save else None
     predict(model, test_loader, thr, device, cfg, outdir, debug=args.debug)
 
 
