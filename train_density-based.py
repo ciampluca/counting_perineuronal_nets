@@ -96,11 +96,11 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device, cfg, writer
         images, gt_dmaps = input_and_target.split(1, dim=1)
         # Expanding images to 3 channels
         images = images.expand(-1, 3, -1, -1)
-        # Multiplying gt since otherwise pixel values are very low
-        gt_dmaps *= 1000
 
         # Computing pred dmaps
         pred_dmaps = model(images)
+        if cfg.model.name == "UNet":
+            pred_dmaps /= 1000
 
         # Computing loss and backwarding it
         loss = criterion(pred_dmaps, gt_dmaps)
@@ -145,18 +145,12 @@ def validate(model, dataloader, criterion, device, cfg, epoch):
         images, gt_dmaps = input_and_target.split(1, dim=1)
         # Expanding images to 3 channels
         images = images.expand(-1, 3, -1, -1)
-        # Multiplying gt since otherwise pixel values are very low
-        gt_dmaps *= 1000
         # Padding image to mitigate problems when reconstructing
         pad_value = dataloader.dataset.border_pad
         images = F.pad(images, pad_value)
 
         # Computing predictions
         pred_dmaps = model(images)
-
-        # Dividing gt and pred maps to compute real errors
-        pred_dmaps /= 1000
-        gt_dmaps /= 1000
 
         # Removing previously added pad
         pred_dmaps = pred_dmaps[:, :, pad_value:pred_dmaps.shape[2]-pad_value, pad_value:pred_dmaps.shape[3]-pad_value]
