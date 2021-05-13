@@ -9,6 +9,7 @@ import itertools
 import cv2
 from math import floor
 import pandas as pd
+from skimage.feature import peak_local_max
 
 import torch
 import torchvision
@@ -23,7 +24,15 @@ from prefetch_generator import BackgroundGenerator
 
 from datasets.perineural_nets_dmap_dataset import PerineuralNetsDMapDataset
 from utils import dmaps as utils_dmaps
+from utils import points
 from utils.misc import normalize
+
+# some colors
+RED = [255, 0, 0]
+GREEN = [0, 255, 0]
+YELLOW = [255, 255, 0]
+CYAN = [0, 255, 255]
+MAGENTA = [255, 0, 255]
 
 
 def build_gt_dmap(image_hw, locations, cfg):
@@ -152,6 +161,8 @@ def predict(model, dataloader, device, cfg, outdir, debug=False):
 
     ids = []
     results = []
+    dmap_results = []
+    all_gt_and_preds = []
     for image_id, image, dmap in process_per_patch(dataloader, process_fn, cfg):
         image_hw = image.shape
         image = (255 * image).astype(np.uint8)
@@ -159,30 +170,113 @@ def predict(model, dataloader, device, cfg, outdir, debug=False):
         groundtruth = dataloader.dataset.annot.loc[image_id]
         groundtruth['agreement'] = groundtruth.loc[:, 'AV':'VT'].sum(axis=1)
 
+        if outdir and debug:  # debug
+            outdir.mkdir(parents=True, exist_ok=True)
+            io.imsave(outdir / image_id, image)
+            io.imsave(outdir / f'dmap_{image_id}', (normalize(copy.deepcopy(dmap))).astype(np.uint8))
+
+        pred_num = np.sum(dmap)
+        peak_idx = peak_local_max(
+            dmap,
+            num_peaks=int(pred_num),
+            threshold_abs=0.0,
+            min_distance=int(cfg.dataset.validation.params.gt_params.sigma),
+            exclude_border=int(cfg.dataset.validation.params.gt_params.sigma),
+            threshold_rel=0.1,
+        )
+        peak_mask = np.zeros_like(dmap, dtype=bool)
+        peak_mask[tuple(peak_idx.T)] = True
+        scores = dmap[peak_mask]
+
+        localizations = pd.DataFrame(peak_idx, columns=['Y', 'X'])
+        localizations['score'] = scores
+
+        # match groundtruths and predictions
+        tolerance = 1.25 * cfg.dataset.validation.params.gt_params.sigma  # min distance to match points
+        groundtruth_and_predictions = points.match(groundtruth, localizations, tolerance)
+
         # filter by agreement
         # selector = groundtruth.agreement.between(4, 7)  # select by agreement
         # groundtruth = groundtruth[selector]
 
-        groundtruth = groundtruth.reset_index()
-        groundtruth['imgName'] = groundtruth.imgName.fillna(image_id)
+        groundtruth_and_predictions['imgName'] = groundtruth_and_predictions.imgName.fillna(image_id)
+        all_gt_and_preds.append(groundtruth_and_predictions)
+
+        metrics = points.compute_metrics(groundtruth_and_predictions, image_hw=image_hw)
+
+        # groundtruth = groundtruth.reset_index()
+        # groundtruth['imgName'] = groundtruth.imgName.fillna(image_id)
         gt_points = groundtruth[['X', 'Y']].values
         gt_dmap = build_gt_dmap(image_hw, gt_points, cfg)
 
         # compute metrics
-        metrics = utils_dmaps.compute_metrics(gt_dmap, dmap)
+        dmap_metrics = utils_dmaps.compute_metrics(gt_dmap, dmap)
 
         ids.append(image_id)
         results.append(metrics)
+        dmap_results.append(dmap_metrics)
 
         if outdir and debug:  # debug
             outdir.mkdir(parents=True, exist_ok=True)
-            io.imsave(outdir / image_id, image)
-            io.imsave(outdir / f'dmap_{image_id}', (normalize(dmap)).astype(np.uint8))
+            image = np.stack((image, image, image), axis=-1)
+            radius = 10
+
+            # iterate gt and predictions
+            for c_gt, r_gt, c_p, r_p, score, agreement in groundtruth_and_predictions[['X', 'Y', 'Xp', 'Yp', 'score', 'agreement']].values:
+                has_gt = not np.isnan(r_gt)
+                has_p = not np.isnan(r_p)
+
+                if has_gt:  # draw groundtruth
+                    r_gt, c_gt = int(r_gt), int(c_gt)
+                    rr, cc, val = draw.circle_perimeter_aa(r_gt, c_gt, radius)
+                    color = GREEN if has_p else CYAN
+                    draw.set_color(image, (rr, cc), color, alpha=val)
+
+                if has_p:  # draw prediction
+                    r_p, c_p = int(r_p), int(c_p)
+                    rr, cc, val = draw.circle_perimeter_aa(r_p, c_p, radius)
+                    color = RED if has_gt else MAGENTA
+                    draw.set_color(image, (rr, cc), color, alpha=val)
+
+                if has_gt and has_p:  # draw line between match
+                    rr, cc, val = draw.line_aa(r_gt, c_gt, r_p, c_p)
+                    draw.set_color(image, (rr, cc), YELLOW, alpha=val)
+
+            io.imsave(outdir / f'annot_{image_id}', image)
 
     results = pd.DataFrame(results, index=ids)
+    dmap_results = pd.DataFrame(dmap_results, index=ids)
     print(results)
     print()
     print(results.describe().loc[['mean', 'std']].transpose())
+    print(dmap_results)
+    print()
+    print(dmap_results.describe().loc[['mean', 'std']].transpose())
+
+    all_gp = pd.concat(all_gt_and_preds, ignore_index=True)
+
+    inA = ~all_gp.X.isna()
+    inB = ~all_gp.Xp.isna()
+    all_gp['tp'] = inA & inB
+    all_gp['fp'] = ~inA & inB
+    all_gp['fn'] = inA & ~inB
+    all_gp['agreement'] = all_gp.agreement.map('{:g}'.format).replace('nan', 'none')
+    by_agree = all_gp.pivot_table(index='agreement', values=['tp', 'fp', 'fn'], aggfunc='sum')
+    by_agree['support'] = by_agree.sum(axis=1)
+    by_agree['micro-tpr'] = by_agree.tp / (by_agree.tp + by_agree.fn)
+    by_agree['fdr'] = by_agree.fp / (by_agree.fp + by_agree.tp.sum())
+
+    # eye-candy
+    table = by_agree.fillna(0).replace(0, '-')
+    with pd.option_context('display.float_format', '{:.1%}'.format):
+        print(table)
+
+    if outdir:
+        outdir.mkdir(parents=True, exist_ok=True)
+        results.to_csv(outdir / 'results.csv')
+        dmap_results.to_csv(outdir / 'dmap_results.csv')
+        all_gp.to_csv(outdir / 'all_gt_preds.csv')
+        table.to_latex(outdir / 'metrics_by_agreement.tex')
 
 
 def main(args):
