@@ -47,6 +47,7 @@ model:
     n_classes: 1
     padding: True
     batch_norm: True
+    last_bias: True
 
 optim:
   optimizer:

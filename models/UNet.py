@@ -15,7 +15,7 @@ class UNet(nn.Module):
             padding=False,
             batch_norm=False,
             up_mode='upconv',
-            load_weights=False,
+            last_bias=False,
     ):
         """
         Implementation of
@@ -58,8 +58,7 @@ class UNet(nn.Module):
             )
             prev_channels = 2 ** (wf + i)
 
-        # self.last = nn.Conv2d(prev_channels, n_classes, kernel_size=1)
-        self.last = nn.Conv2d(prev_channels, n_classes, kernel_size=1, bias=False)  # !!!!!!!!!!!!!
+        self.last = nn.Conv2d(prev_channels, n_classes, kernel_size=1, bias=last_bias)
 
     def forward(self, x):
         blocks = []
