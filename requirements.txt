@@ -9,3 +9,5 @@ omegaconf
 h5py
 pandas
 prefetch_generator
+scikit-image
+seaborn
