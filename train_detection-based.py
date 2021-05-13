@@ -403,6 +403,7 @@ def validate(model, dataloader, device, cfg, epoch):
             localizations = [[bb[1] + ((bb[3]-bb[1])/2), bb[0] + ((bb[2]-bb[0])/2)] for bb in full_image_final_det_bbs_thr]
 
             localizations = pd.DataFrame(localizations, columns=['Y', 'X'])
+            localizations['score'] = full_image_final_det_scores_thr
 
             tolerance = 1.25 * (cfg.dataset.validation.params.gt_params.side / 2)  # min distance to match points
             groundtruth_and_predictions = points.match(groundtruth, localizations, tolerance)
