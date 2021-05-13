@@ -13,6 +13,6 @@ segmentation_based_unet:
         patch_size: 640
       
   optim:
-    batch_size: 2
-    batch_accumulation: 4
+    batch_size: 1
+    batch_accumulation: 8
 
