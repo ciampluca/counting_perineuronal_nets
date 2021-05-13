@@ -5,7 +5,6 @@ import numpy as np
 from tqdm import tqdm
 import itertools
 import pandas as pd
-import os
 
 import torch
 import torchvision
@@ -204,7 +203,7 @@ def process_per_patch(dataloader, process_fn, cfg, threshold):
 
 
 @torch.no_grad()
-def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
+def predict(model, dataloader, min_thr, device, cfg, outdir, debug=False):
     """ Make predictions on data. """
     model.eval()
 
@@ -214,10 +213,10 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
 
         return model(inputs)
 
-    ids = []
-    results = []
+    all_metrics = []
     all_gt_and_preds = []
-    for image_id, image, bbs, scores in process_per_patch(dataloader, process_fn, cfg, thr):
+    thrs = np.linspace(0, 1, 201).tolist() + [2]
+    for image_id, image, bbs, scores in process_per_patch(dataloader, process_fn, cfg, min_thr):
         image_hw = image.shape
         image = (255 * image).astype(np.uint8)
 
@@ -228,58 +227,60 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
             outdir.mkdir(parents=True, exist_ok=True)
             io.imsave(outdir / image_id, image)
 
-        localizations = [[bb[1] + ((bb[3]-bb[1])/2), bb[0] + ((bb[2]-bb[0])/2)] for bb in bbs]
-        localizations = pd.DataFrame(localizations, columns=['Y', 'X'])
+        localizations = (bbs[:, :2] + bbs[:, 2:]) / 2
+        localizations = pd.DataFrame(localizations, columns=['X', 'Y'])
         localizations['score'] = scores
 
-        # match groundtruths and predictions
-        tolerance = 1.25 * (cfg.dataset.validation.params.gt_params.side / 2)  # min distance to match points
-        groundtruth_and_predictions = points.match(groundtruth, localizations, tolerance)
+        image_metrics = []
+        image_gt_and_preds = []
+        thr_progress = tqdm(thrs, leave=False)
+        for thr in thr_progress:
+            thr_progress.set_description(f'thr={thr:.2f}')
+            thresholded_localizations = localizations[localizations.score >= thr].reset_index()
 
-        # filter by agreement
-        # selector = groundtruth_and_predictions.agreement.between(4, 7)  # select by agreement
-        # selector = selector | groundtruth_and_predictions.agreement.isna()  # always keep false positives
-        # groundtruth_and_predictions = groundtruth_and_predictions[selector]
+            # match groundtruths and predictions
+            tolerance = 1.25 * (cfg.dataset.validation.params.gt_params.side / 2)  # min distance to match points
+            groundtruth_and_predictions = points.match(groundtruth, thresholded_localizations, tolerance)
 
-        groundtruth_and_predictions['imgName'] = groundtruth_and_predictions.imgName.fillna(image_id)
-        all_gt_and_preds.append(groundtruth_and_predictions)
+            groundtruth_and_predictions['imgName'] = groundtruth_and_predictions.imgName.fillna(image_id)
+            groundtruth_and_predictions['thr'] = thr
+            image_gt_and_preds.append(groundtruth_and_predictions)
 
-        # compute metrics
-        metrics = points.compute_metrics(groundtruth_and_predictions, image_hw=image_hw)
-        metrics['thr'] = thr
+            # compute metrics
+            metrics = points.compute_metrics(groundtruth_and_predictions, image_hw=image_hw)
+            metrics['imgName'] = image_id
+            metrics['thr'] = thr
+            image_metrics.append(metrics)
 
-        ids.append(image_id)
-        results.append(metrics)
+        all_metrics.extend(image_metrics)
+        all_gt_and_preds.extend(image_gt_and_preds)
 
         if outdir and debug:
             outdir.mkdir(parents=True, exist_ok=True)
             image = np.stack((image, image, image), axis=-1)
             bb_half_side = 10
 
+            # pick a threshold and draw that prediction set
+            best_thr = pd.DataFrame(image_metrics).set_index('thr')['count/game-3'].idxmin()
+            gp = pd.DataFrame(image_gt_and_preds)
+            gp = gp[gp.thr == best_thr]
+
             # iterate gt and predictions
-            for c_gt, r_gt, c_p, r_p, score, agreement in groundtruth_and_predictions[['X', 'Y', 'Xp', 'Yp', 'score', 'agreement']].values:
+            for c_gt, r_gt, c_p, r_p, score, agreement in gp[['X', 'Y', 'Xp', 'Yp', 'score', 'agreement']].values:
                 has_gt = not np.isnan(r_gt)
                 has_p = not np.isnan(r_p)
 
                 if has_gt:  # draw groundtruth
-                    r_gt, c_gt = int(r_gt), int(c_gt)
-                    rr, cc = draw.rectangle_perimeter(
-                        start=(r_gt-bb_half_side, c_gt-bb_half_side),
-                        end=(r_gt+bb_half_side, c_gt+bb_half_side)
-                    )
-                    rr = np.clip(rr, 0, image_hw[0]-1)
-                    cc = np.clip(cc, 0, image_hw[1]-1)
+                    rs, cs = int(r_gt - bb_half_side), int(c_gt - bb_half_side)
+                    re, ce = int(r_gt + bb_half_side), int(c_gt + bb_half_side)
+                    rr, cc = draw.rectangle_perimeter(start=(rs, cs), end=(re, ce), shape=image.shape)
                     color = GREEN if has_p else CYAN
                     image[rr, cc] = color
 
                 if has_p:  # draw prediction
-                    r_p, c_p = int(r_p), int(c_p)
-                    rr, cc = draw.rectangle_perimeter(
-                        start=(r_p-bb_half_side, c_p-bb_half_side),
-                        end=(r_p+bb_half_side, c_p+bb_half_side)
-                    )
-                    rr = np.clip(rr, 0, image_hw[0]-1)
-                    cc = np.clip(cc, 0, image_hw[1]-1)
+                    rs, cs = int(r_p - bb_half_side), int(c_p - bb_half_side)
+                    re, ce = int(r_p + bb_half_side), int(c_p + bb_half_side)
+                    rr, cc = draw.rectangle_perimeter(start=(rs, cs), end=(re, ce), shape=image.shape)
                     color = RED if has_gt else MAGENTA
                     image[rr, cc] = color
 
@@ -289,34 +290,13 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
 
             io.imsave(outdir / f'annot_{image_id}', image)
 
-    results = pd.DataFrame(results, index=ids)
-    print(results)
-    print()
-    print(results.describe().loc[['mean', 'std']].transpose())
-
+    all_metrics = pd.DataFrame(all_metrics)
     all_gp = pd.concat(all_gt_and_preds, ignore_index=True)
-
-    inA = ~all_gp.X.isna()
-    inB = ~all_gp.Xp.isna()
-    all_gp['tp'] = inA & inB
-    all_gp['fp'] = ~inA & inB
-    all_gp['fn'] = inA & ~inB
-    all_gp['agreement'] = all_gp.agreement.map('{:g}'.format).replace('nan', 'none')
-    by_agree = all_gp.pivot_table(index='agreement', values=['tp', 'fp', 'fn'], aggfunc='sum')
-    by_agree['support'] = by_agree.sum(axis=1)
-    by_agree['micro-tpr'] = by_agree.tp / (by_agree.tp + by_agree.fn)
-    by_agree['fdr'] = by_agree.fp / (by_agree.fp + by_agree.tp.sum())
-
-    # eye-candy
-    table = by_agree.fillna(0).replace(0, '-')
-    with pd.option_context('display.float_format', '{:.1%}'.format):
-        print(table)
 
     if outdir:
         outdir.mkdir(parents=True, exist_ok=True)
-        results.to_csv(outdir / 'results.csv')
         all_gp.to_csv(outdir / 'all_gt_preds.csv')
-        table.to_latex(outdir / 'metrics_by_agreement.tex')
+        all_metrics.to_csv(outdir / 'all_metrics.csv')
 
 
 def main(args):
@@ -354,10 +334,11 @@ def main(args):
     model.load_state_dict(checkpoint['model'])
     validation_metrics = checkpoint['metrics']
 
-    thr = validation_metrics[f'{args.best_on_metric}_thr'] if args.custom_thr is False else args.custom_thr
-    print(f"Setting threshold: {thr}")
+    validation_thr = validation_metrics[f'{args.best_on_metric}_thr']
+    minimum_thr = args.minimum_thr
+    print(f"Setting minimum threshold: {minimum_thr}")
     outdir = (run_path / f'test_predictions') if args.save else None
-    predict(model, test_loader, thr, device, cfg, outdir, debug=args.debug)
+    predict(model, test_loader, minimum_thr, device, cfg, outdir, debug=args.debug)
 
 
 if __name__ == "__main__":
@@ -366,8 +347,8 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--device', default='cuda', help='device to use for prediction')
     parser.add_argument('--no-save', action='store_false', dest='save', help='draw images with predictions')
     parser.add_argument('--debug', action='store_true', default=False, help='draw images with predictions')
-    parser.add_argument('--best-on-metric', default='count/game-5_best', help='select snapshot that optimizes this metric')
-    parser.add_argument('--custom-thr', default=False, type=float, help='custom threshold for bbs filtering')
+    parser.add_argument('--best-on-metric', default='count/game-3_best', help='select snapshot that optimizes this metric')
+    parser.add_argument('--minimum-thr', default=0.05, type=float, help='minimum threshold for bbs filtering')
     parser.add_argument('--data-root', default='data/perineuronal_nets_test', help='root of the test subset')
     parser.set_defaults(save=True)
 

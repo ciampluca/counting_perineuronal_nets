@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
-import os
 import argparse
 
-import collections
 import itertools
 from prefetch_generator import BackgroundGenerator
 from pathlib import Path
 from skimage import measure, io, draw
-from tqdm import tqdm, trange
+from tqdm import tqdm
 
 import numpy as np
 import pandas as pd
@@ -80,11 +78,9 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
         logits = model(inputs.to(device))
         return torch.sigmoid(logits).cpu().squeeze(axis=1)
 
-    ids = []
-    results = []
+    all_metrics = []
     all_gt_and_preds = []
-    # thr_metrics = []
-    # thrs = np.linspace(0, 1, 21).tolist() + [2]
+    thrs = np.linspace(0, 1, 201).tolist() + [2]
     for image_id, image, segmentation_map in process_per_patch(dataloader, process_fn):
         image_hw = image.shape
         image = (255 * image).astype(np.uint8)
@@ -92,50 +88,65 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
         groundtruth = dataloader.dataset.annot.loc[image_id]
         groundtruth['agreement'] = groundtruth.loc[:, 'AV':'VT'].sum(axis=1)
 
-        # for t in tqdm(thrs):
-        hard_segmentation_map = segmentation_map >= thr
+        image_metrics = []
+        image_gt_and_preds = []
+        thr_progress = tqdm(thrs, leave=False)
+        for thr in thr_progress:
+            thr_progress.set_description(f'thr={thr:.2f}')
+            hard_segmentation_map = segmentation_map >= thr
 
-        if outdir and debug:  # debug
-            outdir.mkdir(parents=True, exist_ok=True)
-            io.imsave(outdir / image_id, image)
-            io.imsave(outdir / f'segm_{image_id}', (255 * segmentation_map).astype(np.uint8))
-            io.imsave(outdir / f'hard_segm_{image_id}', 255 * hard_segmentation_map.astype(np.uint8))
-            # skimage.measure.find_contours.find_contours(array, level, fully_connected='low', positive_orientation='low')
+            if outdir and debug:  # debug
+                outdir.mkdir(parents=True, exist_ok=True)
+                io.imsave(outdir / image_id, image)
+                io.imsave(outdir / f'segm_{image_id}', (255 * segmentation_map).astype(np.uint8))
+                io.imsave(outdir / f'hard_segm_{image_id}', 255 * hard_segmentation_map.astype(np.uint8))
+                # skimage.measure.find_contours.find_contours(array, level, fully_connected='low', positive_orientation='low')
 
-        # find connected components and centroids
-        labeled_map, num_components = measure.label(hard_segmentation_map, return_num=True, connectivity=1)
-        localizations = measure.regionprops_table(labeled_map, properties=('centroid',))
-        localizations = pd.DataFrame(localizations).rename({'centroid-0':'Y', 'centroid-1':'X'}, axis=1)
-        localizations['score'] = 1.
+            # find connected components and centroids
+            labeled_map, num_components = measure.label(hard_segmentation_map, return_num=True, connectivity=1)
+            localizations = measure.regionprops_table(labeled_map, properties=('centroid', 'bbox'))
+            localizations = pd.DataFrame(localizations).rename({
+                'centroid-0':'Y',
+                'centroid-1':'X',
+                'bbox-0':'y0',
+                'bbox-1':'x0',
+                'bbox-2':'y1',
+                'bbox-3':'x1',
+            }, axis=1)
 
-        # match groundtruths and predictions
-        tolerance = 1.25 * cfg.dataset.validation.params.gt_params.radius  # min distance to match points
-        groundtruth_and_predictions = points.match(groundtruth, localizations, tolerance)
-        groundtruth_and_predictions['imgName'] = groundtruth_and_predictions.imgName.fillna(image_id)
-        all_gt_and_preds.append(groundtruth_and_predictions)
+            bboxes = localizations[['y0', 'x0', 'y1', 'x1']].values
+            localizations['score'] = [segmentation_map[y0:y1,x0:x1].max() for y0, x0, y1, x1 in bboxes]
+            localizations = localizations.drop(columns=['y0', 'x0', 'y1', 'x1'])
 
-        # filter by agreement
-        # selector = groundtruth_and_predictions.agreement.between(4, 7)  # select by agreement
-        # selector = selector | groundtruth_and_predictions.agreement.isna()  # always keep false positives
-        # groundtruth_and_predictions = groundtruth_and_predictions[selector]
+            # match groundtruths and predictions
+            tolerance = 1.25 * cfg.dataset.validation.params.gt_params.radius  # min distance to match points
+            groundtruth_and_predictions = points.match(groundtruth, localizations, tolerance)
+            groundtruth_and_predictions['imgName'] = groundtruth_and_predictions.imgName.fillna(image_id)
+            groundtruth_and_predictions['thr'] = thr
+            image_gt_and_preds.append(groundtruth_and_predictions)
 
-        # compute metrics
-        metrics = points.compute_metrics(groundtruth_and_predictions, image_hw=image_hw)
-        metrics['thr'] = thr
+            # compute metrics
+            metrics = points.compute_metrics(groundtruth_and_predictions, image_hw=image_hw)
+            metrics['thr'] = thr
+            metrics['imgName'] = image_id
         
-        # thr_metrics.append(metrics)
-        # thr_metrics = pd.DataFrame(thr_metrics)
-
-        ids.append(image_id)
-        results.append(metrics)
-
+            image_metrics.append(metrics)
+        
+        all_metrics.extend(image_metrics)
+        all_gt_and_preds.extend(image_gt_and_preds)
+        
         if outdir and debug:
             outdir.mkdir(parents=True, exist_ok=True)
             image = np.stack((image, image, image), axis=-1)
             radius = 10
 
+            # pick a threshold and draw that prediction set
+            best_thr = pd.DataFrame(image_metrics).set_index('thr')['count/game-3'].idxmin()
+            gp = pd.DataFrame(image_gt_and_preds)
+            gp = gp[gp.thr == best_thr]
+
             # iterate gt and predictions
-            for c_gt, r_gt, c_p, r_p in groundtruth_and_predictions[['X', 'Y', 'Xp', 'Yp']].values:
+            for c_gt, r_gt, c_p, r_p in gp[['X', 'Y', 'Xp', 'Yp']].values:
                 has_gt = not np.isnan(r_gt)
                 has_p = not np.isnan(r_p)
                 
@@ -157,36 +168,13 @@ def predict(model, dataloader, thr, device, cfg, outdir, debug=False):
 
             io.imsave(outdir / f'annot_{image_id}', image)
 
-    results = pd.DataFrame(results, index=ids)
-    print(results)
-    print()
-    print(results.describe().loc[['mean', 'std']].transpose())
-
+    all_metrics = pd.DataFrame(all_metrics)
     all_gp = pd.concat(all_gt_and_preds, ignore_index=True)
 
-    inA = ~all_gp.X.isna()
-    inB = ~all_gp.Xp.isna()
-    all_gp['tp'] = inA & inB
-    all_gp['fp'] = ~inA & inB
-    all_gp['fn'] = inA & ~inB
-    all_gp['agreement'] = all_gp.agreement.map('{:g}'.format).replace('nan', 'none')
-    by_agree = all_gp.pivot_table(index='agreement', values=['tp','fp','fn'], aggfunc='sum')
-    by_agree['support'] = by_agree.sum(axis=1)
-    by_agree['micro-tpr'] = by_agree.tp / (by_agree.tp + by_agree.fn)
-    by_agree['fdr'] = by_agree.fp / (by_agree.fp + by_agree.tp.sum())
-
-    # eye-candy
-    table = by_agree.fillna(0).replace(0,'-')
-    with pd.option_context('display.float_format', '{:.1%}'.format):
-        print(table)
-    
     if outdir:
         outdir.mkdir(parents=True, exist_ok=True)
-        results.to_csv(outdir / 'results.csv')
         all_gp.to_csv(outdir / 'all_gt_preds.csv')
-        table.to_latex(outdir / 'metrics_by_agreement.tex')
-    
-    import pdb; pdb.set_trace()
+        all_metrics.to_csv(outdir / 'all_metrics.csv')
 
             
 def main(args):
@@ -233,7 +221,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Predict')
     parser.add_argument('run', help='Path to run dir')
     parser.add_argument('-d', '--device', default='cuda', help='device to use for prediction')
-    parser.add_argument('--best-on-metric', default='count/game-5_best', help='select snapshot that optimizes this metric')
+    parser.add_argument('--best-on-metric', default='count/game-3_best', help='select snapshot that optimizes this metric')
     parser.add_argument('--no-save', action='store_false', dest='save', help='draw images with predictions')
     parser.add_argument('--debug', action='store_true', default=False, help='draw images with predictions')
     parser.set_defaults(save=True)
