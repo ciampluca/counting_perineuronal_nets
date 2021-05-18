@@ -9,7 +9,6 @@ import cv2
 from math import floor
 
 from torch.utils.data import Dataset, ConcatDataset
-from torchvision.transforms.functional import to_pil_image
 
 
 class PerineuralNetsDMapDataset(ConcatDataset):
@@ -261,6 +260,7 @@ if __name__ == "__main__":
     from torchvision.transforms import ToTensor, RandomHorizontalFlip, Compose
     from utils.misc import normalize
     from PIL import Image
+    from torchvision.transforms.functional import to_pil_image
 
     data_root = '/home/luca/luca-cnr/mnt/datino/perineural_nets'
     device = "cpu"
@@ -270,7 +270,7 @@ if __name__ == "__main__":
     #     dataset = PerineuralNetsDMapDataset(data_root, split=split)
     #     print(split, len(dataset))
 
-    dataset = PerineuralNetsDMapDataset(data_root, split='all', patch_size=640, overlap=120, random_offset=320, with_targets=True, transforms=Compose([ToTensor(), RandomHorizontalFlip()]), max_cache_mem=8*1024**3)  # bytes = 8 GiB
+    dataset = PerineuralNetsDMapDataset(data_root, split='train-specular', patch_size=640, overlap=120, with_targets=True, transforms=Compose([ToTensor(), RandomHorizontalFlip()]), max_cache_mem=8*1024**3)  # bytes = 8 GiB
     dataloader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=0)
 
     progress = tqdm(dataloader, desc='TRAIN', leave=False)

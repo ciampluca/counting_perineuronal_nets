@@ -1,2 +1,6 @@
 defaults:
   - technique: detection_based_fasterrcnn
+
+hydra:
+  run:
+    dir: outputs/${hydra.job.override_dirname}

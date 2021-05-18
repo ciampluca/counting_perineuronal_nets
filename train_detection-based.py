@@ -12,6 +12,7 @@ from tqdm import tqdm, trange
 import itertools
 from PIL import ImageDraw, ImageFont
 from functools import partial
+import random
 
 import torch
 import torchvision
@@ -28,7 +29,7 @@ import hydra
 from prefetch_generator import BackgroundGenerator
 
 from datasets.det_transforms import Compose, RandomHorizontalFlip, ToTensor
-from datasets.perineural_nets_det_dataset import PerineuralNetsDetDataset
+from datasets.PerineuralNetsDetDataset import PerineuralNetsDetDataset
 from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet101_fpn
 from utils.misc import reduce_dict
 from utils import points
@@ -291,7 +292,11 @@ def validate(model, dataloader, device, cfg, epoch):
     # group by image_id (and image_hw for convenience) --> iterate over full images
     grouper = lambda x: (x[0], x[1].tolist())  # group by (image_id, image_hw)
     groups = itertools.groupby(processed_samples, key=grouper)
-    progress = tqdm(groups, total=len(dataloader.dataset.datasets), desc='EVAL', leave=False)
+    if isinstance(dataloader.dataset, torch.utils.data.ConcatDataset):
+        num_imgs = len(dataloader.dataset.datasets)
+    else:
+        num_imgs = len(dataloader.dataset)
+    progress = tqdm(groups, total=num_imgs, desc='EVAL', leave=False)
     for (image_id, image_hw), image_patches in progress:
         full_image = torch.empty(image_hw, dtype=torch.float32, device=validation_device)
         normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
@@ -469,6 +474,26 @@ def validate(model, dataloader, device, cfg, epoch):
     return metrics
 
 
+def compute_dataset_splits(cfg):
+    img_names = [img_name for img_name in os.listdir(cfg.dataset.train.params.root) if img_name.endswith("cell.png")]
+    num_train_sample = cfg.dataset.train.params.num_sample
+    num_val_sample = cfg.dataset.validation.params.num_sample
+    # the dataset contains 200 images; 100 should be for test
+    if num_train_sample + num_val_sample > 100:
+        log.error(f"Splits train+val can contain a maximum of 100 images")
+    indexes = list(range(0, len(img_names)))
+    random.shuffle(indexes)
+    train_indexes = indexes[0:num_train_sample]
+    train_img_names = [img_names[i] for i in train_indexes]
+    val_indexes = indexes[num_train_sample:num_train_sample+num_val_sample]
+    val_img_names = [img_names[i] for i in val_indexes]
+    test_img_names = list(set(img_names) - set(train_img_names + val_img_names))
+    df = pd.DataFrame({"name": test_img_names})  # saving indexes for testing
+    df.to_csv('test_img_names.csv')
+
+    return train_img_names, val_img_names
+
+
 @hydra.main(config_path="conf/detection_based", config_name="config")
 def main(hydra_cfg: DictConfig) -> None:
     log.info(f"Run path: {Path.cwd()}")
@@ -476,12 +501,6 @@ def main(hydra_cfg: DictConfig) -> None:
     cfg = copy.deepcopy(hydra_cfg.technique)
     for _, v in hydra_cfg.items():
         update_dict(cfg, v)
-
-    experiment_name = f"{cfg.model.name}_{cfg.model.backbone}_coco_pretrained-{cfg.model.coco_model_pretrained}_" \
-                      f"{cfg.dataset.train.name}_split-{cfg.dataset.train.params.split}_" \
-                      f"input_size-{cfg.dataset.train.params.patch_size}_nms-{cfg.model.params.nms}_" \
-                      f"overlap-{cfg.dataset.validation.params.overlap}_" \
-                      f"batch_size-{cfg.train.batch_size}"
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(cfg.gpu)
     device = torch.device(f'cuda' if cfg.gpu is not None else 'cpu')
@@ -500,16 +519,20 @@ def main(hydra_cfg: DictConfig) -> None:
     torch.set_default_dtype(torch.float32)
 
     # create tensorboard writer
-    writer = SummaryWriter(comment="_" + experiment_name)
+    writer = SummaryWriter()
 
     # Creating training dataset and dataloader
-    log.info(f"Loading training data")
+    log.info(f"Loading training data of dataset {cfg.dataset.train.name}")
     params = cfg.dataset.train.params
     log.info("Train input size: {0}x{0}".format(params.patch_size))
+    if cfg.dataset.train.name == "VGGCellsDataset":
+        train_img_names, val_img_names = compute_dataset_splits(cfg)
     train_transform = Compose([RandomHorizontalFlip(), ToTensor()])
-    train_dataset = PerineuralNetsDetDataset(
+    train_dataset = hydra.utils.get_class(f"datasets.{cfg.dataset.train.name}.{cfg.dataset.train.name}")
+    train_dataset = train_dataset(
         transforms=train_transform,
-        **params,
+        image_names=train_img_names,
+        **params
     )
     train_loader = DataLoader(
         train_dataset,
@@ -526,8 +549,10 @@ def main(hydra_cfg: DictConfig) -> None:
     log.info("Validation input size: {0}x{0}".format(params.patch_size))
     valid_batch_size = cfg.train.val_batch_size if cfg.train.val_batch_size else cfg.train.batch_size
     valid_transform = ToTensor()
-    valid_dataset = PerineuralNetsDetDataset(
+    valid_dataset = hydra.utils.get_class(f"datasets.{cfg.dataset.validation.name}.{cfg.dataset.validation.name}")
+    valid_dataset = valid_dataset(
         transforms=valid_transform,
+        image_names=val_img_names,
         **params,
     )
     valid_loader = DataLoader(

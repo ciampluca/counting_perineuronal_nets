@@ -22,7 +22,7 @@ class PerineuralNetsDetDataset(ConcatDataset):
     }
 
     def __init__(self, root='data/perineuronal_nets', split='all', with_targets=True, patch_size=640, overlap=None,
-                 random_offset=None, gt_params={}, transforms=None, max_cache_mem=None):
+                 random_offset=None, gt_params={}, transforms=None, max_cache_mem=None, **kwargs):
 
         self.root = Path(root)
         self.transforms = transforms

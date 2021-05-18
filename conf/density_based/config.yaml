@@ -1,2 +1,6 @@
 defaults:
   - technique: density_based_csrnet
+
+hydra:
+  run:
+    dir: outputs/${hydra.job.override_dirname}

@@ -19,7 +19,7 @@ from omegaconf import OmegaConf
 
 from prefetch_generator import BackgroundGenerator
 
-from datasets.perineural_nets_det_dataset import PerineuralNetsDetDataset
+from datasets.PerineuralNetsDetDataset import PerineuralNetsDetDataset
 from datasets.det_transforms import ToTensor
 from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet101_fpn
 from utils import points
