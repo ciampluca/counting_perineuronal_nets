@@ -5,6 +5,7 @@ import numpy as np
 import scipy.stats
 from skimage.color import rgb2gray
 from copy import deepcopy
+import pandas as pd
 
 import torch
 from torch.utils.data import Dataset
@@ -37,6 +38,9 @@ class VGGCellsDataset(Dataset):
         # groundtruth parameters
         self.gt_params = deepcopy(self.DEFAULT_GT_PARAMS)
         self.gt_params.update(gt_params)
+
+        # create pandas dataframe containing dot annotations (to be compliant with other implementation)
+        self.annot = self._create_pd_dot_annot()
 
         if in_memory:
             print("Loading dataset in memory!")
@@ -174,6 +178,20 @@ class VGGCellsDataset(Dataset):
             targets.append(target)
 
         return imgs, targets
+
+    def _create_pd_dot_annot(self):
+        index, x, y = [], [], []
+        for img_n in self.image_names:
+            label = imread(os.path.join(self.root, img_n.replace("cell", "dots")))
+            label = label[:, :, 0] / 255
+            x.extend(np.nonzero(label)[1])
+            y.extend(np.nonzero(label)[0])
+            index.extend([img_n] * np.count_nonzero(label))
+
+        anns = {'X': x, 'Y': y}
+        df_annot = pd.DataFrame(anns, columns=['X', 'Y'], index=index)
+
+        return df_annot
 
 
 # Debug code
