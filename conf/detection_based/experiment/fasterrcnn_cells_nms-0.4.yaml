@@ -9,7 +9,7 @@ detection_based_fasterrcnn:
       train:
           name: "VGGCellsDataset"
           params:
-              root: "/home/luca/luca-cnr/mnt/datino/VGG_cells"
+              root: "/home/modro/datino/VGG_cells"
               patch_size: 256
               num_sample: 64
               gt_params:
@@ -20,20 +20,32 @@ detection_based_fasterrcnn:
       validation:
           name: "VGGCellsDataset"
           params:
-              root: "/home/luca/luca-cnr/mnt/datino/VGG_cells"
+              root: "/home/modro/datino/VGG_cells"
               patch_size: 256
               num_sample: 36
               gt_params:
                   side: 12       # side (in px) of the bounding box localizing a cell
                   ann_type: "det"
 
+
+  optimizer:
+      scheduler:
+          params:
+              milestones: [100, 150]
+
+
   model:
     params:
       max_dets_per_image: 300
-      nms: 0.6
+      nms: 0.4
       det_thresh: 0.05
+
 
   train:
     batch_size: 8
     val_batch_size: 8
     batch_accumulation: 1
+    epochs: 150
+    log_every: 2
+    font_size: 10
+    text_pos: 15

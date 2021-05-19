@@ -69,6 +69,8 @@ train:
     debug_freq: 2
     batch_accumulation: 1
     val_device: cpu
+    font_size: 100  # for writing over val images
+    text_pos: 75
 
 
 seed: 10

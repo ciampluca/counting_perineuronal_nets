@@ -164,7 +164,7 @@ def dice_jaccard(y_true, y_pred, y_pred_scores, shape, smooth=1, thr=None):
     return dice.mean(), jaccard.mean()
 
 
-def save_img_with_bbs(img, img_id, det_bbs, gt_bbs):
+def save_img_with_bbs(img, img_id, det_bbs, gt_bbs, cfg):
 
     def _is_empty(l):
         return all(_is_empty(i) if isinstance(i, list) else False for i in l)
@@ -185,8 +185,10 @@ def save_img_with_bbs(img, img_id, det_bbs, gt_bbs):
     # Add text to image
     text = f"Det Num of Nets: {img_det_num}, GT Num of Nets: {img_gt_num}"
     font_path = os.path.join(hydra.utils.get_original_cwd(), "./font/LEMONMILK-RegularItalic.otf")
-    font = ImageFont.truetype(font_path, 100)
-    draw.text((75, 75), text=text, font=font, fill=(0, 191, 255))
+    font_size = cfg.train.font_size
+    text_pos = cfg.train.text_pos
+    font = ImageFont.truetype(font_path, font_size)
+    draw.text((text_pos, text_pos), text=text, font=font, fill=(0, 191, 255))
     pil_image.save(os.path.join(debug_dir, img_id))
 
 
@@ -386,7 +388,7 @@ def validate(model, dataloader, device, cfg, epoch):
             [[center[0] - half_bb_side, center[1] - half_bb_side, center[0] + half_bb_side, center[1] + half_bb_side]
              for center in full_image_target_points]
         if cfg.train.debug and epoch % cfg.train.debug == 0:
-            save_img_with_bbs(full_image, image_id, full_image_final_det_bbs, full_image_target_bbs)
+            save_img_with_bbs(full_image, image_id, full_image_final_det_bbs, full_image_target_bbs, cfg)
         for thr in progress_thrs:
             full_image_final_det_bbs_thr = [bb for bb, score in
                                             zip(full_image_final_det_bbs, full_image_final_det_scores) if
