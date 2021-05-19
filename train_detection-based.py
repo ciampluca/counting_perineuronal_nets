@@ -183,7 +183,7 @@ def save_img_with_bbs(img, img_id, det_bbs, gt_bbs, cfg):
             draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='green', width=3)
         img_det_num = len(det_bbs)
     # Add text to image
-    text = f"Det Num of Nets: {img_det_num}, GT Num of Nets: {img_gt_num}"
+    text = f"Det Num of Cells: {img_det_num}, GT Num of Cells: {img_gt_num}"
     font_path = os.path.join(hydra.utils.get_original_cwd(), "./font/LEMONMILK-RegularItalic.otf")
     font_size = cfg.train.font_size
     text_pos = cfg.train.text_pos

@@ -47,5 +47,6 @@ detection_based_fasterrcnn:
     batch_accumulation: 1
     epochs: 150
     log_every: 2
-    font_size: 10
+    font_size: 8
     text_pos: 15
+    bb_outline_width: 1
