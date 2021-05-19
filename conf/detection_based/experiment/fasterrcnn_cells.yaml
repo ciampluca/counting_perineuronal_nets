@@ -34,6 +34,6 @@ detection_based_fasterrcnn:
       det_thresh: 0.05
 
   train:
-    batch_size: 24
-    val_batch_size: 24
+    batch_size: 8
+    val_batch_size: 8
     batch_accumulation: 1

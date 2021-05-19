@@ -72,4 +72,4 @@ train:
 
 
 seed: 10
-gpu : null     # index of the gpu you want to use, null for cpu
+gpu : 0     # index of the gpu you want to use, null for cpu

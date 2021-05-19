@@ -29,7 +29,6 @@ import hydra
 from prefetch_generator import BackgroundGenerator
 
 from datasets.det_transforms import Compose, RandomHorizontalFlip, ToTensor
-from datasets.PerineuralNetsDetDataset import PerineuralNetsDetDataset
 from models.faster_rcnn import fasterrcnn_resnet50_fpn, fasterrcnn_resnet101_fpn
 from utils.misc import reduce_dict
 from utils import points
