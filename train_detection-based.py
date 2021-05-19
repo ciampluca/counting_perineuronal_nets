@@ -176,11 +176,11 @@ def save_img_with_bbs(img, img_id, det_bbs, gt_bbs, cfg):
     draw = ImageDraw.Draw(pil_image)
     if not _is_empty(gt_bbs):
         for bb in gt_bbs:
-            draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='red', width=3)
+            draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='red', width=cfg.train.bb_outline_width)
         img_gt_num = len(gt_bbs)
     if not _is_empty(det_bbs):
         for bb in det_bbs:
-            draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='green', width=3)
+            draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='green', width=cfg.train.bb_outline_width)
         img_det_num = len(det_bbs)
     # Add text to image
     text = f"Det Num of Cells: {img_det_num}, GT Num of Cells: {img_gt_num}"
