@@ -4,7 +4,6 @@ defaults:
 
 
 detection_based_fasterrcnn:
-
   dataset:
       train:
           name: "VGGCellsDataset"
@@ -27,26 +26,25 @@ detection_based_fasterrcnn:
                   side: 12       # side (in px) of the bounding box localizing a cell
                   ann_type: "det"
 
-
-  optimizer:
-      scheduler:
-          params:
-              milestones: [100, 150]
-
-
   model:
     params:
       max_dets_per_image: 300
       nms: 0.8
       det_thresh: 0.05
 
+  optim:
+    lr_scheduler:
+      params:
+        milestones: [100, 150]
 
-  train:
     batch_size: 8
-    val_batch_size: 8
     batch_accumulation: 1
     epochs: 150
+
+    val_batch_size: 8
     log_every: 2
+  
+  misc:
     font_size: 8
     text_pos: 15
     bb_outline_width: 1

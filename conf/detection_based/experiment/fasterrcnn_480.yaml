@@ -13,7 +13,7 @@ detection_based_fasterrcnn:
         patch_size: 480
         overlap: 120
 
-  train:
+  optim:
     batch_size: 12
     val_batch_size: 12
     batch_accumulation: 4

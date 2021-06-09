@@ -11,10 +11,8 @@ density_based_csrnet:
     validation:
       params:
         patch_size: 256     # must be divisible by 32
-        overlap: 120
 
-  train:
-    border_pad: 160      # must be divisible by 32
+  optim:
     batch_size: 10
     val_batch_size: 10
     batch_accumulation: 4

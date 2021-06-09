@@ -39,13 +39,15 @@ model:
         n_classes: 1
         padding: True
         batch_norm: True
+        last_bias: False
 
-
-optimizer:
-    name: Adam
-    params:
-        lr: 0.00001
-    scheduler:
+optim:
+    optimizer:
+        name: Adam
+        params:
+            lr: 0.00001
+        
+    lr_scheduler:
         name: MultiStepLR
         params:
             milestones: [50, 75, 100]
@@ -54,24 +56,21 @@ optimizer:
         name:
             MSELoss
 
-
-train:
-    border_pad: 64      # must be divisible by 32
+    border_pad: 160      # must be divisible by 32
     batch_size: 8
-    val_batch_size: 8
-    num_workers: 4
+    batch_accumulation: 1
     epochs: 100
+
     val_freq: 1
+    val_batch_size: 8
+    val_device: cpu
+
+    num_workers: 4
+
     debug: true
     debug_freq: 2
     log_every: 20
-    batch_accumulation: 1
-    val_device: cpu
 
 
 seed: 10
-gpu : 0      # index of the gpu you want to use, null for cpu
-
-
-
-
+gpu : 0  # index of the gpu you want to use, null for cpu

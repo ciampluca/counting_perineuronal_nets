@@ -9,7 +9,6 @@ dataset:
             overlap: 0
             random_offset: null  # auto-determined as patch_size / 2
             max_cache_mem: 8_589_934_592  # 8GiB in bytes
-            # num_samples: null
             target: detection
             target_params:
                 side: 60       # side (in px) of the bounding box localizing a cell
@@ -25,7 +24,6 @@ dataset:
             overlap: 120
             random_offset: 0
             max_cache_mem: 8_589_934_592  # 8GiB in bytes
-            # num_samples: null
             target: detection
             target_params:
                 side: 60       # side (in px) of the bounding box localizing a cell
@@ -35,6 +33,7 @@ dataset:
 
 model:
     name: FasterRCNN
+    cache_folder: ./model_zoo
     pretrained: null     # path to pretrained weights, optimizer states will not restored
     resume: null    # path to last trained model, will restore optimizer states
     params:
@@ -48,34 +47,38 @@ model:
         cache_folder: ${hydra:runtime.cwd}/model_zoo
 
 
-optimizer:
-    name: SGD
-    params:
-        lr: 0.005
-        momentum: 0.9
-        weight_decay: 0.0005
-    scheduler:
+optim:
+    optimizer:
+        name: SGD
+        params:
+            lr: 0.005
+            momentum: 0.9
+            weight_decay: 0.0005
+
+    lr_scheduler:
         name: MultiStepLR
         params:
             milestones: [75, 100, 125]
             gamma: 0.1
 
-
-train:
     batch_size: 8
-    val_batch_size: 8
-    num_workers: 4
+    batch_accumulation: 1
     epochs: 125
+
     val_freq: 1
-    log_every: 20
+    val_batch_size: 8
+    val_device: cpu
+
+    num_workers: 4
+
     debug: true
     debug_freq: 2
-    batch_accumulation: 1
-    val_device: cpu
+    log_every: 20
+
+misc:
     font_size: 100  # for writing over val images
     text_pos: 75
     bb_outline_width: 3
 
-
 seed: 10
-gpu : 0     # index of the gpu you want to use, null for cpu
+gpu : 0  # index of the gpu you want to use, null for cpu
