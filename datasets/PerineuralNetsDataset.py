@@ -54,7 +54,7 @@ class PerineuralNetsDataset(ConcatDataset):
         annot_path = self.root / 'annotation' / 'annotations.csv'
         all_annot = pd.read_csv(annot_path, index_col=0)
 
-        image_files = sorted((self.root / 'fullFramesH5').glob('*.h5'))[:1]  ## REMOVE! FO DEBUG ONLY
+        image_files = sorted((self.root / 'fullFramesH5').glob('*.h5'))
         assert len(image_files) > 0, "No images found"
 
         if max_cache_mem:
