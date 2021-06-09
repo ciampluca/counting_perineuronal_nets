@@ -1,4 +1,9 @@
 import numpy as np
+from skimage.metrics import structural_similarity
+
+
+def ssim(*args, **kwargs):
+    return structural_similarity(*args, **kwargs)
 
 
 def game(gt_dmap, pred_dmap, L):

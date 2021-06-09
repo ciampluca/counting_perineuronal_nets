@@ -6,13 +6,11 @@ import logging
 
 from functools import partial
 from pathlib import Path
-from segmentation.utils import segm_map_to_points
-
-from prefetch_generator import BackgroundGenerator
-from tqdm import tqdm, trange
 
 import numpy as np
 import pandas as pd
+from prefetch_generator import BackgroundGenerator
+from tqdm import tqdm, trange
 
 import torch
 import torch.nn.functional as F
@@ -26,7 +24,7 @@ import hydra
 from points.metrics import detection_and_counting
 from points.match import match
 from segmentation.metrics import dice_jaccard
-from segmentation.utils import segm_map_to_points
+from segmentation.utils import segmentation_map_to_points
 from utils import seed_everything, update_dict
 
 tqdm = partial(tqdm, dynamic_ncols=True)
@@ -177,7 +175,7 @@ def validate(model, dataloader, device, cfg, epoch):
         
             # counting metrics
             progress_thrs.set_description(f'thr={thr:.2f} (count)')
-            localizations = segm_map_to_points(full_segm_map.cpu().numpy(), thr=thr)
+            localizations = segmentation_map_to_points(full_segm_map.cpu().numpy(), thr=thr)
             groundtruth = dataloader.dataset.annot.loc[image_id]
 
             tolerance = 1.25 * cfg.dataset.validation.params.target_params.radius  # min distance to match points
@@ -263,9 +261,9 @@ def main(hydra_cfg: DictConfig) -> None:
     torch.hub.set_dir(model_cache_dir)
     best_models_folder = Path('best_models')
     best_models_folder.mkdir(parents=True, exist_ok=True)
-    
-    # No possible to set checkpoint and pre-trained model at the same time
-    assert not(cfg.model.resume and cfg.model.pretrained), "Only one between 'pretrained' and 'resume' can be specified."
+
+    # Cannot set checkpoint and pre-trained model at the same time
+    assert not (cfg.model.resume and cfg.model.pretrained), "Only one between 'pretrained' and 'resume' can be specified."
 
     # Reproducibility
     seed_everything(cfg.seed)
@@ -274,7 +272,7 @@ def main(hydra_cfg: DictConfig) -> None:
     # create tensorboard writer
     writer = SummaryWriter()
 
-    # create train dataset and dataloader
+    # Creating training dataset and dataloader
     log.info(f"Loading training data of dataset {cfg.dataset.train.name}")
 
     train_dataset_params = cfg.dataset.train.params
@@ -289,14 +287,14 @@ def main(hydra_cfg: DictConfig) -> None:
         train_dataset,
         batch_size=cfg.optim.batch_size,
         shuffle=True,
-        num_workers=cfg.optim.num_workers
+        num_workers=cfg.optim.num_workers,
     )
     log.info(f"Found {len(train_dataset)} samples in training dataset")
 
     # create validation dataset and dataloader
     log.info(f"Loading validation data")
-
     log.info("Validation input size: {0}x{0}".format(valid_dataset_params.patch_size))
+
     valid_batch_size = cfg.optim.val_batch_size if cfg.optim.val_batch_size else cfg.optim.batch_size
     valid_transform = ToTensor()
     valid_dataset = hydra.utils.get_class(f"datasets.{cfg.dataset.validation.name}")
@@ -305,14 +303,15 @@ def main(hydra_cfg: DictConfig) -> None:
         valid_dataset,
         batch_size=valid_batch_size,
         shuffle=False,
-        num_workers=cfg.optim.num_workers
+        num_workers=cfg.optim.num_workers,
     )
     log.info(f"Found {len(valid_dataset)} samples in validation dataset")
 
-    # create model
+    # Creating model
     log.info(f"Creating model")
     model = hydra.utils.get_class(f"models.{cfg.model.name}")
-    model = model(**cfg.model.params)
+    skip_weights_loading = cfg.model.resume or cfg.model.pretrained
+    model = model(skip_weights_loading=skip_weights_loading, **cfg.model.params)
 
     # move model to device
     model.to(device)
@@ -360,7 +359,7 @@ def main(hydra_cfg: DictConfig) -> None:
         best_metrics_epoch = checkpoint['best_metrics_epoch']
         if 'best_thresholds' in checkpoint:
             best_thresholds = checkpoint['best_thresholds']
-        
+
         train_log = pd.read_csv(train_log_path)
         valid_log = pd.read_csv(valid_log_path)
 
@@ -370,7 +369,7 @@ def main(hydra_cfg: DictConfig) -> None:
     for epoch in progress:
         # train
         train_metrics = train_one_epoch(model, train_loader, optimizer, device, cfg, writer, epoch)
-        scheduler.step() # update lr scheduler
+        scheduler.step()  # update lr scheduler
 
         train_metrics['epoch'] = epoch
         train_log = train_log.append(train_metrics, ignore_index=True)
@@ -419,11 +418,8 @@ def main(hydra_cfg: DictConfig) -> None:
             valid_log = valid_log.append(valid_metrics, ignore_index=True)
             valid_log.to_csv(valid_log_path, index=False)
 
-
-
     log.info("Training ended. Exiting....")
 
 
 if __name__ == "__main__":
     main()
-

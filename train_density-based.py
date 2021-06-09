@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
+import os
 import copy
 import itertools
 import logging
-import os
 
 from functools import partial
 from pathlib import Path
@@ -11,20 +11,18 @@ import numpy as np
 import pandas as pd
 from PIL import ImageDraw, ImageFont, Image
 from prefetch_generator import BackgroundGenerator
-from skimage.metrics import structural_similarity as ssim
 from tqdm import tqdm, trange
 
 import torch
-from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
-from torchvision.transforms import ToTensor, RandomHorizontalFlip, Compose
+from torch.utils.tensorboard import SummaryWriter
+from torchvision.transforms import Compose, RandomHorizontalFlip, ToTensor
 import torchvision.transforms.functional as F
 
 from omegaconf import DictConfig
 import hydra
 
-from datasets.perineural_nets_dmap_dataset import PerineuralNetsDMapDataset
-from density.metrics import counting
+from density.metrics import counting, ssim
 from utils import seed_everything, update_dict
 
 tqdm = partial(tqdm, dynamic_ncols=True)
@@ -100,11 +98,11 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device, cfg, writer
         postfix = {metric: f'{value:.3f}' for metric, value in batch_metrics.items()}
         progress.set_postfix(postfix)
 
-        if (i + 1) % cfg.train.batch_accumulation == 0:
+        if (i + 1) % cfg.optim.batch_accumulation == 0:
             optimizer.step()
             optimizer.zero_grad()
 
-        if (i + 1) % cfg.train.log_every == 0:
+        if (i + 1) % cfg.optim.log_every == 0:
             batch_metrics.update({'lr': optimizer.param_groups[0]['lr']})
             n_iter = epoch * n_batches + i
             for metric, value in batch_metrics.items():
@@ -118,7 +116,7 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device, cfg, writer
 def validate(model, dataloader, criterion, device, cfg, epoch):
     """ Evaluate model on validation data. """
     model.eval()
-    validation_device = cfg.train.val_device
+    validation_device = cfg.optim.val_device
 
     @torch.no_grad()
     def _predict(batch):
@@ -129,7 +127,7 @@ def validate(model, dataloader, criterion, device, cfg, epoch):
         # Expanding images to 3 channels
         images = images.expand(-1, 3, -1, -1)
         # Padding image to mitigate problems when reconstructing
-        pad = cfg.train.border_pad
+        pad = cfg.optim.border_pad
         padded_images = F.pad(images, pad)
 
         # Computing predictions
@@ -200,7 +198,7 @@ def validate(model, dataloader, criterion, device, cfg, epoch):
             **count_metrics,
         })
 
-        if cfg.train.debug and epoch % cfg.train.debug == 0:
+        if cfg.optim.debug and epoch % cfg.optim.debug == 0:
             save_image_and_density_maps(full_image, image_id, full_pred_dmap, full_gt_dmap)
 
         # Cleaning
@@ -232,7 +230,7 @@ def main(hydra_cfg: DictConfig) -> None:
     best_models_folder = Path('best_models')
     best_models_folder.mkdir(parents=True, exist_ok=True)
 
-    # No possible to set checkpoint and pre-trained model at the same time
+    # Cannot set checkpoint and pre-trained model at the same time
     assert not (cfg.model.resume and cfg.model.pretrained), "Only one between 'pretrained' and 'resume' can be specified."
 
     # Reproducibility
@@ -244,6 +242,7 @@ def main(hydra_cfg: DictConfig) -> None:
 
     # Creating training dataset and dataloader
     log.info(f"Loading training data of dataset {cfg.dataset.train.name}")
+
     train_dataset_params = cfg.dataset.train.params
     valid_dataset_params = cfg.dataset.validation.params
     log.info("Train input size: {0}x{0}".format(train_dataset_params.patch_size))
@@ -254,9 +253,9 @@ def main(hydra_cfg: DictConfig) -> None:
     train_dataset = train_dataset(transforms=train_transform, **train_dataset_params)
     train_loader = DataLoader(
         train_dataset,
-        batch_size=cfg.train.batch_size,
+        batch_size=cfg.optim.batch_size,
         shuffle=True,
-        num_workers=cfg.train.num_workers,
+        num_workers=cfg.optim.num_workers,
     )
     log.info(f"Found {len(train_dataset)} samples in training dataset")
 
@@ -264,7 +263,7 @@ def main(hydra_cfg: DictConfig) -> None:
     log.info(f"Loading validation data")
     log.info("Validation input size: {0}x{0}".format(valid_dataset_params.patch_size))
 
-    valid_batch_size = cfg.train.val_batch_size if cfg.train.val_batch_size else cfg.train.batch_size
+    valid_batch_size = cfg.optim.val_batch_size if cfg.optim.val_batch_size else cfg.optim.batch_size
     valid_transform = ToTensor()
     valid_dataset = hydra.utils.get_class(f"datasets.{cfg.dataset.validation.name}")
     valid_dataset = valid_dataset(transforms=valid_transform, **valid_dataset_params)
@@ -272,7 +271,7 @@ def main(hydra_cfg: DictConfig) -> None:
         valid_dataset,
         batch_size=valid_batch_size,
         shuffle=False,
-        num_workers=cfg.train.num_workers,
+        num_workers=cfg.optim.num_workers,
     )
     log.info(f"Found {len(valid_dataset)} samples in validation dataset")
 
@@ -282,21 +281,22 @@ def main(hydra_cfg: DictConfig) -> None:
     skip_weights_loading = cfg.model.resume or cfg.model.pretrained
     model = model(skip_weights_loading=skip_weights_loading, **cfg.model.params)
 
-    # Putting model to device
+    # move model to device
     model.to(device)
 
-    # Constructing an optimizer
-    optimizer = hydra.utils.get_class(f"torch.optim.{cfg.optimizer.name}")
-    optimizer = optimizer(filter(lambda p: p.requires_grad, model.parameters()), **cfg.optimizer.params)
+    # build the optimizer
+    optimizer = hydra.utils.get_class(f"torch.optim.{cfg.optim.optimizer.name}")
+    optimizer = optimizer(filter(lambda p: p.requires_grad, model.parameters()), **cfg.optim.optimizer.params)
+
     scheduler = None
-    if cfg.optimizer.scheduler is not None:
-        scheduler = hydra.utils.get_class(f"torch.optim.lr_scheduler.{cfg.optimizer.scheduler.name}")
-        scheduler = scheduler(optimizer, **cfg.optimizer.scheduler.params)
+    if cfg.optim.lr_scheduler is not None:
+        scheduler = hydra.utils.get_class(f"torch.optim.lr_scheduler.{cfg.optim.lr_scheduler.name}")
+        scheduler = scheduler(optimizer, **cfg.optim.lr_scheduler.params)
 
     # Setting criterion
-    criterion = hydra.utils.get_class(f"torch.nn.{cfg.optimizer.loss.name}")()
+    criterion = hydra.utils.get_class(f"torch.nn.{cfg.optim.optimizer.loss.name}")()
 
-    # Eventually resuming a pre-trained model
+    # optionally load pre-trained weights
     if cfg.model.pretrained:
         log.info(f"Resuming pre-trained model")
         if cfg.model.pretrained.startswith('http://') or cfg.model.pretrained.startswith('https://'):
@@ -337,19 +337,18 @@ def main(hydra_cfg: DictConfig) -> None:
 
     # Train loop
     log.info(f"Start training")
-    progress = trange(start_epoch, cfg.train.epochs, initial=start_epoch)
+    progress = trange(start_epoch, cfg.optim.epochs, initial=start_epoch)
     for epoch in progress:
         # train
-        train_metrics = \
-            train_one_epoch(model, train_loader, optimizer, criterion, device, cfg, writer, epoch)
-        scheduler.step()    # update lr scheduler
+        train_metrics = train_one_epoch(model, train_loader, optimizer, criterion, device, cfg, writer, epoch)
+        scheduler.step()  # update lr scheduler
 
         train_metrics['epoch'] = epoch
         train_log = train_log.append(train_metrics, ignore_index=True)
         train_log.to_csv(train_log_path, index=False)
 
-        # validation
-        if (epoch + 1) % cfg.train.val_freq == 0:
+        # evaluation
+        if (epoch + 1) % cfg.optim.val_freq == 0:
             valid_metrics = validate(model, valid_loader, criterion, device, cfg, epoch)
             for metric, value in valid_metrics.items():
                 writer.add_scalar(f'valid/{metric}', value, epoch)  # log to tensorboard

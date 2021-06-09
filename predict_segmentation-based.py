@@ -1,35 +1,27 @@
 # -*- coding: utf-8 -*-
 import argparse
-
 import itertools
-from prefetch_generator import BackgroundGenerator
 from pathlib import Path
-from skimage import io
-from tqdm import tqdm
 
 import numpy as np
 import pandas as pd
+from prefetch_generator import BackgroundGenerator
+from skimage import io
+from tqdm import tqdm
 
 import torch
 from torch.utils.data import ConcatDataset, DataLoader
 from torchvision.transforms import ToTensor
 
-from omegaconf import OmegaConf
 import hydra
+from omegaconf import OmegaConf
 
 from datasets import PerineuralNetsDataset
 from points.match import match
 from points.metrics import detection_and_counting
 from points.utils import draw_groundtruth_and_predictions
-from segmentation.utils import segm_map_to_points
+from segmentation.utils import segmentation_map_to_points
 
-
-# some colors
-RED = [255, 0, 0]
-GREEN = [0, 255, 0]
-YELLOW = [255, 255, 0]
-CYAN = [0, 255, 255]
-MAGENTA = [255, 0, 255]
 
 
 def process_per_patch(dataloader, process_fn):
@@ -40,13 +32,13 @@ def process_per_patch(dataloader, process_fn):
         batch = image_id, image_hw, patch.squeeze(axis=1), processed_patch, patch_hw, start_yx
         batch = [t.cpu().numpy() if isinstance(t, torch.Tensor) else t for t in batch]
         return batch
-    
+
     def _unbatch(batches):
         for batch in batches:
             yield from zip(*batch)
 
     processed_batches = map(_process_batch, dataloader)
-    processed_batches = BackgroundGenerator(processed_batches, max_prefetch=15000)  # prefetch batches using threading 
+    processed_batches = BackgroundGenerator(processed_batches, max_prefetch=15000)  # prefetch batches using threading
     processed_samples = _unbatch(processed_batches)
 
     grouper = lambda x: (x[0], x[1].tolist())  # group by (image_id, image_hw)
@@ -99,16 +91,16 @@ def predict(model, dataloader, device, cfg, outdir, debug=False):
             io.imsave(outdir / image_id, image)
             io.imsave(outdir / f'segm_{image_id}', (255 * segmentation_map).astype(np.uint8))
             # io.imsave(outdir / f'hard_segm_{image_id}', (255 * (segmentation_map >= 0.5)).astype(np.uint8))
-            # skimage.measure.find_contours.find_contours(array, level, fully_connected='low', positive_orientation='low')
 
         image_metrics = []
         image_gt_and_preds = []
         thr_progress = tqdm(thrs, leave=False)
         for thr in thr_progress:
             thr_progress.set_description(f'thr={thr:.2f}')
+
             # find connected components and centroids
-            localizations = segm_map_to_points(segmentation_map, thr=thr)
-            
+            localizations = segmentation_map_to_points(segmentation_map, thr=thr)
+
             # match groundtruths and predictions
             tolerance = 1.25 * cfg.dataset.validation.params.target_params.radius  # min distance to match points
             groundtruth_and_predictions = match(groundtruth, localizations, tolerance)
@@ -120,12 +112,12 @@ def predict(model, dataloader, device, cfg, outdir, debug=False):
             metrics = detection_and_counting(groundtruth_and_predictions, image_hw=image_hw)
             metrics['thr'] = thr
             metrics['imgName'] = image_id
-        
+
             image_metrics.append(metrics)
-        
+
         all_metrics.extend(image_metrics)
         all_gt_and_preds.extend(image_gt_and_preds)
-        
+
         if outdir and debug:
             outdir.mkdir(parents=True, exist_ok=True)
 
@@ -145,20 +137,20 @@ def predict(model, dataloader, device, cfg, outdir, debug=False):
         all_gp.to_csv(outdir / 'all_gt_preds.csv')
         all_metrics.to_csv(outdir / 'all_metrics.csv')
 
-            
+
 def main(args):
     run_path = Path(args.run)
     cfg_path = run_path / '.hydra' / 'config.yaml'
     cfg = OmegaConf.load(cfg_path)['technique']
 
     device = torch.device(args.device)
-    
+
     # create test dataset and dataloader
     params = cfg.dataset.validation.params
     params.root = args.data_root
     params.split = 'all'
     params.target = None
-    
+
     test_batch_size = cfg.optim.val_batch_size if cfg.optim.val_batch_size else cfg.optim.batch_size
     test_transform = ToTensor()
     test_dataset = PerineuralNetsDataset(transforms=test_transform, **params)
@@ -172,16 +164,14 @@ def main(args):
     # move model to device
     model.to(device)
 
-    # optionally resume from a saved checkpoint
+    # resume from a saved checkpoint
     best_models_folder = run_path / 'best_models'
     metric_name = args.best_on_metric.replace('/', '-')
     ckpt_path = best_models_folder / f'best_model_PerineuralNetsDataset_metric_{metric_name}.pth'
     print(f"Loading checkpoint: {ckpt_path}")
     checkpoint = torch.load(ckpt_path, map_location=device)
     model.load_state_dict(checkpoint['model'])
-    validation_metrics = checkpoint['metrics']
 
-    validation_thr = validation_metrics[f'{args.best_on_metric}_thr']
     outdir = (run_path / 'test_predictions') if args.save else None
     predict(model, test_loader, device, cfg, outdir, debug=args.debug)
 
@@ -198,4 +188,3 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     main(args)
-

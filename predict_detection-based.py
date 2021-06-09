@@ -3,32 +3,31 @@ import argparse
 import itertools
 from pathlib import Path
 
-import hydra
 import numpy as np
 import pandas as pd
-from omegaconf import OmegaConf
 from prefetch_generator import BackgroundGenerator
 from skimage import io
 from tqdm import tqdm
 
 import torch
-from torch.utils.data import DataLoader
-from torchvision.transforms import ToTensor
+from torch.utils.data import ConcatDataset, DataLoader
 from torchvision.ops import boxes as box_ops
+from torchvision.transforms import ToTensor
+
+import hydra
+from omegaconf import OmegaConf
 
 from datasets import PerineuralNetsDataset
-from models import faster_rcnn
-from points.metrics import detection_and_counting
 from points.match import match
+from points.metrics import detection_and_counting
 from points.utils import draw_groundtruth_and_predictions
 
 
 def process_per_patch(dataloader, process_fn, cfg, threshold):
-    validation_device = cfg.train.val_device
+    validation_device = cfg.optim.val_device
 
     def _process_batch(batch):
         patch, patch_hw, start_yx, image_hw, image_id = batch
-
         predictions = process_fn(patch)
 
         patch = patch.squeeze(dim=1).to(validation_device)
@@ -43,14 +42,14 @@ def process_per_patch(dataloader, process_fn, cfg, threshold):
             yield from zip(*batch)
 
     processed_batches = map(_process_batch, dataloader)
-    processed_batches = BackgroundGenerator(processed_batches, max_prefetch=5000)  # prefetch batches using threading
+    processed_batches = BackgroundGenerator(processed_batches, max_prefetch=15000)  # prefetch batches using threading
     processed_samples = _unbatch(processed_batches)
 
     grouper = lambda x: (x[0], x[1].tolist())  # group by (image_id, image_hw)
     groups = itertools.groupby(processed_samples, key=grouper)
 
     n_images = len(dataloader.dataset)
-    if isinstance(dataloader.dataset, torch.utils.data.ConcatDataset):
+    if isinstance(dataloader.dataset, ConcatDataset):
         n_images = len(dataloader.dataset.datasets)
 
     progress = tqdm(groups, total=n_images, desc='PRED', leave=False)
@@ -143,6 +142,7 @@ def predict(model, dataloader, min_thr, device, cfg, outdir, debug=False):
         thr_progress = tqdm(thrs, leave=False)
         for thr in thr_progress:
             thr_progress.set_description(f'thr={thr:.2f}')
+
             thresholded_localizations = localizations[localizations.score >= thr].reset_index()
 
             # match groundtruths and predictions
@@ -155,8 +155,9 @@ def predict(model, dataloader, min_thr, device, cfg, outdir, debug=False):
 
             # compute metrics
             metrics = detection_and_counting(groundtruth_and_predictions, image_hw=image_hw)
-            metrics['imgName'] = image_id
             metrics['thr'] = thr
+            metrics['imgName'] = image_id
+
             image_metrics.append(metrics)
 
         all_metrics.extend(image_metrics)
@@ -164,7 +165,7 @@ def predict(model, dataloader, min_thr, device, cfg, outdir, debug=False):
 
         if outdir and debug:
             outdir.mkdir(parents=True, exist_ok=True)
-            
+
             # pick a threshold and draw that prediction set
             best_thr = pd.DataFrame(image_metrics).set_index('thr')['count/game-3'].idxmin()
             gp = pd.concat(image_gt_and_preds, ignore_index=True)
@@ -195,14 +196,13 @@ def main(args):
     params.split = 'all'
     params.target = None
 
-    test_batch_size = cfg.train.val_batch_size if cfg.train.val_batch_size else cfg.train.batch_size
+    test_batch_size = cfg.optim.val_batch_size if cfg.optim.val_batch_size else cfg.optim.batch_size
     test_transform = ToTensor()
     test_dataset = PerineuralNetsDataset(transforms=test_transform, **params)
-    test_loader = DataLoader(test_dataset, batch_size=test_batch_size, shuffle=False, num_workers=cfg.train.num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=test_batch_size, shuffle=False, num_workers=cfg.optim.num_workers)
     print(f"Found {len(test_dataset)} samples in validation dataset")
 
-    # create model and move it to device
-    print(f"Creating model")
+    # create model
     model_params = cfg.model.params
     del model_params['cache_folder']  # inhibits hydra-specific interpolation
     model = hydra.utils.get_class(f"models.{cfg.model.name}")
@@ -218,9 +218,7 @@ def main(args):
     print(f"Loading checkpoint: {ckpt_path}")
     checkpoint = torch.load(ckpt_path, map_location=device)
     model.load_state_dict(checkpoint['model'])
-    validation_metrics = checkpoint['metrics']
 
-    validation_thr = validation_metrics[f'{args.best_on_metric}_thr']
     minimum_thr = args.minimum_thr
     print(f"Setting minimum threshold: {minimum_thr}")
     outdir = (run_path / f'test_predictions') if args.save else None
@@ -231,10 +229,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Predict')
     parser.add_argument('run', help='Path to run dir')
     parser.add_argument('-d', '--device', default='cuda', help='device to use for prediction')
-    parser.add_argument('--no-save', action='store_false', dest='save', help='draw images with predictions')
-    parser.add_argument('--debug', action='store_true', default=False, help='draw images with predictions')
     parser.add_argument('--best-on-metric', default='count/game-3_best', help='select snapshot that optimizes this metric')
     parser.add_argument('--minimum-thr', default=0.05, type=float, help='minimum threshold for bbs filtering')
+    parser.add_argument('--no-save', action='store_false', dest='save', help='draw images with predictions')
+    parser.add_argument('--debug', action='store_true', default=False, help='draw images with predictions')
     parser.add_argument('--data-root', default='data/perineuronal_nets_test', help='root of the test subset')
     parser.set_defaults(save=True)
 
