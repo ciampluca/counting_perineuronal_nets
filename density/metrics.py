@@ -28,7 +28,7 @@ def game(gt_dmap, pred_dmap, L):
     return val
 
 
-def compute_metrics(gt_dmap, pred_dmap, counting=True):
+def counting(gt_dmap, pred_dmap):
     """
     Compute counting metrics from the gt and the predicted dmaps
 
@@ -39,23 +39,23 @@ def compute_metrics(gt_dmap, pred_dmap, counting=True):
     Returns:
         A metric_name -> metric_value dictionary.
     """
-    metrics = {}
 
-    if counting:
-        n_predictions = pred_dmap.sum()
-        n_groundtruth = gt_dmap.sum()
-        counting_error = n_predictions - n_groundtruth
-        counting_abs_error = abs(counting_error)
-        counting_squared_error = counting_error ** 2
-        counting_abs_relative_error = abs(counting_error) / max(n_groundtruth, 1)
+    n_predictions = pred_dmap.sum()
+    n_groundtruth = gt_dmap.sum()
 
-        metrics['count/err'] = counting_error
-        metrics['count/mae'] = counting_abs_error
-        metrics['count/mse'] = counting_squared_error
-        metrics['count/mare'] = counting_abs_relative_error
+    counting_error = n_predictions - n_groundtruth
+    counting_abs_error = abs(counting_error)
+    counting_squared_error = counting_error ** 2
+    counting_abs_relative_error = abs(counting_error) / max(n_groundtruth, 1)
+    counting_game = {f'count/game-{l}': game(gt_dmap, pred_dmap, L=l) for l in range(6)}
 
-        counting_game = {f'count/game-{l}': game(gt_dmap, pred_dmap, L=l) for l in range(6)}
-        metrics.update(counting_game)
+    metrics = {
+        'count/err': counting_error,
+        'count/mae': counting_abs_error,
+        'count/mse': counting_squared_error,
+        'count/mare': counting_abs_relative_error,
+        **counting_game
+    }
 
     return metrics
 
@@ -87,7 +87,7 @@ def game_yx(true_yx, pred_dmap, L):
     return val
 
 
-def compute_metrics_yx(gt_yx, pred_dmap, counting=True):
+def counting_yx(gt_yx, pred_dmap):
     """
     Compute counting metrics from the gt and the predicted dmaps
 
@@ -98,22 +98,22 @@ def compute_metrics_yx(gt_yx, pred_dmap, counting=True):
     Returns:
         A metric_name -> metric_value dictionary.
     """
-    metrics = {}
 
-    if counting:
-        n_predictions = pred_dmap.sum()
-        n_groundtruth = len(gt_yx)
-        counting_error = n_predictions - n_groundtruth
-        counting_abs_error = abs(counting_error)
-        counting_squared_error = counting_error ** 2
-        counting_abs_relative_error = abs(counting_error) / max(n_groundtruth, 1)
+    n_predictions = pred_dmap.sum()
+    n_groundtruth = len(gt_yx)
 
-        metrics['count/err'] = counting_error
-        metrics['count/mae'] = counting_abs_error
-        metrics['count/mse'] = counting_squared_error
-        metrics['count/mare'] = counting_abs_relative_error
-
-        counting_game = {f'count/game-{l}': game_yx(gt_yx, pred_dmap, L=l) for l in range(6)}
-        metrics.update(counting_game)
+    counting_error = n_predictions - n_groundtruth
+    counting_abs_error = abs(counting_error)
+    counting_squared_error = counting_error ** 2
+    counting_abs_relative_error = abs(counting_error) / max(n_groundtruth, 1)
+    counting_game = {f'count/game-{l}': game_yx(gt_yx, pred_dmap, L=l) for l in range(6)}
+    
+    metrics = {
+        'count/err': counting_error,
+        'count/mae': counting_abs_error,
+        'count/mse': counting_squared_error,
+        'count/mare': counting_abs_relative_error,
+        **counting_game
+    }
 
     return metrics

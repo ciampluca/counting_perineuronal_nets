@@ -85,9 +85,10 @@ class VGGCellsDataset(Dataset):
             img = np.expand_dims(img, axis=-1)  # add channels dimension
             input_and_target = (img, bbs)
             datum = input_and_target
-        # TODO
         elif self.ann_type == "segm":
-            pass
+            points = np.nonzero(label)
+            
+
         else:   # no targets
             datum = np.expand_dims(img, axis=-1)  # add channels dimension
 

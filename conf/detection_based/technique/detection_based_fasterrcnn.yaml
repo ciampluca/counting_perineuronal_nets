@@ -1,7 +1,7 @@
 # @package _group_
 dataset:
     train:
-        name: "PerineuralNetsDetDataset"
+        name: PerineuralNetsDataset
         params:
             root: ${hydra:runtime.cwd}/data/perineuronal_nets
             split: train-specular
@@ -9,40 +9,43 @@ dataset:
             overlap: 0
             random_offset: null  # auto-determined as patch_size / 2
             max_cache_mem: 8_589_934_592  # 8GiB in bytes
-            num_sample: null
-            gt_params:
+            # num_samples: null
+            target: detection
+            target_params:
                 side: 60       # side (in px) of the bounding box localizing a cell
                 in_memory: null
                 ann_type: null
 
     validation:
-        name: "PerineuralNetsDetDataset"
+        name: PerineuralNetsDataset
         params:
             root: ${hydra:runtime.cwd}/data/perineuronal_nets
             split: validation-specular
             patch_size: 320
-            overlap: null        # auto-determined as 4 * gt_params.radius_ignore
+            overlap: 120
             random_offset: 0
             max_cache_mem: 8_589_934_592  # 8GiB in bytes
-            num_sample: null
-            gt_params:
+            # num_samples: null
+            target: detection
+            target_params:
                 side: 60       # side (in px) of the bounding box localizing a cell
                 in_memory: null
                 ann_type: null
 
 
 model:
-    name: "faster_rcnn"
-    backbone: "resnet50"    # resnet50 or resnet101
-    backbone_pretrained: true   # on ImageNet
-    coco_model_pretrained: true   # on COCO; if true, no need to load the pretrained backbone
-    cache_folder: ./model_zoo
+    name: FasterRCNN
     pretrained: null     # path to pretrained weights, optimizer states will not restored
     resume: null    # path to last trained model, will restore optimizer states
     params:
+        num_classes: 1
+        backbone: resnet50    # resnet50 or resnet101
+        backbone_pretrained: true   # on ImageNet
+        model_pretrained: true   # on COCO; if true, no need to load the pretrained backbone
         max_dets_per_image: 200
         nms: 0.3
         det_thresh: 0.05
+        cache_folder: ${hydra:runtime.cwd}/model_zoo
 
 
 optimizer:

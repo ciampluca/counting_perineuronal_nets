@@ -1,7 +1,7 @@
 # @package _group_
 dataset:
     train:
-        name: "perineural_nets"
+        name: PerineuralNetsDataset
         params:
             root: ${hydra:runtime.cwd}/data/perineuronal_nets
             split: train-specular
@@ -9,23 +9,24 @@ dataset:
             overlap: 0
             random_offset: null  # auto-determined as patch_size / 2
             max_cache_mem: 8_589_934_592  # 8GiB in bytes
-            gt_params:
-                'k_size': 51         # size (in px) of the kernel of the gaussian localizing a perineural nets
-                'sigma': 30            # sigma of the gaussian
+            target: density
+            target_params:
+                k_size: 51         # size (in px) of the kernel of the gaussian localizing a perineural nets
+                sigma: 30            # sigma of the gaussian
 
     validation:
-        name: perineural_nets
+        name: PerineuralNetsDataset
         params:
             root: ${hydra:runtime.cwd}/data/perineuronal_nets
             split: validation-specular
             patch_size: 320     # must be divisible by 32
-            border_pad: 64      # must be divisible by 32
-            overlap: null        # auto-determined as 4 * gt_params.radius_ignore
+            overlap: 120
             random_offset: 0
             max_cache_mem: 8_589_934_592  # 8GiB in bytes
-            gt_params:
-                'k_size': 51         # size (in px) of the kernel of the gaussian localizing a perineural nets
-                'sigma': 30            # sigma of the gaussian
+            target: density
+            target_params:
+                k_size: 51         # size (in px) of the kernel of the gaussian localizing a perineural nets
+                sigma: 30            # sigma of the gaussian
 
 
 model:
@@ -33,8 +34,7 @@ model:
     cache_folder: ./model_zoo
     pretrained: null     # path to pretrained weights, optimizer states will not restored
     resume: null    # path to last trained model, will restore optimizer states
-    params:
-        load_weights: False
+    params: {}
 
 
 optimizer:
@@ -52,6 +52,7 @@ optimizer:
 
 
 train:
+    border_pad: 64      # must be divisible by 32
     batch_size: 8
     val_batch_size: 8
     num_workers: 4

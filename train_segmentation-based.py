@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
 import os
 import copy
+import itertools
 import logging
 
-import collections
-import itertools
 from functools import partial
-from prefetch_generator import BackgroundGenerator
 from pathlib import Path
-from scipy.optimize import linear_sum_assignment
-from scipy.spatial.distance import cdist
-from skimage import measure
+from segmentation.utils import segm_map_to_points
+
+from prefetch_generator import BackgroundGenerator
 from tqdm import tqdm, trange
 
 import numpy as np
@@ -25,8 +23,11 @@ from torchvision.transforms import Compose, RandomHorizontalFlip, ToTensor
 from omegaconf import DictConfig
 import hydra
 
-from datasets.perineural_nets_segm_dataset import PerineuralNetsSegmDataset
-from utils import points
+from points.metrics import detection_and_counting
+from points.match import match
+from segmentation.metrics import dice_jaccard
+from segmentation.utils import segm_map_to_points
+from utils import seed_everything, update_dict
 
 tqdm = partial(tqdm, dynamic_ncols=True)
 trange = partial(trange, dynamic_ncols=True)
@@ -35,40 +36,7 @@ trange = partial(trange, dynamic_ncols=True)
 log = logging.getLogger(__name__)
 
 
-def seed_everything(seed):
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.benchmark = True
-    torch.backends.cudnn.deterministic = True
-
-
-def update_dict(d, u):
-    for k, v in u.items():
-        if isinstance(v, collections.abc.Mapping):
-            d[k] = update_dict(d.get(k, {}), v)
-        else:
-            d[k] = v
-    return d
-
-
-def dice_jaccard(y_true, y_pred, smooth=1, thr=None):
-    """ Computes Dice and Jaccard coefficients for image segmentation. """
-    axis = (0, 1) if y_true.ndim == 2 else tuple(range(1, y_true.ndim))
-    y_pred = (y_pred >= thr) if thr is not None else y_pred
-
-    intersection = (y_true * y_pred).sum(axis)
-    sum_ = y_true.sum(axis) + y_pred.sum(axis)
-    union = sum_ - intersection
-
-    jaccard = (intersection + smooth) / (union + smooth)
-    dice = 2. * (intersection + smooth) / (sum_ + smooth)
-    return dice.mean(), jaccard.mean()
-
-
-def train(model, dataloader, optimizer, device, cfg, writer, epoch):
+def train_one_epoch(model, dataloader, optimizer, device, cfg, writer, epoch):
     """ Trains the model for one epoch. """
     model.train()
     optimizer.zero_grad()
@@ -77,7 +45,7 @@ def train(model, dataloader, optimizer, device, cfg, writer, epoch):
     n_batches = len(dataloader)
     progress = tqdm(dataloader, desc='TRAIN', leave=False)
     for i, sample in enumerate(progress):
-        input_and_target, patch_hw, start_yx, image_hw, image_id = sample
+        input_and_target = sample[0]
         input_and_target = input_and_target.to(device)
         # split channels to get input, target, and loss weights
         images, targets, weights = input_and_target.split(1, dim=1)
@@ -152,7 +120,12 @@ def validate(model, dataloader, device, cfg, epoch):
     # group by image_id (and image_hw for convenience) --> iterate over full images
     grouper = lambda x: (x[0], x[1].tolist())  # group by (image_id, image_hw)
     groups = itertools.groupby(processed_samples, key=grouper)
-    progress = tqdm(groups, total=len(dataloader.dataset.datasets), desc='EVAL', leave=False)
+
+    n_images = len(dataloader.dataset)
+    if isinstance(dataloader.dataset, torch.utils.data.ConcatDataset):
+        n_images = len(dataloader.dataset.datasets)
+
+    progress = tqdm(groups, total=n_images, desc='EVAL', leave=False)
     for (image_id, image_hw), image_patches in progress:
         # full_image = torch.empty(image_hw, dtype=torch.float32, device=validation_device)
         full_segm_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
@@ -204,14 +177,12 @@ def validate(model, dataloader, device, cfg, epoch):
         
             # counting metrics
             progress_thrs.set_description(f'thr={thr:.2f} (count)')
-            labeled_map, num_components = measure.label(full_bin_segm_map.cpu().numpy(), return_num=True, connectivity=1)
-            localizations = measure.regionprops_table(labeled_map, properties=('centroid',))
-            localizations = pd.DataFrame(localizations).rename({'centroid-0':'Y', 'centroid-1':'X'}, axis=1)
+            localizations = segm_map_to_points(full_segm_map.cpu().numpy(), thr=thr)
             groundtruth = dataloader.dataset.annot.loc[image_id]
 
-            tolerance = 1.25 * cfg.dataset.validation.params.gt_params.radius  # min distance to match points
-            groundtruth_and_predictions = points.match(groundtruth, localizations, tolerance)
-            count_pdet_metrics = points.compute_metrics(groundtruth_and_predictions, image_hw=image_hw)
+            tolerance = 1.25 * cfg.dataset.validation.params.target_params.radius  # min distance to match points
+            groundtruth_and_predictions = match(groundtruth, localizations, tolerance)
+            count_pdet_metrics = detection_and_counting(groundtruth_and_predictions, image_hw=image_hw)
 
             image_thr_metrics.append({
                 'image_id': image_id,
@@ -283,15 +254,6 @@ def main(hydra_cfg: DictConfig) -> None:
     cfg = copy.deepcopy(hydra_cfg.technique)
     for _, v in hydra_cfg.items():
         update_dict(cfg, v)
-        
-    experiment_name = \
-        f"{cfg.model.name}_{cfg.dataset.train.name}_" \
-        f"split-{cfg.dataset.train.params.split}_" \
-        f"input_size-{cfg.dataset.train.params.patch_size}_" \
-        f"overlap-{cfg.dataset.validation.params.overlap}_" \
-        f"batch_size-{cfg.optim.batch_size}"
-        # f"loss-{cfg.model.loss.name}_" \
-        # f"aux_loss-{cfg.model.aux_loss.name}_" \
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(cfg.gpu)
     device = torch.device(f'cuda' if cfg.gpu is not None else 'cpu')
@@ -310,30 +272,46 @@ def main(hydra_cfg: DictConfig) -> None:
     torch.set_default_dtype(torch.float32)
 
     # create tensorboard writer
-    writer = SummaryWriter(comment="_" + experiment_name)
+    writer = SummaryWriter()
 
     # create train dataset and dataloader
-    log.info(f"Loading training data")
-    params = cfg.dataset.train.params
-    log.info("Train input size: {0}x{0}".format(params.patch_size))
+    log.info(f"Loading training data of dataset {cfg.dataset.train.name}")
+
+    train_dataset_params = cfg.dataset.train.params
+    valid_dataset_params = cfg.dataset.validation.params
+    log.info("Train input size: {0}x{0}".format(train_dataset_params.patch_size))
+
     train_transform = Compose([ToTensor(), RandomHorizontalFlip()])
-    train_dataset = PerineuralNetsSegmDataset(transforms=train_transform, **params)
-    train_loader = DataLoader(train_dataset, batch_size=cfg.optim.batch_size, shuffle=True, num_workers=cfg.optim.num_workers)
+    train_dataset = hydra.utils.get_class(f"datasets.{cfg.dataset.train.name}")
+
+    train_dataset = train_dataset(transforms=train_transform, **train_dataset_params)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=cfg.optim.batch_size,
+        shuffle=True,
+        num_workers=cfg.optim.num_workers
+    )
     log.info(f"Found {len(train_dataset)} samples in training dataset")
 
     # create validation dataset and dataloader
     log.info(f"Loading validation data")
-    params = cfg.dataset.validation.params
-    log.info("Validation input size: {0}x{0}".format(params.patch_size))
+
+    log.info("Validation input size: {0}x{0}".format(valid_dataset_params.patch_size))
     valid_batch_size = cfg.optim.val_batch_size if cfg.optim.val_batch_size else cfg.optim.batch_size
     valid_transform = ToTensor()
-    valid_dataset = PerineuralNetsSegmDataset(transforms=valid_transform, **params)
-    valid_loader = DataLoader(valid_dataset, batch_size=valid_batch_size, shuffle=False, num_workers=cfg.optim.num_workers)
+    valid_dataset = hydra.utils.get_class(f"datasets.{cfg.dataset.validation.name}")
+    valid_dataset = valid_dataset(transforms=valid_transform, **valid_dataset_params)
+    valid_loader = DataLoader(
+        valid_dataset,
+        batch_size=valid_batch_size,
+        shuffle=False,
+        num_workers=cfg.optim.num_workers
+    )
     log.info(f"Found {len(valid_dataset)} samples in validation dataset")
 
     # create model
     log.info(f"Creating model")
-    model = hydra.utils.get_class(f"models.{cfg.model.name}.{cfg.model.name}")
+    model = hydra.utils.get_class(f"models.{cfg.model.name}")
     model = model(**cfg.model.params)
 
     # move model to device
@@ -391,7 +369,7 @@ def main(hydra_cfg: DictConfig) -> None:
     progress = trange(start_epoch, cfg.optim.epochs, initial=start_epoch)
     for epoch in progress:
         # train
-        train_metrics = train(model, train_loader, optimizer, device, cfg, writer, epoch)
+        train_metrics = train_one_epoch(model, train_loader, optimizer, device, cfg, writer, epoch)
         scheduler.step() # update lr scheduler
 
         train_metrics['epoch'] = epoch

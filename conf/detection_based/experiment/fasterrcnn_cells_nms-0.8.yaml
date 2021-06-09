@@ -11,7 +11,7 @@ detection_based_fasterrcnn:
           params:
               root: "/home/modro/datino/VGG_cells"
               patch_size: 256
-              num_sample: 64
+              num_samples: 64
               gt_params:
                   side: 12       # side (in px) of the bounding box localizing a cell
                   in_memory: true
@@ -22,7 +22,7 @@ detection_based_fasterrcnn:
           params:
               root: "/home/modro/datino/VGG_cells"
               patch_size: 256
-              num_sample: 36
+              num_samples: 36
               gt_params:
                   side: 12       # side (in px) of the bounding box localizing a cell
                   ann_type: "det"

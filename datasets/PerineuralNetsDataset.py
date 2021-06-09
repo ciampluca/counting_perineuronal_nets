@@ -1,39 +1,51 @@
-from pathlib import Path
-from copy import deepcopy
+
 import itertools
-import pandas as pd
 import numpy as np
+import pandas as pd
 import h5py
-from PIL import ImageDraw
-import os
 
-import torch
+from pathlib import Path
 from torch.utils.data import Dataset, ConcatDataset
-from torchvision.transforms.functional import to_pil_image
+
+from segmentation.target_builder import SegmentationTargetBuilder
+from detection.target_builder import DetectionTargetBuilder
+from density.target_builder import DensityTargetBuilder
 
 
-class PerineuralNetsDetDataset(ConcatDataset):
+class PerineuralNetsDataset(ConcatDataset):
     """ Dataset that provides per-patch iteration of bunch of big image files,
         implemented as a concatenation of single-file datasets. """
 
-    # params for groundtruth bbs generation
-    DEFAULT_GT_PARAMS = {
-        'side': 60,         # side (in px) of the bounding box localizing a cell
-    }
-
-    def __init__(self, root='data/perineuronal_nets', split='all', with_targets=True, patch_size=640, overlap=None,
-                 random_offset=None, gt_params={}, transforms=None, max_cache_mem=None, **kwargs):
+    def __init__(self,
+                 root='data/perineuronal_nets',
+                 split='all',
+                 patch_size=640,
+                 overlap=0,
+                 random_offset=None,
+                 target=None,
+                 target_params={},
+                 transforms=None,
+                 max_cache_mem=None):
 
         self.root = Path(root)
         self.transforms = transforms
         self.patch_size = patch_size
+        # TODO move overlap in run config
+        # self.overlap = overlap if overlap is not None else int(4 * self.gt_params['radius_ignore'])
+        self.overlap = overlap
         self.random_offset = random_offset if random_offset is not None else patch_size // 2
 
-        # groundtruth parameters
-        self.gt_params = deepcopy(self.DEFAULT_GT_PARAMS)
-        self.gt_params.update(gt_params)
+        assert target in (None, 'segmentation', 'detection', 'density'), f'Unsupported target type: {target}'
+        self.target = target
 
-        self.overlap = overlap if overlap is not None else 0
+        if target == 'segmentation':
+            target_builder = SegmentationTargetBuilder
+        elif target == 'detection':
+            target_builder = DetectionTargetBuilder
+        elif target == 'density':
+            target_builder = DensityTargetBuilder
+
+        target_builder = target_builder(**target_params) if target else None
 
         assert split in ('train', 'validation', 'train-specular', 'validation-specular', 'all'), \
             "split must be one of ('train', 'validation', 'train-specular', 'validation-specular', 'all')"
@@ -42,7 +54,7 @@ class PerineuralNetsDetDataset(ConcatDataset):
         annot_path = self.root / 'annotation' / 'annotations.csv'
         all_annot = pd.read_csv(annot_path, index_col=0)
 
-        image_files = sorted((self.root / 'fullFramesH5').glob('*.h5'))
+        image_files = sorted((self.root / 'fullFramesH5').glob('*.h5'))[:1]  ## REMOVE! FO DEBUG ONLY
         assert len(image_files) > 0, "No images found"
 
         if max_cache_mem:
@@ -63,15 +75,13 @@ class PerineuralNetsDetDataset(ConcatDataset):
 
         stride = patch_size - self.overlap
         kwargs = dict(
-            with_targets=with_targets,
+            target_builder=target_builder,
             patch_size=patch_size,
             stride=stride,
             random_offset=self.random_offset,
-            gt_params=self.gt_params,
             max_cache_mem=max_cache_mem
         )
-        datasets = [_PerineuralNetsDetImage(image_path, all_annot, split=s, **kwargs) for image_path, s in
-                    zip(image_files, splits)]
+        datasets = [_PerineuralNetsImage(image_path, all_annot, split=s, **kwargs) for image_path, s in zip(image_files, splits)]
         self.annot = pd.concat([d.split_annot for d in datasets])
 
         super(self.__class__, self).__init__(datasets)
@@ -82,45 +92,26 @@ class PerineuralNetsDetDataset(ConcatDataset):
         if self.transforms:
             sample = (self.transforms(sample[0]),) + sample[1:]
 
-        return sample
-
-    def custom_collate_fn(self, batch):
-        return list(zip(*batch))
-
-    def build_coco_compliant_batch(self, image_and_target_batch):
-        targets, imgs = [], []
-
-        for b in image_and_target_batch:
-            imgs.append(b[0])
-
-            if b[1].size != 0:
-                target = {
-                    'boxes': torch.as_tensor([[bb[1], bb[0], bb[3], bb[2]] for bb in b[1]], dtype=torch.float32),
-                    'labels': torch.ones((len(b[1]),), dtype=torch.int64),  # there is only one class
-                    'iscrowd': torch.zeros((len(b[1]),), dtype=torch.int64),     # suppose all instances are not crowd
-                }
-            else:
-                target = {
-                    'boxes': torch.as_tensor([[]], dtype=torch.float32),
-                    'labels': torch.as_tensor([[]], dtype=torch.int64),
-                    'iscrowd': torch.as_tensor([[]], dtype=torch.int64),
-                }
-
-            targets.append(target)
-
-        return imgs, targets
+        return sample       
 
 
-class _PerineuralNetsDetImage(Dataset):
+class _PerineuralNetsImage(Dataset):
     """ Dataset that provides per-patch iteration of a single big image file. """
-
-    def __init__(self, h5_path, annotations, split='left', with_targets=True, patch_size=640, stride=None,
-                 random_offset=0, gt_params=None, max_cache_mem=None):
+    
+    def __init__(self,
+                 h5_path,
+                 annotations,
+                 split='left',
+                 patch_size=640,
+                 stride=None,
+                 random_offset=0,
+                 target_builder=None,
+                 max_cache_mem=None):
+        
         self.h5_path = h5_path
         self.random_offset = random_offset
-        self.with_targets = with_targets
-        self.gt_params = gt_params if gt_params is not None else PerineuralNetsDetDataset.DEFAULT_GT_PARAMS
-
+        self.target_builder = target_builder
+        
         assert split in ('left', 'right', 'all'), "split must be one of ('left', 'right', 'all')"
         self.split = split
 
@@ -158,11 +149,11 @@ class _PerineuralNetsDetImage(Dataset):
 
         # the number of patches in a row and a column
         self.num_patches = np.ceil(1 + ((self.region_hw - self.patch_hw) / self.stride_hw)).astype(np.int64)
-
+        
     def __len__(self):
         # total number of patches
         return self.num_patches.prod().item()
-
+    
     def __getitem__(self, index):
         n_rows, n_cols = self.num_patches
         # row and col indices of the patch
@@ -183,14 +174,14 @@ class _PerineuralNetsDetImage(Dataset):
         # patch coordinates in the region space (useful for reconstructing the full region)
         local_start_yx = start_yx - self.origin_yx
 
-        if self.with_targets:
+        if self.target_builder:
             # gather annotations
             selector = self.annot.X.between(sx, ex) & self.annot.Y.between(sy, ey)
             locations = self.annot.loc[selector, ['Y', 'X']].values
             patch_locations = locations - start_yx
 
             # build target
-            detection_target = self._build_detection_target(patch, patch_locations)
+            target = self.target_builder.build(patch, patch_locations)
 
         # pad patch (in case of patches in last col/rows)
         py, px = - patch_hw % self.patch_hw
@@ -198,68 +189,29 @@ class _PerineuralNetsDetImage(Dataset):
 
         patch = np.pad(patch, pad)  # defaults to zero padding
 
-        if self.with_targets:
-            # put in a unique tuple the patch and the target
-            patch = np.expand_dims(patch, axis=-1)  # add channels dimension
-            input_and_target = (patch, detection_target)
-            datum = input_and_target
+        if self.target_builder:
+            datum = self.target_builder.pack(patch, target, pad=pad)
         else:
             datum = np.expand_dims(patch, axis=-1)  # add channels dimension
 
-        return datum, patch_hw, local_start_yx, self.region_hw, self.image_id
-
-    def _build_detection_target(self, patch, locations):
-        """ This builds the detection target
-        """
-        side = self.gt_params['side']
-        half_side = side / 2
-
-        shape = patch.shape
-
-        if len(locations) == 0:  # empty patch
-            bbs = np.array([[]], dtype=np.float32)
-        else:
-            # bb format: [y1, x1, y2, x2]
-            bbs = np.empty((locations.shape[0], 4), dtype=np.float32)
-            for i, center in enumerate(locations):
-                bbs[i] = [center[0]-half_side, center[1]-half_side, center[0]+half_side, center[1]+half_side]
-                np.clip(bbs[i], [0, 0, 0, 0], [shape[0], shape[1], shape[0], shape[1]], out=bbs[i])
-
-        return bbs
+        patch_info = (patch_hw, local_start_yx, self.region_hw, self.image_id)
+        return datum, *patch_info
 
 
-# Debug code
 if __name__ == "__main__":
     from torch.utils.data import DataLoader
-    from det_transforms import Compose, RandomHorizontalFlip, ToTensor
+    from utils.detection import ToTensor, collate_fn, build_coco_compliant_batch
     from tqdm import tqdm
 
-    def is_empty(l):
-        return all(is_empty(i) if isinstance(i, list) else False for i in l)
-
-    data_root = '/home/luca/luca-cnr/mnt/datino/perineural_nets'
-    device = "cpu"
-    output_folder = "output/gt/bbs_patches"
+    data_root = 'data/perineuronal_nets'
 
     for split in ('train', 'validation', 'train-specular', 'validation-specular', 'all'):
-        dataset = PerineuralNetsDetDataset(data_root, split=split)
+        dataset = PerineuralNetsDataset(data_root, split=split)
         print(split, len(dataset))
 
-    dataset = PerineuralNetsDetDataset(data_root, split='all', patch_size=640, overlap=120, random_offset=320, with_targets=True, transforms=Compose([RandomHorizontalFlip(), ToTensor()]), max_cache_mem=8*1024**3)  # bytes = 8 GiB
-    dataloader = DataLoader(dataset, batch_size=8, shuffle=True, num_workers=0, collate_fn=dataset.custom_collate_fn)
+    dataset = PerineuralNetsDataset(data_root, split='all', patch_size=640, overlap=120, random_offset=320, target='detection', transforms=ToTensor(), max_cache_mem=8*1024**3)  # bytes = 8 GiB
+    dataloader = DataLoader(dataset, batch_size=8, shuffle=True, num_workers=0, collate_fn=collate_fn)
 
-    for i, (img_and_target, _, _, _, image_id) in enumerate(tqdm(dataloader)):
-        imgs, targets = dataset.build_coco_compliant_batch(img_and_target)
-        imgs = list(img.to(device) for img in imgs)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-
-        for img, target, img_id in zip(imgs, targets, image_id):
-            img_name = img_id.rsplit(".", 1)[0] + "_{}.png".format(i)
-            bboxes = target['boxes'].tolist()
-
-            pil_image = to_pil_image(img.cpu())
-            draw = ImageDraw.Draw(pil_image)
-            if not is_empty(bboxes):
-                for bb in bboxes:
-                    draw.rectangle([bb[0], bb[1], bb[2], bb[3]], outline='red', width=3)
-            pil_image.save(os.path.join(output_folder, img_name))
+    for batch in tqdm(dataloader):
+        coco_batch = build_coco_compliant_batch(batch[0])
+        import pdb; pdb.set_trace()

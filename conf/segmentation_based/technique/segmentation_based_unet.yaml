@@ -1,7 +1,7 @@
 # @package _group_
 dataset:
   train:
-    name: perineural_nets
+    name: PerineuralNetsDataset
     params:
       root: ${hydra:runtime.cwd}/data/perineuronal_nets
       split: train-specular
@@ -9,7 +9,8 @@ dataset:
       overlap: 0
       random_offset: null  # auto-determined as patch_size / 2
       max_cache_mem: 8_589_934_592  # 8GiB in bytes
-      gt_params:
+      target: segmentation
+      target_params:
         radius: 20         # radius (in px) of the dot placed on a cell in the segmentation map
         radius_ignore: 25  # radius (in px) of the 'ignore' zone surrounding the cell
         v_bal: 0.1         # weight of the loss of bg pixels
@@ -19,15 +20,16 @@ dataset:
         lambda_sep: 50     # multiplier for the separation weights (before being summed to the other loss weights)
 
   validation:
-    name: perineural_nets
+    name: PerineuralNetsDataset
     params:
       root: ${hydra:runtime.cwd}/data/perineuronal_nets
       split: validation-specular
       patch_size: 320
-      overlap: null        # auto-determined as 4 * gt_params.radius_ignore
+      overlap: 100           # auto-determined as 4 * gt_params.radius_ignore
       random_offset: 0
       max_cache_mem: 8_589_934_592  # 8GiB in bytes
-      gt_params:
+      target: segmentation
+      target_params:
         radius: 20         # radius (in px) of the dot placed on a cell in the segmentation map
         radius_ignore: 25  # radius (in px) of the 'ignore' zone surrounding the cell
         v_bal: 0.1         # weight of the loss of bg pixels
