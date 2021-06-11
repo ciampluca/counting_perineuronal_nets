@@ -49,7 +49,7 @@ class SegmentationTargetBuilder:
         self.width_sep = width_sep
 
 
-    def build(self, image, points_yx):
+    def build(self, shape, points_yx):
 
         radius = self.radius
         radius_ign = self.radius_ignore
@@ -58,7 +58,6 @@ class SegmentationTargetBuilder:
         s_sep = self.sigma_sep
         lambda_sep = self.lambda_sep
         
-        shape = image.shape
         min_yx, max_yx = np.array((0, 0)), np.array(shape) - 1
         segmentation = np.zeros(shape, dtype=np.float32)
         
@@ -123,8 +122,8 @@ class SegmentationTargetBuilder:
 
     def pack(self, image, target, pad=None):
         segmentation, weights = target
-        segmentation = np.pad(segmentation, pad)
-        weights = np.pad(weights, pad)  # 0 in loss weight = don't care
+        segmentation = np.pad(segmentation, pad) if pad else segmentation
+        weights = np.pad(weights, pad) if pad else weights  # 0 in loss weight = don't care
 
         # stack in a unique RGB-like tensor, useful for applying data augmentation
         return np.stack((image, segmentation, weights), axis=-1)

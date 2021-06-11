@@ -20,14 +20,16 @@ class DensityTargetBuilder:
 
         self.kernel_size = kernel_size
         self.sigma = sigma
+
+    def build(self, shape, locations):
+        return self.build_nocv2(shape, locations)
     
-    def build(self, patch, locations):
+    def build_cv2(self, shape, locations):
         """ This builds the density map, putting a gaussian over each dots localizing a perineural net. """
 
         kernel_size = self.kernel_size
         sigma = self.sigma
 
-        shape = patch.shape
         dmap = np.zeros(shape, dtype=np.float32)
 
         if len(locations) == 0:  # empty patch
@@ -82,7 +84,7 @@ class DensityTargetBuilder:
 
         return dmap
 
-    def build_nocv2(self, image, points_yx):
+    def build_nocv2(self, hw, points_yx):
         """ This builds the density map, putting a gaussian over each dots localizing a perineural net.
 
             NOTE: This is an equivalent cv2-free implementation, but the results are NOT numerically identical to build().
@@ -90,7 +92,6 @@ class DensityTargetBuilder:
             the kernel size is even (according to cv2's doc, only odd kernel should be used).
             However, this difference is negligible in practice.
         """
-        hw = np.array(image.shape[:2])
         dmap = np.zeros(hw, dtype=np.float32)
 
         r = self.kernel_size // 2
@@ -114,6 +115,6 @@ class DensityTargetBuilder:
         return dmap
 
     def pack(self, image, target, pad=None):
-        dmap = np.pad(target, pad)
+        dmap = np.pad(target, pad) if pad else target
         # stack in a unique RGB-like tensor, useful for applying data augmentation
         return np.stack((image, dmap), axis=-1)

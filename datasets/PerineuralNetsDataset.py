@@ -181,7 +181,7 @@ class _PerineuralNetsImage(Dataset):
             patch_locations = locations - start_yx
 
             # build target
-            target = self.target_builder.build(patch, patch_locations)
+            target = self.target_builder.build(patch_hw, patch_locations)
 
         # pad patch (in case of patches in last col/rows)
         py, px = - patch_hw % self.patch_hw
@@ -200,7 +200,8 @@ class _PerineuralNetsImage(Dataset):
 
 if __name__ == "__main__":
     from torch.utils.data import DataLoader
-    from utils.detection import ToTensor, collate_fn, build_coco_compliant_batch
+    from detection.transforms import ToTensor
+    from detection.utils import collate_fn, build_coco_compliant_batch
     from tqdm import tqdm
 
     data_root = 'data/perineuronal_nets'

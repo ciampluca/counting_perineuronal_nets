@@ -12,15 +12,15 @@ class DetectionTargetBuilder:
         self.side = side
 
 
-    def build(self, image, points_yx):
+    def build(self, image_hw, points_yx):
         """ Builds the detection target. """
         half_side = self.side / 2
-        hwhw = np.tile(image.shape, 2)
+        hwhw = np.tile(image_hw, 2)
 
-        lt = points_yx - half_side
-        rb = points_yx + half_side
+        tl = points_yx - half_side
+        br = points_yx + half_side
 
-        bbs = np.hstack((lt, rb))
+        bbs = np.hstack((tl, br))
         bbs = np.clip(bbs, 0, hwhw)
 
         return bbs
