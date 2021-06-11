@@ -30,3 +30,8 @@ def density_map_to_points(density_map, min_distance, threshold):
     localizations['score'] = density_map[tuple(peak_idx.T)]
 
     return localizations
+
+
+def normalize_map(density_map):
+    dmin, dmax = density_map.min(), density_map.max()
+    return (density_map - dmin) / (dmax - dmin)

@@ -23,6 +23,7 @@ from omegaconf import DictConfig
 import hydra
 
 from density.metrics import counting, ssim
+from density.utils import normalize_map
 from utils import seed_everything, update_dict
 
 tqdm = partial(tqdm, dynamic_ncols=True)
@@ -47,8 +48,7 @@ def save_image_and_density_maps(image, image_id, pred_dmap, gt_dmap):
 
     def _annotate_density_map(density_map, prefix):
         count = density_map.sum()
-        dmin, dmax = density_map.min(), density_map.max()
-        density_map = (density_map - dmin) / (dmax - dmin)
+        density_map = normalize_map(density_map)
         density_map = (255 * density_map).astype(np.uint8)
 
         pil_density_map = Image.fromarray(density_map)

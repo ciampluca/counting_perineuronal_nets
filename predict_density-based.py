@@ -20,7 +20,7 @@ from omegaconf import OmegaConf
 from datasets import PerineuralNetsDataset
 from density.target_builder import DensityTargetBuilder
 from density.metrics import counting, counting_yx
-from density.utils import density_map_to_points
+from density.utils import density_map_to_points, normalize_map
 from points.match import match
 from points.metrics import detection_and_counting
 from points.utils import draw_groundtruth_and_predictions
@@ -104,8 +104,7 @@ def predict(model, dataloader, device, cfg, outdir, debug=False):
         if outdir and debug:  # debug
             outdir.mkdir(parents=True, exist_ok=True)
             io.imsave(outdir / image_id, image)
-            dmin, dmax = dmap.min(), dmap.max()
-            normalized_dmap = (dmap - dmin) / (dmax - dmin)
+            normalized_dmap = normalize_map(dmap)
             normalized_dmap = (255 * normalized_dmap).astype(np.uint8)
             io.imsave(outdir / f'dmap_{image_id}', normalized_dmap)
             del normalized_dmap
