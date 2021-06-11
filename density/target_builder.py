@@ -114,6 +114,50 @@ class DensityTargetBuilder:
 
         return dmap
 
+
+    def build_reflect(self, hw, points_yx):
+        """ This builds the density map, putting a gaussian over each dots localizing a perineural net.
+            It deals with borders by reflecting outside density inside the region.
+        """
+        r = self.kernel_size // 2
+        padded_hw = np.array(hw) + 2 * r
+        dmap = np.zeros(padded_hw, dtype=np.float32)
+
+        centers = np.abs(np.floor(points_yx).astype(int))
+        for c_yx in centers:
+            c_yx = np.clip(c_yx, 0, hw) + r
+            tl = c_yx - r
+            br = c_yx + r
+            rh, rw = br - tl
+
+            kh = gaussian(rh, self.sigma)
+            kw = gaussian(rw, self.sigma)
+            kh /= kh.sum()
+            kw /= kw.sum()
+
+            H = np.outer(kh, kw)
+
+            (y0, x0), (y1, x1) = tl, br
+            dmap[y0:y1, x0:x1] += H
+        
+        ### reflect pad areas into the 'inside'
+        # LEFT & RIGHT
+        dmap[:, r:2*r] += dmap[:, :r][:, ::-1]
+        dmap[:, -2*r:-r] += dmap[:, -r:][:, ::-1]
+
+        # set to zero to avoid readding corners
+        dmap[:, :r] = 0 
+        dmap[:, -r:] = 0
+
+        # TOP & BOTTOM
+        dmap[r:2*r, :] += dmap[:r, :][::-1, :]
+        dmap[-2*r:-r, :] += dmap[-r:, :][::-1, :]
+
+        # unpad
+        dmap = dmap[r:-r, r:-r]
+        return dmap
+
+
     def pack(self, image, target, pad=None):
         dmap = np.pad(target, pad) if pad else target
         # stack in a unique RGB-like tensor, useful for applying data augmentation
