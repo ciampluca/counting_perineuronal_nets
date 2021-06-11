@@ -30,6 +30,32 @@ def _circle_marker(r, c, radius, shape):
     return draw.circle_perimeter_aa(r, c, radius)
 
 
+def draw_points(image, points_yx, radius=10, marker='circle', color=RED):
+    """ Draw points on the image.
+
+    Args:
+        image (ndarray): (H,W)-shaped image array.
+        points_yx (ndarray): (N,2)-shaped array of points.
+        radius (int, optional): Half size of the markers. Defaults to 10.
+        marker (str, optional): Type of the marker; can be 'circle' or 'square'. Defaults to 'circle'.
+        color ([type], optional): Color of the markers as RGB tuple. Defaults to RED = (255, 0, 0).
+    """
+    assert marker in ('circle', 'square'), f'Marker type not supported: {marker}'
+
+    if marker == 'circle':
+        draw_marker_fn = _circle_marker
+    elif marker == 'square':
+        draw_marker_fn = _square_marker
+
+    image = np.stack((image, image, image), axis=-1)
+
+    for r, c in points_yx.astype(int):
+        rr, cc, val = draw_marker_fn(r, c, radius, image.shape)
+        draw.set_color(image, (rr, cc), color, alpha=val)
+    
+    return image
+    
+
 def draw_groundtruth_and_predictions(image, gp, radius=10, marker='circle', palette=None):
     """ Draw groundtruth and predicted points on the image.
 
