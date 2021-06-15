@@ -54,12 +54,16 @@ def update_dict(d, u):
     return d
 
 
-def save_img_and_dmaps(img, img_id, pred_dmap, gt_dmap):
+def save_img_and_dmaps(img, img_id, pred_dmap, gt_dmap, cfg):
     debug_dir = os.path.join(os.getcwd(), 'output_debug')
     if not os.path.exists(debug_dir):
         os.makedirs(debug_dir)
+
+    # Add text to image
     font_path = os.path.join(hydra.utils.get_original_cwd(), "./font/LEMONMILK-RegularItalic.otf")
-    font = ImageFont.truetype(font_path, 100)
+    font_size = cfg.train.font_size
+    text_pos = cfg.train.text_pos
+    font = ImageFont.truetype(font_path, font_size)
 
     pil_image = F.to_pil_image(img.cpu()).convert("RGB")
     pil_image.save(os.path.join(debug_dir, img_id))
@@ -69,7 +73,7 @@ def save_img_and_dmaps(img, img_id, pred_dmap, gt_dmap):
     draw = ImageDraw.Draw(pil_pred_dmap)
     # Add text to image
     text = f"Det Num of Nets: {det_num}"
-    draw.text((75, 75), text=text, font=font, fill=191)
+    draw.text(text_pos, text=text, font=font, fill=191)
     pil_pred_dmap.save(os.path.join(debug_dir, img_id.rsplit(".", 1)[0] + "_pred_dmap.png"))
 
     gt_num = gt_dmap.sum()
@@ -77,7 +81,7 @@ def save_img_and_dmaps(img, img_id, pred_dmap, gt_dmap):
     draw = ImageDraw.Draw(pil_gt_dmap)
     # Add text to image
     text = f"GT Num of Nets: {gt_num}"
-    draw.text((75, 75), text=text, font=font, fill=191)
+    draw.text(text_pos, text=text, font=font, fill=191)
     pil_gt_dmap.save(os.path.join(debug_dir, img_id.rsplit(".", 1)[0] + "_gt_dmap.png"))
 
 
@@ -223,7 +227,7 @@ def validate(model, dataloader, criterion, device, cfg, epoch):
         })
 
         if cfg.train.debug and epoch % cfg.train.debug == 0:
-            save_img_and_dmaps(full_image, image_id, full_pred_dmap, full_gt_dmap)
+            save_img_and_dmaps(full_image, image_id, full_pred_dmap, full_gt_dmap, cfg)
 
         # Cleaning
         del normalization_map
