@@ -34,4 +34,6 @@ def density_map_to_points(density_map, min_distance, threshold):
 
 def normalize_map(density_map):
     dmin, dmax = density_map.min(), density_map.max()
-    return (density_map - dmin) / (dmax - dmin)
+    if dmin == dmax:
+        return density_map
+    return (density_map - dmin) / dmax - dmin
