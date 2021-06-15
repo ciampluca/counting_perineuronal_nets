@@ -291,12 +291,13 @@ def validate(model, dataloader, device, cfg, epoch):
     thr_metrics = []
 
     # group by image_id (and image_hw for convenience) --> iterate over full images
-    grouper = lambda x: (x[0], x[1].tolist())  # group by (image_id, image_hw)
-    groups = itertools.groupby(processed_samples, key=grouper)
     if isinstance(dataloader.dataset, torch.utils.data.ConcatDataset):
+        grouper = lambda x: (x[0], x[1].tolist())  # group by (image_id, image_hw)
         num_imgs = len(dataloader.dataset.datasets)
     else:
+        grouper = lambda x: (x[0], x[1])  # group by (image_id, image_hw)
         num_imgs = len(dataloader.dataset)
+    groups = itertools.groupby(processed_samples, key=grouper)
     progress = tqdm(groups, total=num_imgs, desc='EVAL', leave=False)
     for (image_id, image_hw), image_patches in progress:
         full_image = torch.empty(image_hw, dtype=torch.float32, device=validation_device)
@@ -526,6 +527,7 @@ def main(hydra_cfg: DictConfig) -> None:
     log.info(f"Loading training data of dataset {cfg.dataset.train.name}")
     params = cfg.dataset.train.params
     log.info("Train input size: {0}x{0}".format(params.patch_size))
+    train_img_names, val_img_names = None, None
     if cfg.dataset.train.name == "VGGCellsDataset":
         train_img_names, val_img_names = compute_dataset_splits(cfg)
     train_transform = Compose([RandomHorizontalFlip(), ToTensor()])

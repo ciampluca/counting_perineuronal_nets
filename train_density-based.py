@@ -11,6 +11,7 @@ import pandas as pd
 import itertools
 from PIL import ImageDraw, ImageFont, Image
 from skimage.metrics import structural_similarity as ssim
+import random
 
 import torch
 import torchvision
@@ -26,7 +27,6 @@ from prefetch_generator import BackgroundGenerator
 
 from utils import dmaps as utils_dmaps
 from utils.misc import normalize
-from datasets.perineural_nets_dmap_dataset import PerineuralNetsDMapDataset
 
 tqdm = partial(tqdm, dynamic_ncols=True)
 trange = partial(trange, dynamic_ncols=True)
@@ -94,6 +94,7 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device, cfg, writer
         input_and_target = input_and_target.to(device)
         # split channels to get input, target, and loss weights
         images, gt_dmaps = input_and_target.split(1, dim=1)
+        gt_dmaps *= 100
         # Expanding images to 3 channels
         images = images.expand(-1, 3, -1, -1)
 
@@ -151,6 +152,7 @@ def validate(model, dataloader, criterion, device, cfg, epoch):
 
         # Computing predictions
         pred_dmaps = model(images)
+        pred_dmaps *= 0.01
 
         # Removing previously added pad
         pred_dmaps = pred_dmaps[:, :, pad_value:pred_dmaps.shape[2]-pad_value, pad_value:pred_dmaps.shape[3]-pad_value]
@@ -174,9 +176,14 @@ def validate(model, dataloader, criterion, device, cfg, epoch):
     metrics = []
 
     # group by image_id (and image_hw for convenience) --> iterate over full images
-    grouper = lambda x: (x[0], x[1].tolist())  # group by (image_id, image_hw)
+    if isinstance(dataloader.dataset, torch.utils.data.ConcatDataset):
+        grouper = lambda x: (x[0], x[1].tolist())  # group by (image_id, image_hw)
+        num_imgs = len(dataloader.dataset.datasets)
+    else:
+        grouper = lambda x: (x[0], x[1])  # group by (image_id, image_hw)
+        num_imgs = len(dataloader.dataset)
     groups = itertools.groupby(processed_samples, key=grouper)
-    progress = tqdm(groups, total=len(dataloader.dataset.datasets), desc='EVAL', leave=False)
+    progress = tqdm(groups, total=num_imgs, desc='EVAL', leave=False)
     for (image_id, image_hw), image_patches in progress:
         full_image = torch.empty(image_hw, dtype=torch.float32, device=validation_device)
         full_gt_dmap = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
@@ -226,6 +233,26 @@ def validate(model, dataloader, criterion, device, cfg, epoch):
     return metrics
 
 
+def compute_dataset_splits(cfg):
+    img_names = [img_name for img_name in os.listdir(cfg.dataset.train.params.root) if img_name.endswith("cell.png")]
+    num_train_sample = cfg.dataset.train.params.num_sample
+    num_val_sample = cfg.dataset.validation.params.num_sample
+    # the dataset contains 200 images; 100 should be for test
+    if num_train_sample + num_val_sample > 100:
+        log.error(f"Splits train+val can contain a maximum of 100 images")
+    indexes = list(range(0, len(img_names)))
+    random.shuffle(indexes)
+    train_indexes = indexes[0:num_train_sample]
+    train_img_names = [img_names[i] for i in train_indexes]
+    val_indexes = indexes[num_train_sample:num_train_sample+num_val_sample]
+    val_img_names = [img_names[i] for i in val_indexes]
+    test_img_names = list(set(img_names) - set(train_img_names + val_img_names))
+    df = pd.DataFrame({"name": test_img_names})  # saving indexes for testing
+    df.to_csv('test_img_names.csv')
+
+    return train_img_names, val_img_names
+
+
 @hydra.main(config_path="conf/density_based", config_name="config")
 def main(hydra_cfg: DictConfig) -> None:
     log.info(f"Run path: {Path.cwd()}")
@@ -233,12 +260,6 @@ def main(hydra_cfg: DictConfig) -> None:
     cfg = copy.deepcopy(hydra_cfg.technique)
     for _, v in hydra_cfg.items():
         update_dict(cfg, v)
-
-    experiment_name = f"{cfg.model.name}_" \
-                      f"{cfg.dataset.train.name}_split-{cfg.dataset.train.params.split}_" \
-                      f"input_size-{cfg.dataset.train.params.patch_size}_" \
-                      f"overlap-{cfg.dataset.validation.params.overlap}_loss-{cfg.optimizer.loss.name}_" \
-                      f"batch_size-{cfg.train.batch_size}"
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(cfg.gpu)
     device = torch.device(f'cuda' if cfg.gpu is not None else 'cpu')
@@ -257,16 +278,21 @@ def main(hydra_cfg: DictConfig) -> None:
     torch.set_default_dtype(torch.float32)
 
     # create tensorboard writer
-    writer = SummaryWriter(comment="_" + experiment_name)
+    writer = SummaryWriter()
 
     # Creating training dataset and dataloader
-    log.info(f"Loading training data")
+    log.info(f"Loading training data of dataset {cfg.dataset.train.name}")
     params = cfg.dataset.train.params
     log.info("Train input size: {0}x{0}".format(params.patch_size))
+    train_img_names, val_img_names = None, None
+    if cfg.dataset.train.name == "VGGCellsDataset":
+        train_img_names, val_img_names = compute_dataset_splits(cfg)
     train_transform = Compose([ToTensor(), RandomHorizontalFlip()])
-    train_dataset = PerineuralNetsDMapDataset(
+    train_dataset = hydra.utils.get_class(f"datasets.{cfg.dataset.train.name}.{cfg.dataset.train.name}")
+    train_dataset = train_dataset(
         transforms=train_transform,
-        **params,
+        image_names=train_img_names,
+        **params
     )
     train_loader = DataLoader(
         train_dataset,
@@ -282,8 +308,10 @@ def main(hydra_cfg: DictConfig) -> None:
     log.info("Validation input size: {0}x{0}".format(params.patch_size))
     valid_batch_size = cfg.train.val_batch_size if cfg.train.val_batch_size else cfg.train.batch_size
     valid_transform = ToTensor()
-    valid_dataset = PerineuralNetsDMapDataset(
+    valid_dataset = hydra.utils.get_class(f"datasets.{cfg.dataset.validation.name}.{cfg.dataset.validation.name}")
+    valid_dataset = valid_dataset(
         transforms=valid_transform,
+        image_names=val_img_names,
         **params,
     )
     valid_loader = DataLoader(

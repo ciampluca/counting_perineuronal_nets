@@ -21,7 +21,7 @@ from omegaconf import OmegaConf
 
 from prefetch_generator import BackgroundGenerator
 
-from datasets.perineural_nets_dmap_dataset import PerineuralNetsDMapDataset
+from datasets.PerineuralNetsDMapDataset import PerineuralNetsDMapDataset
 from utils import dmaps as utils_dmaps
 from utils import points
 from utils.misc import normalize

@@ -1,7 +1,7 @@
 # @package _group_
 dataset:
     train:
-        name: "perineural_nets"
+        name: PerineuralNetsDMapDataset
         params:
             root: ${hydra:runtime.cwd}/data/perineuronal_nets
             split: train-specular
@@ -9,12 +9,15 @@ dataset:
             overlap: 0
             random_offset: null  # auto-determined as patch_size / 2
             max_cache_mem: 8_589_934_592  # 8GiB in bytes
+            num_sample: null
             gt_params:
-                'k_size': 51         # size (in px) of the kernel of the gaussian localizing a perineural nets
-                'sigma': 30            # sigma of the gaussian
+                k_size: 51         # size (in px) of the kernel of the gaussian localizing a perineural nets
+                sigma: 30            # sigma of the gaussian
+                ann_type: null
+                in_memory: null
 
     validation:
-        name: perineural_nets
+        name: PerineuralNetsDMapDataset
         params:
             root: ${hydra:runtime.cwd}/data/perineuronal_nets
             split: validation-specular
@@ -23,9 +26,12 @@ dataset:
             overlap: null        # auto-determined as 4 * gt_params.radius_ignore
             random_offset: 0
             max_cache_mem: 8_589_934_592  # 8GiB in bytes
+            num_sample: null
             gt_params:
-                'k_size': 51         # size (in px) of the kernel of the gaussian localizing a perineural nets
-                'sigma': 30            # sigma of the gaussian
+                k_size: 51         # size (in px) of the kernel of the gaussian localizing a perineural nets
+                sigma: 30            # sigma of the gaussian
+                ann_type: null
+                in_memory: null
 
 
 model:

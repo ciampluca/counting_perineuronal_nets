@@ -2,10 +2,10 @@ import os
 from tqdm import tqdm
 from skimage.io import imread
 import numpy as np
-import scipy.stats
 from skimage.color import rgb2gray
 from copy import deepcopy
 import pandas as pd
+from scipy.ndimage.filters import gaussian_filter
 
 import torch
 from torch.utils.data import Dataset
@@ -16,14 +16,12 @@ class VGGCellsDataset(Dataset):
     # params for groundtruth bbs generation
     DEFAULT_GT_PARAMS = {
         'side': 12,         # side (in px) of the bounding box localizing a cell
-        'win_size': 32,
-        'scale': 1,
-        'stride': 1,
-        'cov': 1
+        'sigma': 10,
     }
 
-    def __init__(self, root, transforms=None, in_memory=False, image_names=None, gt_params={}, ann_type="det", **kwargs):
+    def __init__(self, root, transforms=None, in_memory=False, image_names=None, gt_params={}, **kwargs):
 
+        ann_type = gt_params['ann_type']
         assert ann_type in ['det', 'den', 'segm', None], "Not implemented annotation type"
         if image_names is None or not image_names:
             print(f"You have to pass a list of image names")
@@ -49,6 +47,12 @@ class VGGCellsDataset(Dataset):
             for img_n in tqdm(self.image_names):
                 self.samples.append(self._load_sample(img_n))
 
+        # border pad (for validation, useful for reconstructing the image)
+        border_pad = kwargs.get('border_pad', None)
+        if border_pad is not None:
+            assert border_pad % 32 == 0, "Border pad value must be divisible by 32"
+            self.border_pad = border_pad
+
     def __getitem__(self, index):
         if self.in_memory:
             sample = self.samples[index]
@@ -72,11 +76,10 @@ class VGGCellsDataset(Dataset):
         image_hw = img.shape
 
         if self.ann_type == "den":
-            markers = self._get_markers(label, image_hw)
-            img_pad = np.pad(img, self.gt_params['win_size'] // 2, "constant", constant_values=0)
-            dmap = self._get_density(img_pad.shape[0:2], markers)
+            points = np.nonzero(label)
+            dmap = self._get_dmap(points, image_hw, self.gt_params['sigma'])
             # stack input and target
-            input_and_target = np.stack((img_pad, dmap), axis=-1)
+            input_and_target = np.stack((img, dmap), axis=-1)
             datum = input_and_target
         elif self.ann_type == "det":
             points = np.nonzero(label)
@@ -98,39 +101,30 @@ class VGGCellsDataset(Dataset):
 
         return datum, patch_hw, start_yx, image_hw, img_n
 
-    def _get_markers(self, label, shape):
-        bin_size = [self.gt_params['scale'], self.gt_params['scale']]
-        markers = np.zeros(shape)
-        for i in range(bin_size[0]):
-            for j in range(bin_size[1]):
-                markers = np.maximum(label[i::bin_size[0], j::bin_size[1]], markers)
+    def _get_dmap(self, points, shape, sigma):
+        """
+        points: the points corresponding to heads with order [col,row].
+        """
+        image_h, image_w = shape
 
-        assert np.allclose(label.sum(), markers.sum(), 1)
+        points = [[x, y] for y, x in zip(points[0], points[1])]
 
-        markers = np.pad(markers, self.gt_params['win_size'], "constant", constant_values=-1)
+        points_quantity = len(points)
 
-        return markers
+        dmap = np.zeros((image_h, image_w), dtype=np.float32)
+        if points_quantity == 0:
+            return dmap
+        else:
+            for point in points:
+                c = min(int(round(point[0])), image_w - 1)
+                r = min(int(round(point[1])), image_h - 1)
+                point2density = np.zeros((image_h, image_w), dtype=np.float32)
+                point2density[r, c] = 1
+                dmap += gaussian_filter(point2density, sigma=sigma, mode='constant')
 
-    def _get_density(self, dim, markers):
-        height, width = ((dim[0]) // self.gt_params['stride']), ((dim[1]) // self.gt_params['stride'])
-        markers = markers[0:0 + height, 0:0 + width]
-        gaus_img = np.zeros((height, width))
-        for k in range(height):
-            for l in range(width):
-                if markers[k, l] > 0.5:
-                    gaus_img += self._gen_gaus_img(len(markers), k - self.gt_params['win_size'] / 2,
-                                                   l - self.gt_params['win_size'] / 2, self.gt_params['win_size'])
+            dmap = dmap / dmap.sum() * points_quantity
 
-        return gaus_img
-
-    def _gen_gaus_img(self, win_size, mx, my, cov=1):
-        x, y = np.mgrid[0:win_size, 0:win_size]
-        pos = np.dstack((x, y))
-        mean = [mx, my]
-        cov = [[cov, 0], [0, cov]]
-        rv = scipy.stats.multivariate_normal(mean, cov).pdf(pos)
-
-        return rv / rv.sum()
+        return dmap
 
     def _build_detection_target(self, img, locations):
         """ This builds the detection target
@@ -208,7 +202,7 @@ if __name__ == "__main__":
     NUM_TRAIN_SAMPLE = 32
     assert NUM_TRAIN_SAMPLE < 51, "The maximum number of train samples is 50"
     output_folder = "output/gt/cells/"
-    ann_type = "det"
+    ann_type = "den"
     device = "cpu"
     RED = [255, 0, 0]
 
@@ -237,7 +231,7 @@ if __name__ == "__main__":
     dataset = VGGCellsDataset(
         ROOT,
         transforms=transforms,
-        in_memory=False,
+        in_memory=True,
         image_names=train_img_names,
         ann_type=ann_type,
     )
