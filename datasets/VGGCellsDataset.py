@@ -231,18 +231,19 @@ if __name__ == "__main__":
     dataset = VGGCellsDataset(
         ROOT,
         transforms=transforms,
-        in_memory=True,
+        in_memory=False,
         image_names=train_img_names,
-        ann_type=ann_type,
+        gt_params={'ann_type': ann_type},
     )
     if ann_type == "den":
-        dataloader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=0)
+        dataloader = DataLoader(dataset, batch_size=3, shuffle=True, num_workers=0)
     elif ann_type == "det":
         dataloader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=0, collate_fn=dataset.custom_collate_fn)
 
     progress = tqdm(dataloader, desc='TRAIN', leave=False)
     for i, sample in enumerate(progress):
-        input_and_target, _, _, _, image_id = sample
+        input_and_target, patch_hw, start_yx, image_hw, image_id = sample
+        # image_hw = [[elem_1.item(), elem_2.item()] for elem_1, elem_2 in zip(image_hw[0], image_hw[1])]
 
         if ann_type == "den":
             images, targets = input_and_target.split(1, dim=1)

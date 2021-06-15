@@ -161,6 +161,11 @@ def validate(model, dataloader, criterion, device, cfg, epoch):
         # prepare data for validation
         images, gt_dmaps, pred_dmaps = map(lambda x: x[:, 0].to(validation_device), (images, gt_dmaps, pred_dmaps))
 
+        if not isinstance(dataloader.dataset, torch.utils.data.ConcatDataset):
+            start_yx = [[elem_1.item(), elem_2.item()] for elem_1, elem_2 in zip(start_yx[0], start_yx[1])]
+            patch_hw = [[elem_1.item(), elem_2.item()] for elem_1, elem_2 in zip(patch_hw[0], patch_hw[1])]
+            image_hw = [[elem_1.item(), elem_2.item()] for elem_1, elem_2 in zip(image_hw[0], image_hw[1])]
+
         processed_batch = (image_id, image_hw, images, gt_dmaps, pred_dmaps, patch_hw, start_yx)
 
         return processed_batch
