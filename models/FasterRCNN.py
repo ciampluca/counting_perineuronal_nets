@@ -54,7 +54,7 @@ class FasterRCNNWrapper(FasterRCNNTorch):
 
         super().__init__(
             backbone_module,
-            num_classes,
+            num_classes=91,  # for loading COCO pretraining
             box_detections_per_img=max_dets_per_image,
             box_nms_thresh=nms,
             box_score_thresh=det_thresh,
