@@ -73,7 +73,7 @@ def save_img_and_dmaps(img, img_id, pred_dmap, gt_dmap, cfg):
     draw = ImageDraw.Draw(pil_pred_dmap)
     # Add text to image
     text = f"Det Num of Nets: {det_num}"
-    draw.text(text_pos, text=text, font=font, fill=191)
+    draw.text((text_pos, text_pos), text=text, font=font, fill=191)
     pil_pred_dmap.save(os.path.join(debug_dir, img_id.rsplit(".", 1)[0] + "_pred_dmap.png"))
 
     gt_num = gt_dmap.sum()
@@ -81,7 +81,7 @@ def save_img_and_dmaps(img, img_id, pred_dmap, gt_dmap, cfg):
     draw = ImageDraw.Draw(pil_gt_dmap)
     # Add text to image
     text = f"GT Num of Nets: {gt_num}"
-    draw.text(text_pos, text=text, font=font, fill=191)
+    draw.text((text_pos, text_pos), text=text, font=font, fill=191)
     pil_gt_dmap.save(os.path.join(debug_dir, img_id.rsplit(".", 1)[0] + "_gt_dmap.png"))
 
 
