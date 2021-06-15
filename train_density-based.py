@@ -77,6 +77,7 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device, cfg, writer
         input_and_target = input_and_target.to(device)
         # split channels to get input, target, and loss weights
         images, gt_dmaps = input_and_target.split(1, dim=1)
+        gt_dmaps *= 100
         # Expanding images to 3 channels
         images = images.expand(-1, 3, -1, -1)
 
@@ -154,7 +155,12 @@ def validate(model, dataloader, criterion, device, cfg, epoch):
     metrics = []
 
     # group by image_id (and image_hw for convenience) --> iterate over full images
-    grouper = lambda x: (x[0], x[1].tolist())  # group by (image_id, image_hw)
+    if isinstance(dataloader.dataset, torch.utils.data.ConcatDataset):
+        grouper = lambda x: (x[0], x[1].tolist())  # group by (image_id, image_hw)
+        num_imgs = len(dataloader.dataset.datasets)
+    else:
+        grouper = lambda x: (x[0], x[1])  # group by (image_id, image_hw)
+        num_imgs = len(dataloader.dataset)
     groups = itertools.groupby(processed_samples, key=grouper)
 
     n_images = len(dataloader.dataset)
@@ -211,6 +217,26 @@ def validate(model, dataloader, criterion, device, cfg, epoch):
     metrics = pd.DataFrame(metrics).set_index('image_id')
     metrics = metrics.mean(axis=0).to_dict()
     return metrics
+
+
+def compute_dataset_splits(cfg):
+    img_names = [img_name for img_name in os.listdir(cfg.dataset.train.params.root) if img_name.endswith("cell.png")]
+    num_train_sample = cfg.dataset.train.params.num_sample
+    num_val_sample = cfg.dataset.validation.params.num_sample
+    # the dataset contains 200 images; 100 should be for test
+    if num_train_sample + num_val_sample > 100:
+        log.error(f"Splits train+val can contain a maximum of 100 images")
+    indexes = list(range(0, len(img_names)))
+    random.shuffle(indexes)
+    train_indexes = indexes[0:num_train_sample]
+    train_img_names = [img_names[i] for i in train_indexes]
+    val_indexes = indexes[num_train_sample:num_train_sample+num_val_sample]
+    val_img_names = [img_names[i] for i in val_indexes]
+    test_img_names = list(set(img_names) - set(train_img_names + val_img_names))
+    df = pd.DataFrame({"name": test_img_names})  # saving indexes for testing
+    df.to_csv('test_img_names.csv')
+
+    return train_img_names, val_img_names
 
 
 @hydra.main(config_path="conf/density_based", config_name="config")
