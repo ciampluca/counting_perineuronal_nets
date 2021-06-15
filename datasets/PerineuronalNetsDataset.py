@@ -12,7 +12,7 @@ from detection.target_builder import DetectionTargetBuilder
 from density.target_builder import DensityTargetBuilder
 
 
-class PerineuralNetsDataset(ConcatDataset):
+class PerineuronalNetsDataset(ConcatDataset):
     """ Dataset that provides per-patch iteration of bunch of big image files,
         implemented as a concatenation of single-file datasets. """
 
@@ -22,7 +22,7 @@ class PerineuralNetsDataset(ConcatDataset):
                  patch_size=640,
                  overlap=0,
                  random_offset=None,
-                 target=None,
+                 target_=None,
                  target_params={},
                  transforms=None,
                  max_cache_mem=None):
@@ -35,6 +35,7 @@ class PerineuralNetsDataset(ConcatDataset):
         self.overlap = overlap
         self.random_offset = random_offset if random_offset is not None else patch_size // 2
 
+        target = target_  # XXX TOREMOVE for hydra bug
         assert target in (None, 'segmentation', 'detection', 'density'), f'Unsupported target type: {target}'
         self.target = target
 
@@ -92,7 +93,14 @@ class PerineuralNetsDataset(ConcatDataset):
         if self.transforms:
             sample = (self.transforms(sample[0]),) + sample[1:]
 
-        return sample       
+        return sample
+    
+    def __str__(self):
+        s = f'{self.__class__.__name__}: ' \
+            f'{self.split} split, ' \
+            f'{len(self.datasets)} images, ' \
+            f'{len(self)} patches ({self.patch_size}x{self.patch_size})'
+        return s
 
 
 class _PerineuralNetsImage(Dataset):
@@ -207,10 +215,10 @@ if __name__ == "__main__":
     data_root = 'data/perineuronal_nets'
 
     for split in ('train', 'validation', 'train-specular', 'validation-specular', 'all'):
-        dataset = PerineuralNetsDataset(data_root, split=split)
+        dataset = PerineuronalNetsDataset(data_root, split=split)
         print(split, len(dataset))
 
-    dataset = PerineuralNetsDataset(data_root, split='all', patch_size=640, overlap=120, random_offset=320, target='detection', transforms=ToTensor(), max_cache_mem=8*1024**3)  # bytes = 8 GiB
+    dataset = PerineuronalNetsDataset(data_root, split='all', patch_size=640, overlap=120, random_offset=320, target='detection', transforms=ToTensor(), max_cache_mem=8*1024**3)  # bytes = 8 GiB
     dataloader = DataLoader(dataset, batch_size=8, shuffle=True, num_workers=0, collate_fn=collate_fn)
 
     for batch in tqdm(dataloader):
