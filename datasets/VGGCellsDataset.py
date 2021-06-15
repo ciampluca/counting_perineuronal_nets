@@ -21,11 +21,13 @@ class VGGCellsDataset(Dataset):
                  split='all',
                  split_seed=None,
                  num_samples=None,
-                 target=None,
+                 target_=None,
                  target_params={},
                  transforms=None,
                  in_memory=False):
 
+        target = target_  # XXX TOREMOVE for hydra bug
+        
         assert target in (None, 'segmentation', 'detection', 'density'), f'Unsupported target type: {target}'
         assert split in ('all', 'train', 'validation', 'test'), "Split must be one of ('train', 'validation', 'test', 'all')"
         assert split == 'all' or ((split_seed is not None) and (num_samples is not None)), "You must supply split_seed and num_samples when split != 'all'"
