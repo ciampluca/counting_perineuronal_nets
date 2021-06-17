@@ -60,11 +60,6 @@ def update_dict(d, u):
     return d
 
 
-def unbatch(batches):
-    for batch in batches:
-        yield from zip(*batch)
-
-
 class CheckpointManager:
 
     COMMON_MODES={
