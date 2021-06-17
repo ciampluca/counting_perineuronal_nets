@@ -1,27 +1,25 @@
 # -*- coding: utf-8 -*-
-import itertools
+from functools import partial
 import logging
 import math
-from functools import partial
 from pathlib import Path
 
+import hydra
 import numpy as np
 import pandas as pd
 from PIL import ImageDraw, ImageFont
-from prefetch_generator import BackgroundGenerator
-from tqdm import tqdm
-
+from skimage import io
 import torch
 from torchvision.ops import boxes as box_ops
 from torchvision.transforms.functional import to_pil_image
+from tqdm import tqdm
 
-import hydra
-
-from detection.metrics import dice_jaccard
-from detection.utils import check_empty_images, build_coco_compliant_batch
+from .metrics import dice_jaccard
+from .utils import check_empty_images, build_coco_compliant_batch
 from points.metrics import detection_and_counting
 from points.match import match
-from utils import reduce_dict, unbatch
+from points.utils import draw_groundtruth_and_predictions
+from utils import reduce_dict
 
 tqdm = partial(tqdm, dynamic_ncols=True)
 
@@ -117,10 +115,9 @@ def validate(dataloader, model, device, epoch, cfg):
     validation_device = cfg.optim.val_device
 
     @torch.no_grad()
-    def _predict(batch):
-        input_and_target, *patch_info = batch
+    def process_fn(batch):
         # splits input and target building them to be coco compliant
-        images, targets = build_coco_compliant_batch(input_and_target)
+        images, targets = build_coco_compliant_batch(batch)
         images = [i.to(device) for i in images]
 
         predictions = model(images)
@@ -132,37 +129,20 @@ def validate(dataloader, model, device, epoch, cfg):
         predictions_bbs = [p['boxes'].to(validation_device) for p in predictions]
         predictions_scores = [p['scores'].to(validation_device) for p in predictions]
 
-        patch_hw, start_yx, image_hw, image_id = patch_info
-        processed_batch = (image_id, image_hw, images, targets_bbs, predictions_bbs, predictions_scores, patch_hw, start_yx)
+        processed_batch = (images, targets_bbs, predictions_bbs, predictions_scores)
         return processed_batch
 
-    processed_batches = map(_predict, dataloader)
-    processed_batches = BackgroundGenerator(processed_batches, max_prefetch=7500)  # prefetch batches using threading
-    processed_samples = unbatch(processed_batches)
-
-    metrics = []
-    thr_metrics = []
-
-    # group by image_id (and image_hw for convenience) --> iterate over full images
-    grouper = lambda x: (x[0], x[1].tolist())  # group by (image_id, image_hw)
-    groups = itertools.groupby(processed_samples, key=grouper)
-
-    n_images = len(dataloader.dataset)
-    if isinstance(dataloader.dataset, torch.utils.data.ConcatDataset):
-        n_images = len(dataloader.dataset.datasets)
-
-    progress = tqdm(groups, total=n_images, desc='EVAL', leave=False)
-    for (image_id, image_hw), image_patches in progress:
-        full_image = torch.empty(image_hw, dtype=torch.float32, device=validation_device)
+    def collate_fn(image_info, image_patches):
+        image_id, image_hw = image_info
+        image = torch.empty(image_hw, dtype=torch.float32, device=validation_device)
         normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
         boxes = []
         scores = []
 
         # build full image with preds from patches
-        progress.set_description('EVAL (patches)')
-        for _, _, patch, _, patch_boxes, patch_scores, patch_hw, start_yx in image_patches:
+        for (patch_hw, start_yx), (patch, _, patch_boxes, patch_scores) in image_patches:
             (y, x), (h, w) = start_yx, patch_hw
-            full_image[y:y+h, x:x+w] = patch[:h, :w]
+            image[y:y+h, x:x+w] = patch[:h, :w]
             normalization_map[y:y+h, x:x+w] += 1.0
             if patch_boxes.nelement() != 0:
                 patch_boxes += torch.as_tensor([x, y, x, y])
@@ -172,7 +152,7 @@ def validate(dataloader, model, device, epoch, cfg):
         boxes = torch.cat(boxes) if len(boxes) else torch.empty(0, 4, dtype=torch.float32)
         scores = torch.cat(scores) if len(scores) else torch.empty(0, dtype=torch.float32)
 
-        progress.set_description('EVAL (cleaning)')
+        # progress.set_description('EVAL (cleaning)')
         # remove boxes with center outside the image     
         image_wh = torch.tensor(image_hw[::-1])
         boxes_center = (boxes[:, :2] + boxes[:, 2:]) / 2
@@ -200,12 +180,22 @@ def validate(dataloader, model, device, epoch, cfg):
         boxes = torch.cat((boxes[~in_overlap_zone], boxes_in_overlap[keep]))
         scores = torch.cat((scores[~in_overlap_zone], scores_in_overlap[keep]))
 
+        image = image.cpu().numpy()
         boxes = boxes.cpu().numpy()
         scores = scores.cpu().numpy()
 
         # cleaning
         del normalization_map
 
+        return image_id, image_hw, image, boxes, scores
+
+    metrics = []
+    thr_metrics = []
+
+    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn)
+    n_images = dataloader.dataset.num_images()
+    progress = tqdm(processed_images, total=n_images, desc='EVAL (patches)', leave=False)
+    for image_id, image_hw, image, boxes, scores in progress:
         # compute metrics
         progress.set_description('EVAL (metrics)')
 
@@ -219,7 +209,7 @@ def validate(dataloader, model, device, epoch, cfg):
         gt_boxes = np.hstack((gt_points - half_box, gt_points + half_box))
 
         if cfg.optim.debug and epoch % cfg.optim.debug == 0:
-            _save_image_with_boxes(full_image, image_id, boxes, gt_boxes, cfg)
+            _save_image_with_boxes(image, image_id, boxes, gt_boxes, cfg)
 
         thrs = torch.linspace(0, 1, 21).tolist() + [2, ]
         progress_thrs = tqdm(thrs, desc='thr', leave=False)
@@ -267,6 +257,8 @@ def validate(dataloader, model, device, epoch, cfg):
 
         thr_metrics.extend(image_thr_metrics)
 
+        progress.set_description('EVAL (patches)')
+
     # average among images
     metrics = pd.DataFrame(metrics).set_index('image_id')
     metrics = metrics.mean(axis=0).to_dict()
@@ -308,3 +300,227 @@ def validate(dataloader, model, device, epoch, cfg):
     return metrics
 
 
+@torch.no_grad()
+def predict(dataloader, model, device, cfg, outdir, debug=False):
+    """ Make predictions on data. """
+    model.eval()
+
+    @torch.no_grad()
+    def process_fn(patches):
+        inputs = list(i.to(device) for i in patches)
+        predictions = model(inputs)
+        # prepare data
+        patches = patches.squeeze(dim=1)
+        boxes = [p['boxes'].to(device) for p in predictions]
+        scores = [p['scores'].to(device) for p in predictions]
+        return patches, boxes, scores
+
+    def collate_fn(image_info, image_patches):
+        image_id, image_hw = image_info
+        image = torch.empty(image_hw, dtype=torch.float32, device=device)
+        normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=device)
+        boxes = []
+        scores = []
+
+        # build full image with preds from patches
+        for (patch_hw, start_yx), (patch, patch_boxes, patch_scores) in image_patches:
+            (y, x), (h, w) = start_yx, patch_hw
+            image[y:y+h, x:x+w] = patch[:h, :w]
+            normalization_map[y:y+h, x:x+w] += 1.0
+            if patch_boxes.nelement() != 0:
+                patch_boxes += torch.as_tensor([x, y, x, y])
+                boxes.append(patch_boxes)
+                scores.append(patch_scores)
+
+        boxes = torch.cat(boxes) if len(boxes) else torch.empty(0, 4, dtype=torch.float32)
+        scores = torch.cat(scores) if len(scores) else torch.empty(0, dtype=torch.float32)
+
+        # progress.set_description('PRED (cleaning)')
+        # remove boxes with center outside the image     
+        image_wh = torch.tensor(image_hw[::-1])
+        boxes_center = (boxes[:, :2] + boxes[:, 2:]) / 2
+        boxes_center = boxes_center.round().long()
+        keep = (boxes_center < image_wh).all(axis=1)
+
+        boxes = boxes[keep]
+        scores = scores[keep]
+        boxes_center = boxes_center[keep]  # we need those later
+
+        # clip boxes to image limits
+        ih, iw = image_hw
+        l = torch.tensor([[0, 0, 0, 0]])
+        u = torch.tensor([[iw, ih, iw, ih]])   
+        boxes = torch.max(l, torch.min(boxes, u))
+
+        # filter boxes in the overlapped areas using nms
+        xc, yc = boxes_center.T
+        in_overlap_zone = normalization_map[yc, xc] != 1.0
+
+        boxes_in_overlap = boxes[in_overlap_zone]
+        scores_in_overlap = scores[in_overlap_zone]
+        keep = box_ops.nms(boxes_in_overlap, scores_in_overlap, iou_threshold=cfg.model.module.nms)
+
+        boxes = torch.cat((boxes[~in_overlap_zone], boxes_in_overlap[keep]))
+        scores = torch.cat((scores[~in_overlap_zone], scores_in_overlap[keep]))
+
+        image = image.cpu().numpy()
+        boxes = boxes.cpu().numpy()
+        scores = scores.cpu().numpy()
+
+        # cleaning
+        del normalization_map
+
+        return image_id, image_hw, image, boxes, scores
+
+    all_metrics = []
+    all_gt_and_preds = []
+    thrs = np.linspace(0, 1, 201).tolist() + [2]
+
+    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn)
+    n_images = dataloader.dataset.num_images()
+    progress = tqdm(processed_images, total=n_images, desc='PRED (patches)', leave=False)
+    for image_id, image_hw, image, boxes, scores in progress:
+        image = (255 * image).astype(np.uint8)
+
+        groundtruth = dataloader.dataset.annot.loc[image_id]
+        groundtruth['agreement'] = groundtruth.loc[:, 'AV':'VT'].sum(axis=1)
+
+        if outdir and debug:  # debug
+            outdir.mkdir(parents=True, exist_ok=True)
+            io.imsave(outdir / image_id, image)
+
+        localizations = (boxes[:, :2] + boxes[:, 2:]) / 2
+        localizations = pd.DataFrame(localizations, columns=['X', 'Y'])
+        localizations['score'] = scores
+
+        image_metrics = []
+        image_gt_and_preds = []
+        thr_progress = tqdm(thrs, leave=False)
+        for thr in thr_progress:
+            thr_progress.set_description(f'thr={thr:.2f}')
+
+            thresholded_localizations = localizations[localizations.score >= thr].reset_index()
+
+            # match groundtruths and predictions
+            tolerance = 1.25 * (cfg.data.validation.target_params.side / 2)  # min distance to match points
+            groundtruth_and_predictions = match(groundtruth, thresholded_localizations, tolerance)
+
+            groundtruth_and_predictions['imgName'] = groundtruth_and_predictions.imgName.fillna(image_id)
+            groundtruth_and_predictions['thr'] = thr
+            image_gt_and_preds.append(groundtruth_and_predictions)
+
+            # compute metrics
+            metrics = detection_and_counting(groundtruth_and_predictions, image_hw=image_hw)
+            metrics['thr'] = thr
+            metrics['imgName'] = image_id
+
+            image_metrics.append(metrics)
+
+        all_metrics.extend(image_metrics)
+        all_gt_and_preds.extend(image_gt_and_preds)
+
+        if outdir and debug:
+            outdir.mkdir(parents=True, exist_ok=True)
+
+            # pick a threshold and draw that prediction set
+            best_thr = pd.DataFrame(image_metrics).set_index('thr')['count/game-3'].idxmin()
+            gp = pd.concat(image_gt_and_preds, ignore_index=True)
+            gp = gp[gp.thr == best_thr]
+
+            image = draw_groundtruth_and_predictions(image, gp, radius=10, marker='square')
+            io.imsave(outdir / f'annot_{image_id}', image)
+
+    all_metrics = pd.DataFrame(all_metrics)
+    all_gp = pd.concat(all_gt_and_preds, ignore_index=True)
+
+    if outdir:
+        outdir.mkdir(parents=True, exist_ok=True)
+        all_gp.to_csv(outdir / 'all_gt_preds.csv.gz')
+        all_metrics.to_csv(outdir / 'all_metrics.csv.gz')
+
+
+@torch.no_grad()
+def predict_points(dataloader, model, device, threshold, cfg):
+    """ Predict and find points. """
+    model.eval()
+
+    @torch.no_grad()
+    def process_fn(patches):
+        predictions = model([i.to(device) for i in patches])
+        boxes = [p['boxes'] for p in predictions]
+        scores = [p['scores'] for p in predictions]
+        return boxes, scores
+
+    def collate_fn(image_info, image_patches):
+        image_id, image_hw = image_info
+        normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=device)
+        boxes = []
+        scores = []
+
+        # build full image with preds from patches
+        for (patch_hw, start_yx), (patch_boxes, patch_scores) in image_patches:
+            (y, x), (h, w) = start_yx, patch_hw
+            normalization_map[y:y+h, x:x+w] += 1.0
+            if patch_boxes.nelement() != 0:
+                patch_boxes += torch.as_tensor([x, y, x, y])
+                boxes.append(patch_boxes)
+                scores.append(patch_scores)
+
+        boxes = torch.cat(boxes) if len(boxes) else torch.empty(0, 4, dtype=torch.float32)
+        scores = torch.cat(scores) if len(scores) else torch.empty(0, dtype=torch.float32)
+
+        # progress.set_description('PRED (cleaning)')
+        # remove boxes with center outside the image     
+        image_wh = torch.tensor(image_hw[::-1])
+        boxes_center = (boxes[:, :2] + boxes[:, 2:]) / 2
+        boxes_center = boxes_center.round().long()
+        keep = (boxes_center < image_wh).all(axis=1)
+
+        boxes = boxes[keep]
+        scores = scores[keep]
+        boxes_center = boxes_center[keep]  # we need those later
+
+        # clip boxes to image limits
+        ih, iw = image_hw
+        l = torch.tensor([[0, 0, 0, 0]])
+        u = torch.tensor([[iw, ih, iw, ih]])   
+        boxes = torch.max(l, torch.min(boxes, u))
+
+        # filter boxes in the overlapped areas using nms
+        xc, yc = boxes_center.T
+        in_overlap_zone = normalization_map[yc, xc] != 1.0
+
+        boxes_in_overlap = boxes[in_overlap_zone]
+        scores_in_overlap = scores[in_overlap_zone]
+        keep = box_ops.nms(boxes_in_overlap, scores_in_overlap, iou_threshold=cfg.model.module.nms)
+
+        boxes = torch.cat((boxes[~in_overlap_zone], boxes_in_overlap[keep]))
+        scores = torch.cat((scores[~in_overlap_zone], scores_in_overlap[keep]))
+
+        boxes = boxes.cpu().numpy()
+        scores = scores.cpu().numpy()
+
+        # cleaning
+        del normalization_map
+
+        return image_id, boxes, scores
+
+    all_localizations = []
+
+    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn, progress=True)
+    n_images = dataloader.dataset.num_images()
+    progress = tqdm(processed_images, total=n_images, desc='PRED (patches)', leave=False)
+    for image_id, boxes, scores in progress:
+
+        localizations = (boxes[:, :2] + boxes[:, 2:]) / 2
+        localizations = pd.DataFrame(localizations, columns=['X', 'Y'])
+        localizations['score'] = scores
+
+        localizations = localizations[localizations.score >= threshold].reset_index()
+        localizations['imgName'] = image_id
+        localizations['thr'] = threshold
+
+        all_localizations.append(localizations)
+    
+    all_localizations = pd.concat(all_localizations, ignore_index=True)
+    return all_localizations
