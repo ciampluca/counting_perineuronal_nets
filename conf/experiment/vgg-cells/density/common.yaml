@@ -1,0 +1,30 @@
+# @package _global_
+
+defaults:
+  - /common: default
+  - /common/data: vgg-cells
+  - /common/method: density
+  - /common/data/method-specific: vgg-cells_density
+  - /common/model: csrnet
+  - /common/optim: default
+
+optim:
+    optimizer:
+        lr: 0.00001
+    
+    lr_scheduler:
+        milestones: [ 150, 175, 200 ]
+
+    loss:
+        _target_: torch.nn.MSELoss
+
+    border_pad: 64      # must be divisible by 32
+    batch_size: 8
+    batch_accumulation: 1
+
+    epochs: 200
+    log_every: 2
+
+misc:
+    font_size: 8
+    text_pos: 15

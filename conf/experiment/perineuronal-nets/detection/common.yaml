@@ -1,0 +1,29 @@
+# @package _global_
+
+defaults:
+  - /common: default
+  - /common/data: perineuronal-nets
+  - /common/method: detection
+  - /common/data/method-specific: perineuronal-nets_detection
+  - /common/model: fasterrcnn
+  - /common/optim: default
+
+optim:
+    optimizer:
+        _target_: torch.optim.SGD
+        lr: 0.005
+        momentum: 0.9
+        weight_decay: 0.0005
+
+    lr_scheduler:
+        _target_: torch.optim.lr_scheduler.MultiStepLR
+        milestones: [75, 100, 125]
+        gamma: 0.1
+
+    epochs: 125
+
+    batch_size: 12
+    batch_accumulation: 4
+
+
+

@@ -1,0 +1,8 @@
+# @package model
+
+defaults:
+  - common
+
+name: CSRNet
+module:
+  _target_: models.CSRNet

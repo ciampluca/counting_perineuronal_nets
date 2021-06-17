@@ -1,0 +1,17 @@
+# @package _global_
+
+cache_folder: ${hydra:runtime.cwd}/model_zoo
+seed: 42
+gpu: 0
+
+hydra:
+  run:
+    dir: runs/${hydra.job.override_dirname}
+  sweep:
+    dir: runs
+    subdir: ${hydra.job.override_dirname}
+  job:
+    config:
+      override_dirname:
+        exclude_keys:
+          - optim.resume

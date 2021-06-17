@@ -1,0 +1,4 @@
+# @package model
+
+pretrained: null
+cache_folder: ${hydra:runtime.cwd}/model_zoo

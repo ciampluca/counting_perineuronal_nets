@@ -1,0 +1,14 @@
+# @package _global_
+
+method: density
+
+data:
+    train:
+        transforms:
+            _target_: torchvision.transforms.Compose
+            _args_: 
+                - - _target_: torchvision.transforms.ToTensor
+                  - _target_: torchvision.transforms.RandomHorizontalFlip
+    validation:
+        transforms:
+            _target_: torchvision.transforms.ToTensor

@@ -1,0 +1,19 @@
+# @package _global_
+
+defaults:
+  - /common: default
+  - /common/data: perineuronal-nets
+  - /common/method: density
+  - /common/data/method-specific: perineuronal-nets_density
+  - /common/model: csrnet
+  - /common/optim: default
+
+optim:
+    optimizer:
+        lr: 0.00001
+    
+    loss:
+        _target_: torch.nn.MSELoss
+
+    border_pad: 160      # must be divisible by 32
+

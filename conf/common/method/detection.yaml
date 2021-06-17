@@ -1,0 +1,19 @@
+# @package _global_
+
+method: detection
+
+data:
+    train:
+        transforms:
+            _target_: detection.transforms.Compose
+            _args_:
+                - - _target_: detection.transforms.RandomHorizontalFlip
+                  - _target_: detection.transforms.ToTensor
+    validation:
+        transforms:
+            _target_: detection.transforms.ToTensor
+
+misc:
+    font_size: 100  # for writing over val images
+    text_pos: 75
+    bb_outline_width: 3
