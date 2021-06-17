@@ -1,3 +1,3 @@
-from .PerineuralNetsDataset import PerineuronalNetsDataset
+from .PerineuronalNetsDataset import PerineuronalNetsDataset
 from .VGGCellsDataset import VGGCellsDataset
 
