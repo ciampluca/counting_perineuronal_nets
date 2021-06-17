@@ -11,7 +11,6 @@ class DetectionTargetBuilder:
         """
         self.side = side
 
-
     def build(self, image_hw, points_yx):
         """ Builds the detection target. """
         half_side = self.side / 2
@@ -25,7 +24,6 @@ class DetectionTargetBuilder:
 
         return bbs
     
-    
     def pack(self, image, target, pad=None):
         # put in a unique tuple the patch and the target
         image = np.expand_dims(image, axis=-1)  # add channels dimension
@@ -33,14 +31,14 @@ class DetectionTargetBuilder:
 
 
 if __name__ == "__main__":   
-    image = np.empty((100, 100))
+    image_hw = (100, 100)
     tb = DetectionTargetBuilder()
     
     np.random.seed(7)
     points_yx = np.random.uniform(0, 100, size=(50, 2))
-    target = tb.build(image, points_yx)
+    target = tb.build(image_hw, points_yx)
     print(target)
     
     points_yx = np.empty((0, 2))
-    target = tb.build(image, points_yx)
+    target = tb.build(image_hw, points_yx)
     print(target)
