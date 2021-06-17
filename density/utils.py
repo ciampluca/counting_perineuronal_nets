@@ -15,7 +15,7 @@ def density_map_to_points(density_map, min_distance, threshold):
     Returns:
         pd.DataFrame: Detected points with scores (the maximum value of the local peak).
     """
-    count = density_map.sum()
+    count = density_map.sum().astype(int)
 
     peak_idx = peak_local_max(
         density_map,
