@@ -3,6 +3,7 @@ import cv2
 
 from math import floor
 from scipy.signal import gaussian
+from skimage.filters import gaussian as gaussian_filter
 
     
 class DensityTargetBuilder:
@@ -11,18 +12,30 @@ class DensityTargetBuilder:
         TODO: add reference if needed
     """
 
-    def __init__(self, kernel_size=51, sigma=30, **kwargs):
+    def __init__(self, kernel_size=51, sigma=30, method='reflect', **kwargs):
         """ Constructor.
         Args:
             kernel_size (int, optional): Size (in px) of the kernel of the gaussian localizing a perineural nets. Defaults to 51.
             sigma (int, optional): Sigma of the gaussian. Defaults to 30.
         """
 
+        assert method in ('move', 'reflect', 'normalize', 'move-cv2'), f'Unsupported method: {method}'
+
         self.kernel_size = kernel_size
         self.sigma = sigma
+        self.method = method
 
     def build(self, shape, locations):
-        return self.build_nocv2(shape, locations)
+        if self.method == 'move':
+            method = self.build_nocv2
+        elif self.method == 'move-cv2':
+            method = self.build_cv2
+        if self.method == 'reflect':
+            method = self.build_reflect
+        elif self.method == 'normalize':
+            method = self.build_normalize
+        
+        return method(shape, locations)
     
     def build_cv2(self, shape, locations):
         """ This builds the density map, putting a gaussian over each dots localizing a perineural net. """
@@ -157,6 +170,20 @@ class DensityTargetBuilder:
         dmap = dmap[r:-r, r:-r]
         return dmap
 
+    def build_normalize(self, hw, points_yx):
+        num_points = len(points_yx)
+        density_map = np.zeros(hw, dtype=np.float32)
+
+        if num_points == 0:
+            return density_map
+
+        points_yx = np.clip(np.rint(points_yx), 0, hw - 1).astype(int)
+        for r, c in points_yx:
+            density_map[r, c] += 1
+        
+        density_map = gaussian_filter(density_map, sigma=self.sigma, mode='constant')
+        density_map = num_points * density_map / density_map.sum()  # renormalize density map
+        return density_map
 
     def pack(self, image, target, pad=None):
         dmap = np.pad(target, pad) if pad else target
