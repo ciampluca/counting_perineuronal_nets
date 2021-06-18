@@ -5,40 +5,6 @@ import re
 
 import numpy as np
 import torch
-import torch.distributed as dist
-
-
-def reduce_dict(input_dict, average=True):
-    """
-    Args:
-        input_dict (dict): all the values will be reduced
-        average (bool): whether to do average or sum
-    Reduce the values in the dictionary from all processes so that all processes
-    have the averaged results. Returns a dict with the same fields as
-    input_dict, after reduction.
-    """
-    world_size = get_world_size()
-    if world_size < 2:
-        return input_dict
-    with torch.no_grad():
-        names = []
-        values = []
-        # sort the keys so that they are consistent across processes
-        for k in sorted(input_dict.keys()):
-            names.append(k)
-            values.append(input_dict[k])
-        values = torch.stack(values, dim=0)
-        dist.all_reduce(values)
-        if average:
-            values /= world_size
-        reduced_dict = {k: v for k, v in zip(names, values)}
-    return reduced_dict
-
-
-def get_world_size():
-    if dist.is_available() and dist.is_initialized():
-        return dist.get_world_size()
-    return 1
 
 
 def seed_everything(seed):
@@ -49,15 +15,6 @@ def seed_everything(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.deterministic = True
-
-
-def update_dict(d, u):
-    for k, v in u.items():
-        if isinstance(v, collections.abc.Mapping):
-            d[k] = update_dict(d.get(k, {}), v)
-        else:
-            d[k] = v
-    return d
 
 
 class CheckpointManager:
