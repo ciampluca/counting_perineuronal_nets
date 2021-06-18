@@ -16,7 +16,7 @@ def main(args):
     cfg['cache_folder'] = './model_zoo'
 
     dataset_params = dict(
-        patch_size=cfg.data.validation.patch_size,
+        patch_size=cfg.data.validation.get('patch_size', None),
         transforms=hydra.utils.instantiate(cfg.data.validation.transforms),
     )
     dataset = PatchedMultiImageDataset.from_paths(args.data, **dataset_params)
@@ -41,7 +41,7 @@ def main(args):
     threshold = checkpoint['metrics'][metric_name]['threshold'] if args.threshold is None else args.threshold
     print(f'[PARAMS] thr = {threshold:.2f}')
 
-    predict_points = hydra.utils.get_method(f'{cfg.method}.train_fn.predict_points')
+    predict_points = hydra.utils.get_method(f'methods.{cfg.method}.train_fn.predict_points')
     localizations = predict_points(loader, model, device, threshold, cfg)
     print(f'[OUTPUT] {args.output}')
     localizations.to_csv(args.output, index=False)

@@ -7,19 +7,17 @@ from pathlib import Path
 import hydra
 import numpy as np
 import pandas as pd
-from PIL import ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 from skimage import io
 import torch
 from torchvision.ops import boxes as box_ops
-from torchvision.transforms.functional import to_pil_image
 from tqdm import tqdm
 
+from ..points.metrics import detection_and_counting
+from ..points.match import match
+from ..points.utils import draw_groundtruth_and_predictions
 from .metrics import dice_jaccard
-from .utils import check_empty_images, build_coco_compliant_batch
-from points.metrics import detection_and_counting
-from points.match import match
-from points.utils import draw_groundtruth_and_predictions
-from utils import reduce_dict
+from .utils import check_empty_images, build_coco_compliant_batch, reduce_dict
 
 tqdm = partial(tqdm, dynamic_ncols=True)
 
@@ -32,7 +30,7 @@ def _save_image_with_boxes(image, image_id, det_boxes, gt_boxes, cfg):
     debug_dir = Path('output_debug')
     debug_dir.mkdir(exist_ok=True)
 
-    pil_image = to_pil_image(image.cpu()).convert("RGB")
+    pil_image = Image.fromarray(image).convert("RGB")
     draw = ImageDraw.Draw(pil_image)
 
     for box in gt_boxes:
@@ -328,16 +326,16 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
             image[y:y+h, x:x+w] = patch[:h, :w]
             normalization_map[y:y+h, x:x+w] += 1.0
             if patch_boxes.nelement() != 0:
-                patch_boxes += torch.as_tensor([x, y, x, y])
+                patch_boxes += torch.as_tensor([x, y, x, y], device=device)
                 boxes.append(patch_boxes)
                 scores.append(patch_scores)
 
-        boxes = torch.cat(boxes) if len(boxes) else torch.empty(0, 4, dtype=torch.float32)
-        scores = torch.cat(scores) if len(scores) else torch.empty(0, dtype=torch.float32)
+        boxes = torch.cat(boxes) if len(boxes) else torch.empty(0, 4, dtype=torch.float32, device=device)
+        scores = torch.cat(scores) if len(scores) else torch.empty(0, dtype=torch.float32, device=device)
 
         # progress.set_description('PRED (cleaning)')
         # remove boxes with center outside the image     
-        image_wh = torch.tensor(image_hw[::-1])
+        image_wh = torch.tensor(image_hw[::-1], device=device)
         boxes_center = (boxes[:, :2] + boxes[:, 2:]) / 2
         boxes_center = boxes_center.round().long()
         keep = (boxes_center < image_wh).all(axis=1)
@@ -348,8 +346,8 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
 
         # clip boxes to image limits
         ih, iw = image_hw
-        l = torch.tensor([[0, 0, 0, 0]])
-        u = torch.tensor([[iw, ih, iw, ih]])   
+        l = torch.tensor([[0, 0, 0, 0]], device=device)
+        u = torch.tensor([[iw, ih, iw, ih]], device=device)
         boxes = torch.max(l, torch.min(boxes, u))
 
         # filter boxes in the overlapped areas using nms
@@ -382,7 +380,7 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
     for image_id, image_hw, image, boxes, scores in progress:
         image = (255 * image).astype(np.uint8)
 
-        groundtruth = dataloader.dataset.annot.loc[image_id]
+        groundtruth = dataloader.dataset.annot.loc[image_id].copy()
         groundtruth['agreement'] = groundtruth.loc[:, 'AV':'VT'].sum(axis=1)
 
         if outdir and debug:  # debug

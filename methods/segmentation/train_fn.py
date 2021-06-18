@@ -5,12 +5,11 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from points.metrics import detection_and_counting
-from points.match import match
-from points.utils import draw_groundtruth_and_predictions
-from segmentation.metrics import dice_jaccard
-from segmentation.utils import segmentation_map_to_points
+from ..points.metrics import detection_and_counting
+from ..points.match import match
+from ..points.utils import draw_groundtruth_and_predictions
 from .metrics import dice_jaccard
+from .utils import segmentation_map_to_points
 
 
 def train_one_epoch(dataloader, model, optimizer, device, writer, epoch, cfg):

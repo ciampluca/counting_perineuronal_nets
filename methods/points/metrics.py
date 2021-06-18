@@ -1,5 +1,6 @@
 import warnings
 
+
 def game(true_yx, pred_yx, image_hw, L):
     """
     Computes Grid Average Mean absolute Error (GAME) from yx points.

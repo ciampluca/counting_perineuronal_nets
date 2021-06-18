@@ -36,10 +36,10 @@ def main(cfg):
 
     # training dataset and dataloader
     try:
-        collate_fn = hydra.utils.get_method(f'{cfg.method}.utils.collate_fn')
+        collate_fn = hydra.utils.get_method(f'methods.{cfg.method}.utils.collate_fn')
     except Exception as e:
         collate_fn = None
-        log.warn('No collate_fn found, using the default one ...')
+        log.warning('No collate_fn found, using the default one ...')
 
     train_dataset = hydra.utils.instantiate(cfg.data.train)
     train_loader = DataLoader(train_dataset, batch_size=cfg.optim.batch_size, shuffle=True, num_workers=cfg.optim.num_workers, collate_fn=collate_fn)
@@ -100,8 +100,8 @@ def main(cfg):
         log.info(f"[RESUME] Resuming from epoch {start_epoch}")
 
     # get method-specific traina and validation loops
-    train_one_epoch = hydra.utils.get_method(f'{cfg.method}.train_fn.train_one_epoch')
-    validate = hydra.utils.get_method(f'{cfg.method}.train_fn.validate')
+    train_one_epoch = hydra.utils.get_method(f'methods.{cfg.method}.train_fn.train_one_epoch')
+    validate = hydra.utils.get_method(f'methods.{cfg.method}.train_fn.validate')
 
     # checkpoint manager
     ckpt_dir = Path('best_models')

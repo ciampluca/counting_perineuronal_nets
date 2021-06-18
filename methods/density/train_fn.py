@@ -9,11 +9,11 @@ import torch
 import torchvision.transforms.functional as F
 from tqdm import tqdm
 
-from points.match import match
-from points.utils import draw_groundtruth_and_predictions
-from points.metrics import detection_and_counting
-from .target_builder import DensityTargetBuilder
+from ..points.match import match
+from ..points.utils import draw_groundtruth_and_predictions
+from ..points.metrics import detection_and_counting
 from .metrics import counting_yx, ssim, counting
+from .target_builder import DensityTargetBuilder
 from .utils import density_map_to_points, normalize_map
 
 

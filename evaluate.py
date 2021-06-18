@@ -52,7 +52,7 @@ def main(args):
     model.load_state_dict(checkpoint['model'])
 
     outdir = (run_path / 'test_predictions') if args.save else None
-    predict = hydra.utils.get_method(f'{cfg.method}.train_fn.predict')
+    predict = hydra.utils.get_method(f'methods.{cfg.method}.train_fn.predict')
     predict(test_loader, model, device, cfg, outdir, debug=args.debug)
 
 
