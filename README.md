@@ -1,35 +1,43 @@
-# counting_perineuronal_nets
+# Counting Perineuronal Nets
 
-Experimental evaluation is based on Hydra.
+PyTorch code for training and evaluating cell counting and localization methodologies.
 
-In the conf folder there are two folders, corresponding to the two considered approaches (density and detection-based approaches).
+## Getting Started
 
-In each approach folder there is a folder technique, containing base configuration yaml files for the considered techniques.
-There is also a config yaml file specifying the default technique that will be used.
-Finally, in the experiment folder, there are yaml configuration files corresponding to the experiment
-we want to done. The values inside these files override the configuration yaml file in the technique folder.
+- Download the data in `data/` (TODO)
+- Install requirements (see [`Dockerfile`](Dockerfile))
 
-Please note that for each experiment a folder in the outputs folder will be created. Notably, inside 
-there will be also a .hydra hidden folder containing log files etc
-If you use the multirun option, Hydra will create a multirun folder instad of the outputs one, having 
-a similar structure.
+## How to train
 
+Train configurations are specified with [Hydra](https://hydra.cc/) config groups in `conf/experiments`. You can run a training experiment by passing as argument `experiment=<exp_name>` to the `train.py` script, where `<exp_name>` is the path to a YAML experiment configuration relative to `conf/experiments` and without the `.yaml` extension.
 
-###Examples:
+### Examples:
 
+- Train the detection-based approach (FasterRCNN) with 480x480 patches on PerineuronalNets:
+  ```bash
+  python train.py experiment=perineuronal-nets/detection/fasterrcnn_480
+  ```
 
-- Run density based approach, using default technique (CSRNet) and configuration experiment input_size_640_640_overlap_120
+- Train the density-based approach (CSRNet) on VGG Cells:
+  ```bash
+  python train.py experiment=vgg-cells/density/csrnet
+  ```
 
-        python train_density-based.py +experiment=csrnet_input_size_640_640_overlap_120
+Runs files will be produced in the `runs` folder. Once trained, you can evaluate the trained models on the corresponding test sets using the `evaluate.py` script.
+E.g.,
+```bash
+# check python evaluate.py -h for more options
+python evaluate.py runs/experiment=perineuronal-nets/detection/fasterrcnn_480
+```
+Metrics and predictions will be saved in the run folder under `test_predictions/`.
 
-- Run two different experiments for density based approach, using default technique (CSRNet)
+## How to do predictions
 
-        python train_density-based.py +experiment=csrnet_input_size_640_640_overlap_120,csrnet_input_size_640_640_overlap_0
+To do predictions, you need a run folder containing a pretrained model. Then, you can do predictions using the `predict.py` script by passing the run folder and the paths to data to process. E.g.:
 
-- Run all the experiment for density based approach using default technique (CSRNet)
-        
-        python train_density-based.py --multirun '+experiment=glob(csrnet*)'
-        
-- Run all the experiment having input size 640x640 for density based approach overriding default technique and using UNet
+```bash
+# check python predict.py -h for more options
+python predict.py runs/experiment=perineuronal-nets/detection/fasterrcnn_480 my_dataset/*.tiff
+```
 
-        python train_density-based.py technique=density_based_unet --multirun '+experiment=glob(unet*640*)'
+Accepted format for input data are image formats and the HDF5 format. For HDF5, we assume there is a `data` dataset containing a sigle 1-channel (bidimensional) image.
