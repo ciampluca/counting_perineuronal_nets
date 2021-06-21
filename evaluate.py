@@ -19,8 +19,6 @@ def main(args):
     cfg = OmegaConf.load(run_path / '.hydra' / 'config.yaml')
     print(OmegaConf.to_yaml(cfg))
 
-    cfg['cache_folder'] = './model_zoo'
-
     device = torch.device(args.device)
 
     # create test dataset and dataloader
@@ -28,12 +26,7 @@ def main(args):
     test_dataset.root = args.data_root if args.data_root else test_dataset.root
     test_dataset.split = 'test'
     test_dataset.target_ = None
-
-    print(OmegaConf.to_yaml(test_dataset))
-
     test_dataset = hydra.utils.instantiate(test_dataset)
-
-
 
     test_batch_size = cfg.optim.batch_size
     test_loader = DataLoader(test_dataset, batch_size=test_batch_size, shuffle=False, num_workers=cfg.optim.num_workers)
