@@ -50,7 +50,7 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Predict')
+    parser = argparse.ArgumentParser(description='Perform evaluation on test set')
     parser.add_argument('run', help='Path to run dir')
     parser.add_argument('-d', '--device', default='cuda', help='device to use for prediction')
     parser.add_argument('--best-on-metric', default='count/game-3', help='select snapshot that optimizes this metric')

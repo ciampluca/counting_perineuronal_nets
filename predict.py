@@ -49,8 +49,8 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Perform Counting and Localization', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('data', nargs='+', help='Input Images (TIFF or HDF5 formats)')
     parser.add_argument('model', help='Model Name')
+    parser.add_argument('data', nargs='+', help='Input Images (Image or HDF5 formats)')
     parser.add_argument('-d', '--device', default='cpu', help="Device to use; e.g., 'cpu', 'cuda:0'")
     parser.add_argument('-b', '--batch-size', type=int, default=1, help="Device to use; e.g., 'cpu', 'cuda:0'")
     parser.add_argument('-t', '--threshold', type=float, default=None, help="Threshold (good values may vary depending on the model)")
