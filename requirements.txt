@@ -4,7 +4,7 @@ torch
 torchvision
 tensorboard
 matplotlib
-hydra-core
+hydra-core==1.1
 omegaconf
 h5py
 pandas
