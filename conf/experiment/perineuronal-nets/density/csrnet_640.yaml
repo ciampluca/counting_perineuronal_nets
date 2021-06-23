@@ -10,5 +10,5 @@ data:
         patch_size: 640
 
 optim:
-    batch_size: 8
-    batch_accumulation: 5
+    batch_size: 4
+    batch_accumulation: 4

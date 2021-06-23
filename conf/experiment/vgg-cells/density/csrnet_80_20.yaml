@@ -1,0 +1,12 @@
+# @package _global_
+
+defaults:
+ - vgg-cells/density/common
+
+data:
+    train: &common
+        num_samples:
+            - 80  # num of train images
+            - 20  # num of validation images
+    validation:
+        <<: *common

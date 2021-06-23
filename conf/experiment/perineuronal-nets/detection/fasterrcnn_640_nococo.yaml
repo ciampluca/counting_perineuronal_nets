@@ -9,6 +9,16 @@ data:
     validation:
         patch_size: 640
 
+model:
+    module:
+        backbone_pretrained: true # on ImageNet
+        model_pretrained: false   # on COCO
+
 optim:
+    lr_scheduler:
+        milestones: [75, 100, 125]
+
+    epochs: 125
+
     batch_size: 10
     batch_accumulation: 5

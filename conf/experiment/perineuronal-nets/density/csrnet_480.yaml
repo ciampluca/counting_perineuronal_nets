@@ -11,4 +11,4 @@ data:
 
 optim:
     batch_size: 10
-    batch_accumulation: 4
+    batch_accumulation: 6

@@ -13,7 +13,7 @@ optim:
         lr: 0.00001
     
     lr_scheduler:
-        milestones: [ 150, 175, 200 ]
+        milestones: [ 175, 200 ]
 
     loss:
         _target_: torch.nn.MSELoss

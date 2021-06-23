@@ -1,7 +1,7 @@
 # @package _global_
 
 defaults:
- - perineuronal-nets/density/common
+ - perineuronal-nets/detection/common
 
 data:
     train:
@@ -10,5 +10,7 @@ data:
         patch_size: 800
 
 optim:
-    batch_size: 4
-    batch_accumulation: 4
+    batch_size: 10
+    batch_accumulation: 5
+
+seed: 15

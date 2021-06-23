@@ -1,7 +1,7 @@
 # @package _global_
 
 cache_folder: ${hydra:runtime.cwd}/model_zoo
-seed: 42
+seed: 10
 gpu: 0
 
 hydra:
