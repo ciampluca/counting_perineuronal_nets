@@ -19,13 +19,13 @@ trange = partial(trange, dynamic_ncols=True)
 
 @hydra.main(config_path="conf", config_name="config")
 def main(cfg):
-    # from omegaconf import OmegaConf; print(OmegaConf.to_yaml(cfg))
+    from omegaconf import OmegaConf; print(OmegaConf.to_yaml(cfg))
+    
     log.info(f"Run path: {Path.cwd()}")
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(cfg.gpu)
     device = torch.device(f'cuda' if cfg.gpu is not None else 'cpu')
     log.info(f"Use device {device} for training")
-
 
     # Reproducibility
     seed_everything(cfg.seed)

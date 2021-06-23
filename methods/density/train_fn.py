@@ -195,7 +195,6 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
     def process_fn(patches):
         patches_rgb = patches.expand(-1, 3, -1, -1)  # gray to RGB
         # pad to mitigate border errors
-        pad = cfg.optim.border_pad
         padded_patches = F.pad(patches_rgb, pad)
         # predict
         predicted_density_patches = model(padded_patches.to(device))

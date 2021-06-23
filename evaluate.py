@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 def main(args):
     run_path = Path(args.run)
     hydra_cfg = OmegaConf.load(run_path / '.hydra' / 'hydra.yaml')['hydra']
-    OmegaConf.register_resolver("hydra", lambda x: OmegaConf.select(hydra_cfg, x))
+    OmegaConf.register_new_resolver("hydra", lambda x: OmegaConf.select(hydra_cfg, x))
 
     cfg = OmegaConf.load(run_path / '.hydra' / 'config.yaml')
     print(OmegaConf.to_yaml(cfg))
