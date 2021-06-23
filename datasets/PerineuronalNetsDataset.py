@@ -81,11 +81,16 @@ class PerineuronalNetsDataset(PatchedMultiImageDataset):
             random_offset=self.random_offset,
             annotations=all_annot,
             target_builder=target_builder,
-            max_cache_mem=max_cache_mem
+            transforms=transforms,
+            max_cache_mem=max_cache_mem,
         )
-        datasets = [PatchedImageDataset(image_path, split=s, **kwargs) for image_path, s in zip(image_files, splits)]
+        image_ids = [i.with_suffix('.tif').name for i in image_files]
+        datasets = [
+            PatchedImageDataset(image_path, split=s, image_id=i, **kwargs)
+            for image_path, s, i in zip(image_files, splits, image_ids)
+        ]
 
-        super().__init__(datasets, transforms)
+        super().__init__(datasets)
     
     def __str__(self):
         s = f'{self.__class__.__name__}: ' \
