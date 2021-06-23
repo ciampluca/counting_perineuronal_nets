@@ -1,0 +1,16 @@
+# @package data
+
+train: &common
+    target_: segmentation
+    target_params:
+        radius: 20         # radius (in px) of the dot placed on a cell in the segmentation map
+        radius_ignore: 25  # radius (in px) of the 'ignore' zone surrounding the cell
+        v_bal: 0.1         # weight of the loss of bg pixels
+        sigma_bal: 10      # gaussian stddev (in px) to blur loss weights of bg pixels near fg pixels
+        sep_width: 1       # width (in px) of bg ridge separating two overlapping foreground cells
+        sigma_sep: 6       # gaussian stddev (in px) to blur loss weights of bg pixels near bg ridge pixels
+        lambda_sep: 50     # multiplier for the separation weights (before being summed to the other loss weights)
+
+validation:
+    overlap: 100
+    <<: *common   # reinsert 'train' block content

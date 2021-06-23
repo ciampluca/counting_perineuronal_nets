@@ -1,0 +1,10 @@
+# @package data
+
+train: &common
+    target_: density
+    target_params:
+        k_size: 33  # size (in px) of the kernel of the gaussian localizing a perineural nets
+        sigma: 5  # sigma of the gaussian
+
+validation:
+    <<: *common   # reinsert 'train' block content

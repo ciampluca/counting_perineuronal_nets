@@ -1,0 +1,10 @@
+# @package data
+
+train: &common
+    target_: detection
+    target_params:
+        side: 60       # side (in px) of the bounding box localizing a cell
+
+validation:
+    overlap: 120
+    <<: *common   # reinsert 'train' block content
