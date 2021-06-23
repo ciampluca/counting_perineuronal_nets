@@ -96,6 +96,7 @@ class PatchedImageDataset(Dataset):
         stride=None,
         random_offset=0,
         annotations=None,
+        image_id=None,
         target_builder=None,
         transforms=None,
         max_cache_mem=None
@@ -109,6 +110,7 @@ class PatchedImageDataset(Dataset):
             stride (int, optional): Stride for overlapping patches; None stands for non-overlapping patches. Defaults to None.
             random_offset (int, optional): The amount of random offset applied to patch origin; useful for randomizing data in the training phase. Defaults to 0.
             annotations (pd.DataFrame, optional): Dataframe containing points annotations; must be provided if target_builder != None. Defaults to None.
+            image_id (str, optional): the ID of this image in the annotations; if None, the image name is used. Defaults to None.
             target_builder (obj, optional): A *TargetBuilder for building and returning also training targets. Defaults to None.
             transforms (callable, optional): A callable for applying transformations on patches. Defaults to None.
             max_cache_mem (int, optional): Cache size in bytes (only for HDF5). Defaults to None.
@@ -150,7 +152,7 @@ class PatchedImageDataset(Dataset):
         self.limits_yx = image_half_hw if self.split == 'left' else image_hw
 
         # keep only annotations of this image
-        self.image_id = self.path.name
+        self.image_id = self.path.name if image_id is None else image_id
         self.annot = annotations.loc[self.image_id] if annotations is not None else pd.DataFrame(columns=['Y', 'X'])
 
         # keep also annotations in the selected split (in split's coordinates)
