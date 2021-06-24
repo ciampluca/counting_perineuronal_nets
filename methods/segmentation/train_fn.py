@@ -229,7 +229,7 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
         logits = model(inputs.to(device))
         predictions = torch.sigmoid(logits).squeeze(axis=1)
         predictions = predictions.cpu()
-        return inputs.numpy(), predictions.numpy()
+        return inputs.squeeze(axis=1).numpy(), predictions.numpy()
 
     def collate_fn(image_info, image_patches):
         image_id, image_hw = image_info
