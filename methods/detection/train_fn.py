@@ -460,16 +460,16 @@ def predict_points(dataloader, model, device, threshold, cfg):
             (y, x), (h, w) = start_yx, patch_hw
             normalization_map[y:y+h, x:x+w] += 1.0
             if patch_boxes.nelement() != 0:
-                patch_boxes += torch.as_tensor([x, y, x, y])
+                patch_boxes += torch.as_tensor([x, y, x, y], device=device)
                 boxes.append(patch_boxes)
                 scores.append(patch_scores)
 
-        boxes = torch.cat(boxes) if len(boxes) else torch.empty(0, 4, dtype=torch.float32)
-        scores = torch.cat(scores) if len(scores) else torch.empty(0, dtype=torch.float32)
+        boxes = torch.cat(boxes) if len(boxes) else torch.empty(0, 4, dtype=torch.float32, device=device)
+        scores = torch.cat(scores) if len(scores) else torch.empty(0, dtype=torch.float32, device=device)
 
         # progress.set_description('PRED (cleaning)')
         # remove boxes with center outside the image     
-        image_wh = torch.tensor(image_hw[::-1])
+        image_wh = torch.tensor(image_hw[::-1], device=device)
         boxes_center = (boxes[:, :2] + boxes[:, 2:]) / 2
         boxes_center = boxes_center.round().long()
         keep = (boxes_center < image_wh).all(axis=1)
@@ -480,8 +480,8 @@ def predict_points(dataloader, model, device, threshold, cfg):
 
         # clip boxes to image limits
         ih, iw = image_hw
-        l = torch.tensor([[0, 0, 0, 0]])
-        u = torch.tensor([[iw, ih, iw, ih]])   
+        l = torch.tensor([[0, 0, 0, 0]], device=device)
+        u = torch.tensor([[iw, ih, iw, ih]], device=device)
         boxes = torch.max(l, torch.min(boxes, u))
 
         # filter boxes in the overlapped areas using nms
