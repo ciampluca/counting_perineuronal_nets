@@ -310,8 +310,8 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
 
     if outdir:
         outdir.mkdir(parents=True, exist_ok=True)
-        all_gp.to_csv(outdir / 'all_gt_preds.csv')
-        all_metrics.to_csv(outdir / 'all_metrics.csv')
+        all_gp.to_csv(outdir / 'all_gt_preds.csv.gz')
+        all_metrics.to_csv(outdir / 'all_metrics.csv.gz')
 
 
 @torch.no_grad()
