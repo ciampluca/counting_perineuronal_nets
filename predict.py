@@ -10,7 +10,7 @@ from datasets.patched_datasets import PatchedMultiImageDataset
 
 
 def main(args):
-    run_path = Path(args.model)
+    run_path = Path(args.run)
     cfg_path = run_path / '.hydra' / 'config.yaml'
     cfg = OmegaConf.load(cfg_path)
     cfg['cache_folder'] = './model_zoo'
@@ -33,7 +33,9 @@ def main(args):
     print(f'[DEVICE] {device}')
 
     metric_name = 'count/game-3'
-    ckpt_path = run_path / 'best_models' / f"best_model_metric_{metric_name.replace('/', '-')}.pth"
+    ckpt_path = run_path / 'best.pth'
+    if not ckpt_path.exists():
+        ckpt_path = run_path / 'best_models' / f"best_model_metric_{metric_name.replace('/', '-')}.pth"
     print(f"[  CKPT] {ckpt_path}")
     checkpoint = torch.load(ckpt_path, map_location=device)
     model.load_state_dict(checkpoint['model'])
@@ -49,7 +51,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Perform Counting and Localization', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('model', help='Model Name')
+    parser.add_argument('run', help='Pretrained run directory')
     parser.add_argument('data', nargs='+', help='Input Images (Image or HDF5 formats)')
     parser.add_argument('-d', '--device', default='cpu', help="Device to use; e.g., 'cpu', 'cuda:0'")
     parser.add_argument('-b', '--batch-size', type=int, default=1, help="Device to use; e.g., 'cpu', 'cuda:0'")
