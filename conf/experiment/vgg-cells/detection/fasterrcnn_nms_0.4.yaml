@@ -1,8 +1,0 @@
-# @package _global_
-
-defaults:
- - vgg-cells/detection/common
-
-model:
-    module:
-        nms: 0.4

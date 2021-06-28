@@ -18,7 +18,7 @@ optim:
     loss:
         _target_: torch.nn.MSELoss
 
-    border_pad: 64      # must be divisible by 32
+    border_pad: 32      # must be divisible by 32
     batch_size: 8
     batch_accumulation: 1
 

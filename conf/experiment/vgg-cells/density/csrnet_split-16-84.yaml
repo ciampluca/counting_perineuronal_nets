@@ -5,8 +5,10 @@ defaults:
 
 data:
     train: &common
+        root: "/home/modro/datino/VGG_cells"
+        split_seed: 87
         num_samples:
-            - 16  # num of train images
+            - 16   # num of train images
             - 84  # num of validation images
     validation:
         <<: *common

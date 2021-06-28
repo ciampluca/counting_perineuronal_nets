@@ -211,4 +211,4 @@ class PatchedImageDataset(Dataset):
             datum = self.transforms(datum)
 
         patch_info = (patch_hw, local_start_yx, self.region_hw, self.image_id)
-        return datum, *patch_info
+        return (datum,) + patch_info
