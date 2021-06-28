@@ -5,7 +5,7 @@ PyTorch code for training and evaluating cell counting and localization methodol
 ## Getting Started
 
 You'll need:
-- Python >= 3.6
+- Python >= 3.8
 - torch 1.7.1 (torchvision 0.8.2)
 - other packages in requirements.txt
 
