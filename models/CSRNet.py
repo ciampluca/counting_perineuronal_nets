@@ -7,7 +7,7 @@ from torchvision import models
 
 class CSRNet(nn.Module):
 
-    def __init__(self, load_weights=False):
+    def __init__(self, skip_weights_loading=False):
         super(CSRNet, self).__init__()
 
         self.frontend_feat = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512]
@@ -17,7 +17,7 @@ class CSRNet(nn.Module):
             self.backend_feat, in_channels=512, dilation=True)
         self.output_layer = nn.Conv2d(64, 1, kernel_size=1)
 
-        if not load_weights:
+        if not skip_weights_loading:
             mod = models.vgg16(pretrained=True)
             self._initialize_weights()
             fsd = OrderedDict()

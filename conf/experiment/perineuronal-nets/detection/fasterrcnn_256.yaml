@@ -1,0 +1,11 @@
+# @package _global_
+
+defaults:
+ - perineuronal-nets/detection/common
+
+data:
+    train:
+        patch_size: 256
+    validation:
+        patch_size: 256
+

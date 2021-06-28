@@ -16,6 +16,7 @@ class UNet(nn.Module):
             batch_norm=False,
             up_mode='upconv',
             last_bias=False,
+            skip_weights_loading=True
     ):
         """
         Implementation of

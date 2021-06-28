@@ -1,0 +1,38 @@
+# @package _global_
+
+defaults:
+  - /common: default
+  - /common/data: vgg-cells
+  - /common/method: detection
+  - /common/data/method-specific: vgg-cells_detection
+  - /common/model: fasterrcnn
+  - /common/optim: default
+
+model:
+    module:
+        max_dets_per_image: 300
+
+optim:
+    optimizer:
+        _target_: torch.optim.SGD
+        lr: 0.005
+        momentum: 0.9
+        weight_decay: 0.0005
+
+    lr_scheduler:
+        _target_: torch.optim.lr_scheduler.MultiStepLR
+        milestones: [100, 150]
+        gamma: 0.1
+
+    epochs: 150
+
+    batch_size: 8
+    batch_accumulation: 1
+    log_every: 2
+
+misc:
+    font_size: 8
+    text_pos: 15
+
+
+

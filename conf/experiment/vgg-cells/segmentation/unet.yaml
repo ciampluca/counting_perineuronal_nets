@@ -1,0 +1,15 @@
+# @package _global_
+
+defaults:
+  - /common: default
+  - /common/data: vgg-cells
+  - /common/method: segmentation
+  - /common/data/method-specific: vgg-cells_segmentation
+  - /common/model: unet
+  - /common/optim: default
+
+optim:
+  batch_size: 8
+  batch_accumulation: 1
+  
+  val_freq: 5

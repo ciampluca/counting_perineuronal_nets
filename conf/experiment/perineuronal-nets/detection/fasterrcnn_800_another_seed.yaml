@@ -1,0 +1,16 @@
+# @package _global_
+
+defaults:
+ - perineuronal-nets/detection/common
+
+data:
+    train:
+        patch_size: 800
+    validation:
+        patch_size: 800
+
+optim:
+    batch_size: 10
+    batch_accumulation: 5
+
+seed: 15

@@ -1,0 +1,13 @@
+# @package model
+
+defaults:
+  - common
+
+name: UNet
+module:
+  _target_: models.UNet
+  in_channels: 1
+  n_classes: 1
+  padding: True
+  batch_norm: True
+  last_bias: True

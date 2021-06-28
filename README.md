@@ -1,35 +1,58 @@
-# counting_perineuronal_nets
+# Counting Perineuronal Nets
 
-Experimental evaluation is based on Hydra.
+PyTorch code for training and evaluating cell counting and localization methodologies.
 
-In the conf folder there are two folders, corresponding to the two considered approaches (density and detection-based approaches).
+## Getting Started
 
-In each approach folder there is a folder technique, containing base configuration yaml files for the considered techniques.
-There is also a config yaml file specifying the default technique that will be used.
-Finally, in the experiment folder, there are yaml configuration files corresponding to the experiment
-we want to done. The values inside these files override the configuration yaml file in the technique folder.
+You'll need:
+- Python >= 3.8
+- torch 1.7.1 (torchvision 0.8.2)
+- other packages in requirements.txt
 
-Please note that for each experiment a folder in the outputs folder will be created. Notably, inside 
-there will be also a .hydra hidden folder containing log files etc
-If you use the multirun option, Hydra will create a multirun folder instad of the outputs one, having 
-a similar structure.
+We provide a [`Dockerfile`](Dockerfile) to build the environment.
 
+## How to do predictions
 
-###Examples:
+Download and extract a pretrained model from the Release page of this repo. E.g.:
+```bash
+wget https://github.com/ciampluca/counting_perineuronal_nets/releases/download/v0.2/pnn_fasterrcnn_640.zip
 
+unzip pnn_fasterrcnn_640.zip
+```
 
-- Run density based approach, using default technique (CSRNet) and configuration experiment input_size_640_640_overlap_120
+Alternatively, you can train your own model (see next section).
 
-        python train_density-based.py +experiment=csrnet_input_size_640_640_overlap_120
+Then, you can do predictions using the `predict.py` script by passing the extracted run folder and the paths to data to process. E.g.:
 
-- Run two different experiments for density based approach, using default technique (CSRNet)
+```bash
+# check python predict.py -h for more options
+python predict.py pnn_fasterrcnn_640 my_images_*.tiff
+```
 
-        python train_density-based.py +experiment=csrnet_input_size_640_640_overlap_120,csrnet_input_size_640_640_overlap_0
+Accepted format for input data are image formats and the HDF5 format. For HDF5, we assume there is a `data` dataset containing a sigle 1-channel (bidimensional) image.
 
-- Run all the experiment for density based approach using default technique (CSRNet)
-        
-        python train_density-based.py --multirun '+experiment=glob(csrnet*)'
-        
-- Run all the experiment having input size 640x640 for density based approach overriding default technique and using UNet
+## How to train
 
-        python train_density-based.py technique=density_based_unet --multirun '+experiment=glob(unet*640*)'
+First, you need to download the datasets in `data/` (TODO). Then you can use the `train.py` script to launch training sessions.
+
+Train configurations are specified with [Hydra](https://hydra.cc/) config groups in `conf/experiments`. You can run a training experiment by passing as argument `experiment=<exp_name>` to the `train.py` script, where `<exp_name>` is the path to a YAML experiment configuration relative to `conf/experiments` and without the `.yaml` extension.
+
+### Examples:
+
+- Train the detection-based approach (FasterRCNN) with 480x480 patches on PerineuronalNets:
+  ```bash
+  python train.py experiment=perineuronal-nets/detection/fasterrcnn_480
+  ```
+
+- Train the density-based approach (CSRNet) on VGG Cells:
+  ```bash
+  python train.py experiment=vgg-cells/density/csrnet
+  ```
+
+Runs files will be produced in the `runs` folder. Once trained, you can evaluate the trained models on the corresponding test sets using the `evaluate.py` script.
+E.g.,
+```bash
+# check python evaluate.py -h for more options
+python evaluate.py runs/experiment=perineuronal-nets/detection/fasterrcnn_480
+```
+Metrics and predictions will be saved in the run folder under `test_predictions/`.

@@ -1,0 +1,14 @@
+# @package _global_
+
+defaults:
+ - perineuronal-nets/segmentation/common
+
+data:
+  train:
+    patch_size: 800
+  validation:
+    patch_size: 800
+
+optim:
+  batch_size: 1
+  batch_accumulation: 8
