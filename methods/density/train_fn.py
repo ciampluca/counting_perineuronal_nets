@@ -173,7 +173,7 @@ def validate(dataloader, model, device, epoch, cfg):
         })
 
         if cfg.optim.debug and epoch % cfg.optim.debug == 0:
-            _save_image_and_density_maps(image, image_id, predicted_density_map, target_density_map)
+            _save_image_and_density_maps(image, image_id, predicted_density_map, target_density_map, cfg)
 
         progress.set_description('EVAL (patches)')
 
