@@ -5,7 +5,7 @@ defaults:
 
 model:
     module:
-        nms: 0.4
+        nms: 0.5
 
 data:
     train: &common

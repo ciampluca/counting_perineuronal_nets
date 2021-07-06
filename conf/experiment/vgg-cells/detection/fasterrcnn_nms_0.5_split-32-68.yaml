@@ -5,14 +5,14 @@ defaults:
 
 model:
     module:
-        nms: 0.4
+        nms: 0.5
 
 data:
     train: &common
         root: "/mnt/datino/VGG_cells"
         split_seed: 87
         num_samples:
-          - 8  # num of train images
-          - 92  # num of validation images
+          - 32  # num of train images
+          - 68  # num of validation images
     validation:
         <<: *common   # reinsert 'train' block content
