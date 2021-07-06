@@ -5,13 +5,13 @@ defaults:
 
 model:
     module:
-        nms: 0.6
+        nms: 0.7
 
 data:
     train: &common
         split_seed: 87
         num_samples:
-          - 64  # num of train images
-          - 36  # num of validation images
+          - 16  # num of train images
+          - 84  # num of validation images
     validation:
         <<: *common   # reinsert 'train' block content

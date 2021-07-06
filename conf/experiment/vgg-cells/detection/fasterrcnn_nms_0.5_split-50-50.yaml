@@ -9,7 +9,6 @@ model:
 
 data:
     train: &common
-        root: "/mnt/datino/VGG_cells"
         split_seed: 87
         num_samples:
           - 50  # num of train images

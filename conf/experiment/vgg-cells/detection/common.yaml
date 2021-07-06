@@ -30,6 +30,10 @@ optim:
     batch_accumulation: 1
     log_every: 2
 
+data:
+    train:
+        root: "/home/modro/datino/VGG_cells"
+
 misc:
     font_size: 8
     text_pos: 15
