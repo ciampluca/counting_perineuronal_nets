@@ -1,0 +1,15 @@
+# @package _global_
+
+defaults:
+ - vgg-cells/density/common
+
+data:
+    train: &common
+        split_seed: 77
+        num_samples:
+            - 64   # num of train images
+            - 36  # num of validation images
+        target_params:
+            method: reflect
+    validation:
+        <<: *common

@@ -1,0 +1,19 @@
+# @package _global_
+
+defaults:
+ - vgg-cells/density/common
+
+data:
+    train: &common
+        split_seed: 87
+        num_samples:
+            - 16   # num of train images
+            - 84  # num of validation images
+        transforms:
+            _target_: torchvision.transforms.Compose
+            _args_:
+                - - _target_: torchvision.transforms.ToTensor
+                  - _target_: torchvision.transforms.RandomHorizontalFlip
+                  - _target_: torchvision.transforms.RandomVerticalFlip
+    validation:
+        <<: *common

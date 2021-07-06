@@ -13,17 +13,23 @@ optim:
         lr: 0.00001
     
     lr_scheduler:
-        milestones: [ 175, 200 ]
+        milestones: [ 800, 900, 1000 ]
 
     loss:
         _target_: torch.nn.MSELoss
 
-    border_pad: 32      # must be divisible by 32
+    border_pad: 0      # must be divisible by 32
     batch_size: 8
     batch_accumulation: 1
 
-    epochs: 200
-    log_every: 2
+    epochs: 1000
+    log_every: 1
+
+data:
+    train:
+        root: "/mnt/datino/VGG_cells"
+    validation:
+        root: "/mnt/datino/VGG_cells"
 
 misc:
     font_size: 8

@@ -33,6 +33,8 @@ optim:
 data:
     train:
         root: "/home/modro/datino/VGG_cells"
+    validation:
+      root: "/home/modro/datino/VGG_cells"
 
 misc:
     font_size: 8
