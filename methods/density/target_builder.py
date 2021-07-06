@@ -177,7 +177,7 @@ class DensityTargetBuilder:
         if num_points == 0:
             return density_map
 
-        points_yx = np.clip(np.rint(points_yx), 0, hw - 1).astype(int)
+        points_yx = np.clip(np.rint(points_yx), 0, np.array(hw) - 1).astype(int)
         for r, c in points_yx:
             density_map[r, c] += 1
         

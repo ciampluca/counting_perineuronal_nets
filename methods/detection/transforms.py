@@ -53,6 +53,55 @@ class RandomHorizontalFlip(object):
         return (image, boxes) if boxes is not None else image
 
 
+class RandomVerticalFlip(object):
+    """Randomly vertically flips the Image with the probability *p*
+
+    Parameters
+    ----------
+    p: float
+        The probability with which the image is flipped
+
+
+    Returns
+    -------
+
+    numpy.ndarray
+        Flipped image in the numpy format of shape `HxWxC`
+
+    numpy.ndarray
+        Tranformed bounding box co-ordinates of the format `n x 4` where n is
+        number of bounding boxes and 4 represents `y1,x1,y2,x2` of the box
+    """
+
+    def __init__(self, p=0.5):
+        self.p = p
+
+    def __call__(self, datum):
+        if isinstance(datum, tuple):
+            image, boxes = datum
+        else:
+            image = datum
+            boxes = None
+
+        if random.random() < self.p:
+            # .copy() is needed to tackle 'RuntimeError: some of the strides of a given numpy array are negative.'
+            # see https://discuss.pytorch.org/t/torch-from-numpy-not-support-negative-strides/3663
+            image = image[::-1, :, :].copy()
+
+            if boxes is not None:
+                if boxes.size != 0:
+                    image_center = np.array(image.shape[:2])[::-1] / 2
+                    image_center = np.hstack((image_center, image_center))
+                    boxes[:, [0, 2]] += 2 * (image_center[[0, 2]] - boxes[:, [0, 2]])
+
+                    box_h = abs(boxes[:, 0] - boxes[:, 2])
+
+                    boxes[:, 0] -= box_h
+                    boxes[:, 2] += box_h
+
+        return (image, boxes) if boxes is not None else image
+
+
 class ToTensor(object):
 
     def __call__(self, datum):
