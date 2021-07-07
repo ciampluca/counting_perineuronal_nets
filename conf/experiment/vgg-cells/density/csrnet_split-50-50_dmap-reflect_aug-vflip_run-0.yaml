@@ -12,10 +12,10 @@ data:
         target_params:
             method: reflect
         transforms:
-            _target_: torchvision.transforms.Compose
-            _args_:
-                - - _target_: torchvision.transforms.ToTensor
-                  - _target_: torchvision.transforms.RandomHorizontalFlip
-                  - _target_: torchvision.transforms.RandomVerticalFlip
+          _target_: torchvision.transforms.Compose
+          _args_:
+            - - _target_: torchvision.transforms.ToTensor
+              - _target_: torchvision.transforms.RandomHorizontalFlip
+              - _target_: torchvision.transforms.RandomVerticalFlip
     validation:
         <<: *common

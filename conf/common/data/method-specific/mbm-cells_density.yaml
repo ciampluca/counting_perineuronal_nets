@@ -4,7 +4,7 @@ train: &common
     target_: density
     target_params:
         k_size: 31  # size (in px) of the kernel of the gaussian localizing a perineural nets
-        sigma: 5  # sigma of the gaussian
+        sigma: 10  # sigma of the gaussian
         method: reflect     # method for gt den map generation; can be move, move-cv2, reflect, normalize
 
 validation:

@@ -1,14 +1,14 @@
 # @package _global_
 
 defaults:
- - vgg-cells/density/common
+ - mbm-cells/density/common
 
 data:
     train: &common
         split_seed: 87
         num_samples:
-            - 16   # num of train images
-            - 84  # num of validation images
+            - 15   # num of train images
+            - 15  # num of validation images
         target_params:
             method: reflect
     validation:

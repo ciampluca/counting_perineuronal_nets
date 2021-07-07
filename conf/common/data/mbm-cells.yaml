@@ -2,14 +2,14 @@
 
 train: &common
     _target_: datasets.CellsDataset
-    root: ${hydra:runtime.cwd}/data/vgg-cells
+    root: ${hydra:runtime.cwd}/data/mbm-cells
     split: train
     split_seed: 87
     num_samples:
         - 50  # num of train images
         - 50  # num of validation images
-    max_num_train_val_sample: 100
-  
+    max_num_train_val_sample: 34
+
 validation:
     split: validation
     <<: *common   # reinsert 'train' block content

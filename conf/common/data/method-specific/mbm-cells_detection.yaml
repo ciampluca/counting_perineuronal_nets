@@ -1,0 +1,9 @@
+# @package data
+
+train: &common
+    target_: detection
+    target_params:
+        side: 20  # side (in px) of the bounding box localizing a cell
+
+validation:
+    <<: *common   # reinsert 'train' block content
