@@ -6,9 +6,10 @@ train: &common
     split: train
     split_seed: 87
     num_samples:
-        - 50  # num of train images
-        - 50  # num of validation images
-    max_num_train_val_sample: 34
+        - 15  # num of train images
+        - 15  # num of validation images
+    max_num_train_val_samples: 30
+    num_test_samples: 10
 
 validation:
     split: validation

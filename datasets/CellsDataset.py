@@ -20,7 +20,8 @@ class CellsDataset(PatchedMultiImageDataset):
             self,
             root='data/vgg-cells',
             split='all',
-            max_num_train_val_sample=100,   # should be 100 for VGGCells and 34 for MBMCells
+            max_num_train_val_samples=100,   # should be 100 for VGGCells and 30 for MBMCells
+            num_test_samples=100,    # should be 100 for VGGCells and 10 for MBMCells
             split_seed=None,
             num_samples=None,
             target_=None,
@@ -29,7 +30,6 @@ class CellsDataset(PatchedMultiImageDataset):
     ):
 
         target = target_  # XXX TOREMOVE for hydra bug
-        print(max_num_train_val_sample)
 
         assert target in (None, 'segmentation', 'detection', 'density'), f'Unsupported target type: {target}'
         assert split in (
@@ -38,14 +38,15 @@ class CellsDataset(PatchedMultiImageDataset):
                     num_samples is not None)), "You must supply split_seed and num_samples when split != 'all'"
         assert split == 'all' or (isinstance(num_samples, collections.abc.Sequence) and len(
             num_samples) == 2), 'num_samples must be a tuple of two ints'
-        assert split == 'all' or sum(num_samples) <= max_num_train_val_sample, \
-            f'n_train + n_val samples must be <= {max_num_train_val_sample}'
+        assert split == 'all' or sum(num_samples) <= max_num_train_val_samples, \
+            f'n_train + n_val samples must be <= {max_num_train_val_samples}'
 
         self.root = Path(root)
 
         self.split = split
         self.split_seed = None
         self.num_samples = num_samples
+        self.num_test_samples = num_test_samples
 
         self.transforms = transforms
 
@@ -96,7 +97,7 @@ class CellsDataset(PatchedMultiImageDataset):
         elif self.split == 'validation':
             return image_paths[n_train_samples:n_train_samples + n_val_samples]
         else:  # elif self.split == 'test':
-            return image_paths[n_train_samples + n_val_samples:]
+            return image_paths[n_train_samples + n_val_samples:n_train_samples + n_val_samples + self.num_test_samples]
 
     def _load_annotations(self):
 
