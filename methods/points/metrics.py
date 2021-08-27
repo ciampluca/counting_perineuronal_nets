@@ -60,7 +60,7 @@ def detection_and_counting(groundtruth_and_predictions, detection=True, counting
 
         precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0.
         recall = true_positives / (true_positives + false_negatives)
-        f1_score = true_positives / (2 * true_positives + false_negatives + false_positives)
+        f1_score = 2 * true_positives / (2 * true_positives + false_negatives + false_positives)
 
         metrics['pdet/precision'] = precision
         metrics['pdet/recall'] = recall
