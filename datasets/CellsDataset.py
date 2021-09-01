@@ -20,8 +20,8 @@ class CellsDataset(PatchedMultiImageDataset):
             self,
             root='data/vgg-cells',
             split='all',
-            max_num_train_val_samples=100,   # should be 100 for VGGCells and 30 for MBMCells
-            num_test_samples=100,    # should be 100 for VGGCells and 10 for MBMCells
+            max_num_train_val_sample=30,   # should be 100 for VGGCells and 30 for MBMCells
+            num_test_samples=10,    # should be 100 for VGGCells and 10 for MBMCells
             split_seed=None,
             num_samples=None,
             target_=None,
@@ -38,8 +38,8 @@ class CellsDataset(PatchedMultiImageDataset):
                     num_samples is not None)), "You must supply split_seed and num_samples when split != 'all'"
         assert split == 'all' or (isinstance(num_samples, collections.abc.Sequence) and len(
             num_samples) == 2), 'num_samples must be a tuple of two ints'
-        assert split == 'all' or sum(num_samples) <= max_num_train_val_samples, \
-            f'n_train + n_val samples must be <= {max_num_train_val_samples}'
+        assert split == 'all' or sum(num_samples) <= max_num_train_val_sample, \
+            f'n_train + n_val samples must be <= {max_num_train_val_sample}'
 
         self.root = Path(root)
 
@@ -125,6 +125,7 @@ if __name__ == "__main__":
     from tqdm import trange
     from methods.detection.transforms import RandomVerticalFlip, RandomHorizontalFlip, Compose
     import torchvision
+    from PIL import ImageDraw, Image
 
     # vgg-cells --> side: 12, mbm-cells --> side: 20
     side = 20
@@ -132,25 +133,27 @@ if __name__ == "__main__":
         RandomHorizontalFlip(),
         RandomVerticalFlip(),
     ])
-    # dataset = CellsDataset(target_='detection', target_params={'side': side}, transforms=transforms, root="/home/luca/luca-cnr/mnt/datino/Adipocyte_cells")
-    # print(dataset)
-    #
-    # for i in trange(0, 200, 5):
-    #     datum, patch_hw, start_yx, image_hw, image_id = dataset[i]
-    #     image, boxes = datum
-    #
-    #     image = (255 * image.squeeze()).astype(np.uint8)
-    #     centers = (boxes[:, :2] + boxes[:, 2:]) / 2
-    #     image = draw_points(image, centers, radius=int(side/2))
-    #
-    #     io.imsave('trash/debug/annot' + image_id, image)
+    dataset = CellsDataset(target_='detection', target_params={'side': side}, transforms=None, root="/home/luca/luca-cnr/mnt/datino/MBM_cells")
+    print(dataset)
+
+    for i in trange(0, 200, 5):
+        datum, patch_hw, start_yx, image_hw, image_id = dataset[i]
+        image, boxes = datum
+
+        image = (255 * image.squeeze()).astype(np.uint8)
+        img_draw = ImageDraw.Draw(image)
+        centers = (boxes[:, :2] + boxes[:, 2:]) / 2
+
+        image = draw_points(image, centers, radius=int(side/2))
+
+        io.imsave('trash/debug/annot' + image_id, image)
 
     transforms = torchvision.transforms.Compose([
-        torchvision.transforms.ToTensor(),
-        torchvision.transforms.RandomVerticalFlip()]
+        torchvision.transforms.ToTensor()
+    ]
     )
-    dataset = CellsDataset(target_='density', transforms=transforms, root="/home/luca/luca-cnr/mnt/datino/MBM_cells",
-                              target_params={'k_size': 33, 'sigma': int(side/2), 'method': 'reflect'})
+    dataset = CellsDataset(target_='density', transforms=transforms, root="/home/luca/luca-cnr/mnt/datino/VGG_cells",
+                              target_params={'k_size': 31, 'sigma': int(side/2), 'method': 'reflect'})
     datum, patch_hw, start_yx, image_hw, image_name = dataset[0]
 
     for i in trange(0, 200, 5):

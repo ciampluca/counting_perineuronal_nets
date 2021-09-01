@@ -12,7 +12,7 @@ class DensityTargetBuilder:
         TODO: add reference if needed
     """
 
-    def __init__(self, kernel_size=51, sigma=30, method='reflect', **kwargs):
+    def __init__(self, k_size=51, sigma=30, method='reflect', **kwargs):
         """ Constructor.
         Args:
             kernel_size (int, optional): Size (in px) of the kernel of the gaussian localizing a perineural nets. Defaults to 51.
@@ -21,7 +21,7 @@ class DensityTargetBuilder:
 
         assert method in ('move', 'reflect', 'normalize', 'move-cv2'), f'Unsupported method: {method}'
 
-        self.kernel_size = kernel_size
+        self.kernel_size = k_size
         self.sigma = sigma
         self.method = method
 

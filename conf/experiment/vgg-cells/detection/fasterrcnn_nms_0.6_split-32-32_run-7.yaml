@@ -1,0 +1,17 @@
+# @package _global_
+
+defaults:
+ - vgg-cells/detection/common
+
+model:
+    module:
+        nms: 0.6
+
+data:
+    train: &common
+        split_seed: 17
+        num_samples:
+          - 32  # num of train images
+          - 32  # num of validation images
+    validation:
+        <<: *common   # reinsert 'train' block content

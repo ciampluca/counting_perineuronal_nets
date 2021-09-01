@@ -8,7 +8,7 @@ train: &common
     num_samples:
         - 50  # num of train images
         - 50  # num of validation images
-    max_num_train_val_samples: 100
+    max_num_train_val_sample: 100
     num_test_samples: 100
   
 validation:

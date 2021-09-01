@@ -3,8 +3,8 @@
 train: &common
     target_: density
     target_params:
-        k_size: 51         # size (in px) of the kernel of the gaussian localizing a perineural nets
-        sigma: 30            # sigma of the gaussian
+        k_size: 151         # size (in px) of the kernel of the gaussian localizing a perineural nets
+        sigma: 15            # sigma of the gaussian
 
 validation:
     overlap: 120

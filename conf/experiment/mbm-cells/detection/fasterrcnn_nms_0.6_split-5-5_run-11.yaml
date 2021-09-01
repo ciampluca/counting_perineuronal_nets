@@ -1,0 +1,17 @@
+# @package _global_
+
+defaults:
+ - mbm-cells/detection/common
+
+model:
+    module:
+        nms: 0.6
+
+data:
+    train: &common
+        split_seed: 75
+        num_samples:
+          - 5  # num of train images
+          - 5  # num of validation images
+    validation:
+        <<: *common   # reinsert 'train' block content
