@@ -212,3 +212,87 @@ class PatchedImageDataset(Dataset):
 
         patch_info = (patch_hw, local_start_yx, self.region_hw, self.image_id)
         return (datum,) + patch_info
+
+
+class RandomAccessMultiImageDataset(ConcatDataset):
+
+    @classmethod
+    def from_paths_and_locs(cls, paths, locs, **kwargs):
+        return cls([RandomAccessImageDataset(p, l, **kwargs) for p, l in zip(paths, locs)])
+    
+    def __init__(self, datasets):
+        assert all(isinstance(d, RandomAccessImageDataset) for d in datasets), 'All datasets must be RandomAccessImageDataset.'
+        super().__init__(datasets)   
+    
+    def num_images(self):
+        return len(self.datasets)
+
+    def __str__(self):
+        s = f'{self.__class__.__name__}: ' \
+            f'{len(self.datasets)} image(s), ' \
+            f'{len(self)} patches'
+        return s
+
+
+class RandomAccessImageDataset(Dataset):
+    """ Dataset that provides random access to patches belonging to a single big image file
+        stored in TIFF or HDF5 format. """
+
+    def __init__(
+        self,
+        path,
+        locations,
+        patch_size=64,
+        transforms=None,
+        max_cache_mem=None
+    ):
+        """ Constructor.
+
+        Args:
+            path (str): Path to image or HDF5 file.
+            locations (ndarray): (N,2)-shaped array of YX location to extract patches from.
+            patch_size (int, optional): Size of the patch to be extracted. Defaults to 16.
+            transforms (callable, optional): A callable to apply transformations to patches. Defaults to None.
+            max_cache_mem (int, optional): Cache size in bytes (only for HDF5). Defaults to None.
+        """
+
+        self.path = Path(path)
+        self.locations = locations
+        self.patch_size = patch_size
+        self.transforms = transforms
+
+        # hdf5 dataset
+        if self.path.suffix.lower() in ('.h5', '.hdf5'):
+            self.data = h5py.File(path, 'r', rdcc_nbytes=max_cache_mem)['data']
+        else:  # image format
+            image = io.imread(path).astype(np.float32)
+            self.data = rgb2gray(image) if image.ndim > 2 else image  # TODO add custom transform params
+        
+        self.patch_hw = np.array((patch_size, patch_size), dtype=int)
+        self.half_hw = self.patch_hw // 2
+    
+    def __len__(self):
+        return len(self.locations)
+
+    def __getitem__(self, index):
+        y, x = self.locations[index]
+        hy, hx = self.half_hw
+        h, w = self.data.shape
+
+        sy, sx = max(y - hy, 0), max(x - hx, 0)
+        ey, ex = min(y + hy, h), min(x + hx, w)
+
+        patch = self.data[sy:ey, sx:ex]
+        patch_hw = np.array(patch.shape)
+        py, px = - patch_hw % self.patch_hw
+
+        if py or px:  # pad is needed
+            pad = ((py if sy == 0 else 0, py if ey == h else 0),
+                   (px if sx == 0 else 0, px if ex == w else 0))
+            patch = np.pad(patch, pad)
+        
+        if self.transforms:
+            patch = self.transforms(patch)
+        
+        return patch
+
