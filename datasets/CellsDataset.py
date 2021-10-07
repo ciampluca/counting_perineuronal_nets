@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from skimage import io
 
-from .patched_datasets import PatchedImageDataset, PatchedMultiImageDataset
+from datasets.patched_datasets import PatchedImageDataset, PatchedMultiImageDataset
 from methods.segmentation.target_builder import SegmentationTargetBuilder
 from methods.detection.target_builder import DetectionTargetBuilder
 from methods.density.target_builder import DensityTargetBuilder
