@@ -29,6 +29,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Strip a trained run and create a run archive')
     parser.add_argument('run', type=Path, help='path to trained run dir')
     parser.add_argument('output', type=Path, help='output zip archive')
-    parser.add_argument('-b', '--best-metric', default='count/game-3', help='which best model to choose')
+    parser.add_argument('-b', '--best-metric', default='loss', help='which best model to choose')
     args = parser.parse_args()
     main(args)

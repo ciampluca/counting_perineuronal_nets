@@ -84,7 +84,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Perform evaluation on test set')
     parser.add_argument('run', help='Path to run dir')
     parser.add_argument('-d', '--device', default='cuda', help='device to use for prediction')
-    parser.add_argument('--best-on-metric', default='loss', help='select snapshot that optimizes this metric')
+    parser.add_argument('--best-on-metric', default='rank/spearman', help='select snapshot that optimizes this metric')
     parser.add_argument('--no-save', action='store_false', dest='save', help='draw images with predictions')
     parser.add_argument('--debug', action='store_true', default=False, help='draw images with predictions')
     parser.add_argument('--data-root', default=None, help='root of the test subset')

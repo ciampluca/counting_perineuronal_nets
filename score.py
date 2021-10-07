@@ -85,7 +85,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Perform Counting and Localization', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('run', help='Pretrained run directory')
     parser.add_argument('locs', help='CSV of images/patches locations to rescore')
-    parser.add_argument('-m', '--metric', type=str, default='loss', help="Metric on which select checkpoint to use")
+    parser.add_argument('-m', '--metric', type=str, default='rank/spearman', help="Metric on which select checkpoint to use")
     parser.add_argument('-r', '--root', type=str, default='.', help="Root directory of input images")
     parser.add_argument('-d', '--device', default='cpu', help="Device to use; e.g., 'cpu', 'cuda:0'")
     parser.add_argument('-p', '--patch-size', type=int, help="Patch size (side of squared region around localization point)")
