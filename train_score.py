@@ -100,7 +100,7 @@ def validate(dataloader, model, device, writer, epoch, cfg):
     return metrics
 
 
-@hydra.main(config_path="conf_rank", config_name="config")
+@hydra.main(config_path="conf_score", config_name="config")
 def main(cfg):
     from omegaconf import OmegaConf; print(OmegaConf.to_yaml(cfg))
     
