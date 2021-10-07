@@ -124,8 +124,7 @@ if __name__ == "__main__":
     from skimage import io
     from tqdm import trange
     from methods.detection.transforms import RandomVerticalFlip, RandomHorizontalFlip, Compose
-    import torchvision
-    from PIL import ImageDraw, Image
+    from PIL import ImageDraw
 
     # vgg-cells --> side: 12, mbm-cells --> side: 20
     side = 20
@@ -148,21 +147,27 @@ if __name__ == "__main__":
 
         io.imsave('trash/debug/annot' + image_id, image)
 
-    transforms = torchvision.transforms.Compose([
-        torchvision.transforms.ToTensor()
-    ]
-    )
-    dataset = CellsDataset(target_='density', transforms=transforms, root="/home/luca/luca-cnr/mnt/datino/VGG_cells",
-                              target_params={'k_size': 31, 'sigma': int(side/2), 'method': 'reflect'})
+    dataset = CellsDataset(target_='segmentation', root="data/vgg-cells",
+                              target_params={
+                                'radius': 5,         # radius (in px) of the dot placed on a cell in the segmentation map
+                                'radius_ignore': 6,  # radius (in px) of the 'ignore' zone surrounding the cell
+                                'v_bal': 0.1,         # weight of the loss of bg pixels
+                                'sigma_bal': 3,       # gaussian stddev (in px) to blur loss weights of bg pixels near fg pixels
+                                'sep_width': 1,       # width (in px) of bg ridge separating two overlapping foreground cells
+                                'sigma_sep': 3,       # gaussian stddev (in px) to blur loss weights of bg pixels near bg ridge pixels
+                                'lambda_sep': 50  
+                              })
     datum, patch_hw, start_yx, image_hw, image_name = dataset[0]
 
     for i in trange(0, 200, 5):
         datum, patch_hw, start_yx, image_hw, image_id = dataset[i]
-        datum = datum.permute(1, 2, 0).numpy()
-        density_map = datum[:, :, 1]
+        segmentation_map = datum[:, :, 1]
+        weights_map = datum[:, :, 2]
 
-        assert np.allclose(density_map.sum(), len(dataset.annot.loc[image_id]))
+        segmentation_map = (255 * normalize_map(segmentation_map)).astype(np.uint8)
+        weights_map = (255 * normalize_map(weights_map)).astype(np.uint8)
+        io.imsave('debug/segm' + image_id, segmentation_map)
+        io.imsave('debug/segm_weights' + image_id, weights_map)
 
-        density_map = (255 * normalize_map(density_map)).astype(np.uint8)
-        io.imsave('trash/debug/dmap' + image_id, density_map)
+        break
 

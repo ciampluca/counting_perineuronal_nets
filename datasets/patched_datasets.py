@@ -1,6 +1,4 @@
-from functools import partial
 import itertools
-from logging import disable
 from pathlib import Path
 
 import h5py
@@ -296,3 +294,19 @@ class RandomAccessImageDataset(Dataset):
         
         return patch
 
+
+if __name__ == "__main__":
+    import torch
+    from torchvision.utils import make_grid, save_image
+    from torchvision.transforms import ToTensor
+
+    data_path = 'data/perineuronal-nets/test/'
+    image_name = '061_A1_s08_C1_crop.tif'
+    path = data_path + 'fullFrames/' + image_name
+    locations = pd.read_csv(data_path + 'annotations.csv', index_col=0).loc[image_name, ['Y', 'X']].values
+    dset = RandomAccessImageDataset(path, locations, transforms=ToTensor())
+
+    samples = torch.stack([dset[i] for i in range(64)])
+
+    img = make_grid(samples, padding=2, normalize=True)
+    save_image(img, 'pnn_samples.png')
