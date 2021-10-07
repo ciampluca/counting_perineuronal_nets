@@ -1,5 +1,4 @@
 import numpy as np
-import cv2
 
 from math import floor
 from scipy.signal import gaussian
@@ -7,15 +6,12 @@ from skimage.filters import gaussian as gaussian_filter
 
     
 class DensityTargetBuilder:
-    """ This builds the density map for counting, as described in:
-
-        TODO: add reference if needed
-    """
+    """ This builds the density map for counting. """
 
     def __init__(self, k_size=51, sigma=30, method='reflect', **kwargs):
         """ Constructor.
         Args:
-            kernel_size (int, optional): Size (in px) of the kernel of the gaussian localizing a perineural nets. Defaults to 51.
+            kernel_size (int, optional): Size (in px) of the kernel of the gaussian localizing an object. Defaults to 51.
             sigma (int, optional): Sigma of the gaussian. Defaults to 30.
         """
 
@@ -38,7 +34,8 @@ class DensityTargetBuilder:
         return method(shape, locations)
     
     def build_cv2(self, shape, locations):
-        """ This builds the density map, putting a gaussian over each dots localizing a perineural net. """
+        import cv2
+        """ This builds the density map, putting a gaussian over each dots localizing an object. """
 
         kernel_size = self.kernel_size
         sigma = self.sigma
@@ -100,7 +97,7 @@ class DensityTargetBuilder:
     def build_nocv2(self, hw, points_yx):
         """ This builds the density map, putting a gaussian over each dots localizing a perineural net.
 
-            NOTE: This is an equivalent cv2-free implementation, but the results are NOT numerically identical to build().
+            NOTE: This is an equivalent cv2-free implementation, but the results are NOT numerically identical to build_cv2().
             This is due to cv2.getGaussianKernel() and scipy.signal.gaussian() giving different results when
             the kernel size is even (according to cv2's doc, only odd kernel should be used).
             However, this difference is negligible in practice.
@@ -129,7 +126,7 @@ class DensityTargetBuilder:
 
 
     def build_reflect(self, hw, points_yx):
-        """ This builds the density map, putting a gaussian over each dots localizing a perineural net.
+        """ This builds the density map, putting a gaussian over each dots localizing an object.
             It deals with borders by reflecting outside density inside the region.
         """
         r = self.kernel_size // 2
