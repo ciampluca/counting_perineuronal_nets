@@ -47,7 +47,10 @@ def draw_points(image, points_yx, radius=10, marker='circle', color=RED):
     elif marker == 'square':
         draw_marker_fn = _square_marker
 
-    image = np.stack((image, image, image), axis=-1)
+    if image.ndim == 2:
+        image = np.stack((image, image, image), axis=-1)
+    else:
+        image = image.copy()
 
     for r, c in points_yx.astype(int):
         rr, cc, val = draw_marker_fn(r, c, radius, image.shape)
@@ -80,7 +83,10 @@ def draw_groundtruth_and_predictions(image, gp, radius=10, marker='circle', pale
     elif marker == 'square':
         draw_marker_fn = _square_marker
 
-    image = np.stack((image, image, image), axis=-1)
+    if image.ndim == 2:
+        image = np.stack((image, image, image), axis=-1)
+    else:
+        image = image.copy()
 
     # iterate gt and predictions
     for c_gt, r_gt, c_p, r_p, score, agreement in gp[['X', 'Y', 'Xp', 'Yp', 'score', 'agreement']].values:
