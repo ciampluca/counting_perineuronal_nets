@@ -11,6 +11,7 @@ defaults:
 model:
     module:
         max_dets_per_image: 300
+        nms: 0.6
 
 optim:
     optimizer:
