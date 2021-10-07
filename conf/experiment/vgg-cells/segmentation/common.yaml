@@ -9,7 +9,14 @@ defaults:
   - /common/optim: default
 
 optim:
+  epochs: 500
+
+  lr_scheduler:
+    milestones: [200]
+
   batch_size: 8
   batch_accumulation: 1
   
+  val_device: cuda
   val_freq: 5
+  log_every: 1

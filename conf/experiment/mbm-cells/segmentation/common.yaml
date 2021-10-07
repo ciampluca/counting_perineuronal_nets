@@ -1,0 +1,22 @@
+# @package _global_
+
+defaults:
+  - /common: default
+  - /common/data: mbm-cells
+  - /common/method: segmentation
+  - /common/data/method-specific: mbm-cells_segmentation
+  - /common/model: unet
+  - /common/optim: default
+
+optim:
+  epochs: 1000
+
+  lr_scheduler:
+    milestones: [750, 900]
+
+  batch_size: 1
+  batch_accumulation: 5
+  
+  val_device: cuda
+  val_freq: 5
+  log_every: 1
