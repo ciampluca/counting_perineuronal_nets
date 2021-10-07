@@ -99,7 +99,7 @@ def main(cfg):
         valid_log = pd.read_csv(valid_log_path, index_col=0, header=[0,1])
         log.info(f"[RESUME] Resuming from epoch {start_epoch}")
 
-    # get method-specific traina and validation loops
+    # get method-specific train and validation loops
     train_one_epoch = hydra.utils.get_method(f'methods.{cfg.method}.train_fn.train_one_epoch')
     validate = hydra.utils.get_method(f'methods.{cfg.method}.train_fn.validate')
 

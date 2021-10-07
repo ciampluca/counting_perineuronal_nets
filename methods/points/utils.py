@@ -69,7 +69,7 @@ def draw_groundtruth_and_predictions(image, gp, radius=10, marker='circle', pale
             - 'tp_p': color of predicted true positives points,
             - 'tp_match': color of the line connecting matching points,
             - 'fn': color of false negative points,
-            - 'fp': color of false positive pointsself.
+            - 'fp': color of false positive points.
             Colors are triple of integers in [0, 255]. If None, the default palette is used. Defaults to None.
     """
     palette = palette or DEFAULT_PALETTE
