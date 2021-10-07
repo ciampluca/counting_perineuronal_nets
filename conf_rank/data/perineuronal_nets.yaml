@@ -1,0 +1,26 @@
+# @package _global_
+
+data:
+    train: &common
+        _target_: datasets.PerineuronalNetsRankDataset
+        root: ${hydra:runtime.cwd}/data/perineuronal-nets/test
+        split: train
+        split_seed: ${seed} #23
+        split_type: image
+        patch_size: 64
+        mode: patches
+        random_offset: 5
+        neg_fraction: 0.15
+        max_cache_mem: 8_589_934_592  # 8GiB in bytes
+        transforms:
+            _target_: torchvision.transforms.Compose
+            _args_:
+                - - _target_: torchvision.transforms.ToTensor
+                  - _target_: torchvision.transforms.RandomHorizontalFlip
+                  - _target_: torchvision.transforms.RandomVerticalFlip
+    validation: 
+        <<: *common   # reinsert 'train' block content
+        split: validation
+        random_offset: 0
+        transforms:
+            _target_: torchvision.transforms.ToTensor

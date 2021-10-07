@@ -1,0 +1,17 @@
+# @package _global_
+
+model:
+    base:
+        num_classes: 1
+
+optim:
+    method: simple_regression
+    batch_size: 32
+    optimizer:
+        _target_: torch.optim.SGD
+        momentum: 0.9
+        lr: 0.001
+
+    epochs: 1000
+    lr_scheduler:
+        milestones: [750]

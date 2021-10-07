@@ -1,0 +1,22 @@
+# @package _global_
+
+defaults:
+    - /common
+    - data: perineuronal_nets
+    - model: convnet
+    - method: simple_regression
+
+seed: 10
+gpu: 0
+
+hydra:
+    run:
+        dir: runs_score/${hydra.job.override_dirname}
+    sweep:
+        dir: runs_score
+        subdir: ${hydra.job.override_dirname}
+    job:
+        config:
+            override_dirname:
+                exclude_keys:
+                    - optim.resume

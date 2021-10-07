@@ -1,0 +1,7 @@
+# @package _global_
+
+model:
+    name: ConvNet
+    base:
+        _target_: models.ConvNet
+        in_channels: 1

@@ -1,0 +1,26 @@
+# @package _global_
+
+data:
+    train:
+        mode: tuples
+        n_tuples: 350
+    validation:
+        mode: tuples
+        n_tuples: 350
+
+model:
+    base:
+        num_classes: 1
+    
+optim:
+    method: pairwise_balanced
+    batch_size: 32
+    epochs: 300
+
+    optimizer:
+        _target_: torch.optim.SGD
+        momentum: 0.9
+        lr: 0.01
+
+    lr_scheduler:
+        milestones: [100]
