@@ -12,3 +12,4 @@ prefetch_generator
 scikit-image
 seaborn
 opencv-python
+scikit-learn
