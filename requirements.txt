@@ -10,7 +10,7 @@ h5py
 pandas
 prefetch_generator
 scikit-image
-seaborn
+seaborn==0.11.2
 scikit-learn
 spacecutter
 torchsort
