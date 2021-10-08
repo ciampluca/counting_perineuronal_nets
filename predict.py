@@ -112,8 +112,6 @@ def main(args):
         print(f'[OUTPUT] {args.output}')
         localizations.to_csv(args.output, index=False)
 
-        breakpoint()
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Perform Counting and Localization', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
