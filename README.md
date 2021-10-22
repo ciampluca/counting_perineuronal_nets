@@ -45,7 +45,7 @@ Accepted formats for input data are image formats (TIFF, PNG, JPEG, etc.) and th
 
 ## How to train
 
-First, you need to download the datasets in the `data/` folder (TODO). Then you can use the `train.py` and `train_score.py` script to launch training sessions.
+First, you need to download the datasets in the `data/` folder (see [these instructions](data/)). Then you can use the `train.py` and `train_score.py` script to launch training sessions.
 
 ### Stage 1: Localization Model Training
 
