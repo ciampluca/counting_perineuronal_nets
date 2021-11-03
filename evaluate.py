@@ -24,7 +24,9 @@ def main(args):
     # create test dataset and dataloader
     test_dataset = cfg.data.validation
     test_dataset.root = args.data_root if args.data_root else test_dataset.root
+    # TODO: better with hydra parameters to eventually set to 'all' when needed
     test_dataset.split = 'test'
+    # test_dataset.split = 'all'
     test_dataset.target_ = None
     test_dataset = hydra.utils.instantiate(test_dataset)
 

@@ -151,7 +151,8 @@ class PatchedImageDataset(Dataset):
 
         # keep only annotations of this image
         self.image_id = self.path.name if image_id is None else image_id
-        self.annot = annotations.loc[self.image_id] if annotations is not None else pd.DataFrame(columns=['Y', 'X'])
+        self.annot = annotations.loc[[self.image_id]] \
+            if annotations is not None and self.image_id in annotations.index else pd.DataFrame(columns=['Y', 'X'])
 
         # keep also annotations in the selected split (in split's coordinates)
         in_split = ((self.annot[['Y', 'X']] >= self.origin_yx) & (self.annot[['Y', 'X']] < self.limits_yx)).all(axis=1)

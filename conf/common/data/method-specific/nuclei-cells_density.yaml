@@ -1,0 +1,27 @@
+# @package data
+
+train: &common
+    target_: density
+    target_params:
+        k_size: 51  # size (in px) of the kernel of the gaussian localizing a biological structure
+        sigma: 10  # sigma of the gaussian
+        method: reflect     # method for gt den map generation; can be move, move-cv2, reflect, normalize
+
+    transforms:
+        _target_: torchvision.transforms.Compose
+        _args_:
+            - - _target_: torchvision.transforms.ToTensor
+              - _target_: torchvision.transforms.Resize
+                _args_:
+                    - 504
+              - _target_: torchvision.transforms.RandomHorizontalFlip
+
+validation:
+    <<: *common   # reinsert 'train' block content
+    transforms:
+        _target_: torchvision.transforms.Compose
+        _args_:
+            - - _target_: torchvision.transforms.ToTensor
+              - _target_: torchvision.transforms.Resize
+                _args_:
+                    - 504

@@ -380,7 +380,8 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
     for image_id, image_hw, image, boxes, scores in progress:
         image = (255 * image).astype(np.uint8)
 
-        groundtruth = dataloader.dataset.annot.loc[image_id].copy()
+        # TODO: check when there are no anns in the image
+        groundtruth = dataloader.dataset.annot.loc[[image_id]].copy()
         groundtruth['agreement'] = groundtruth.loc[:, 'AV':'VT'].sum(axis=1)
 
         if outdir and debug:  # debug
