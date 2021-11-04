@@ -1,3 +1,4 @@
+import networkx as nx
 import numpy as np
 
 from skimage.draw import disk, line_aa
@@ -130,24 +131,9 @@ class SegmentationTargetBuilder:
     
     @staticmethod
     def _find_cliques(adj_matrix):
-        """ Finds cliques in graphs, used for building the target segmentation maps.
-            From https://en.wikipedia.org/wiki/Bron%E2%80%93Kerbosch_algorithm
-        """
-        N = {i: set(np.nonzero(row)[0]) for i, row in enumerate(adj_matrix)}
-
-        def BronKerbosch1(P, R=None, X=None):
-            P = set(P)
-            R = set() if R is None else R
-            X = set() if X is None else X
-            if not P and not X:
-                yield R
-            while P:
-                v = P.pop()
-                yield from BronKerbosch1(P=P.intersection(N[v]), R=R.union([v]), X=X.intersection(N[v]))
-                X.add(v)
-
-        P = N.keys()
-        yield from BronKerbosch1(P)
+        """ Finds cliques in graphs, used for building the target segmentation maps. """
+        graph = nx.from_numpy_matrix(adj_matrix)
+        yield from nx.algorithms.clique.find_cliques(graph)
 
     @classmethod
     def _find_ridges(cls, points, radius):
