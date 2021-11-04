@@ -260,7 +260,8 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
         image = (255 * image).astype(np.uint8)
 
         groundtruth = dataloader.dataset.annot.loc[image_id]
-        groundtruth['agreement'] = groundtruth.loc[:, 'AV':'VT'].sum(axis=1)
+        if 'AV' in groundtruth.columns:  # for the PNN dataset only
+            groundtruth['agreement'] = groundtruth.loc[:, 'AV':'VT'].sum(axis=1)
 
         if outdir and debug:  # debug
             outdir.mkdir(parents=True, exist_ok=True)
