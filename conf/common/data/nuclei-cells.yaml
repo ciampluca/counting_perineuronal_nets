@@ -10,6 +10,7 @@ train: &common
         - 25  # num of validation images
     max_num_train_val_sample: 50
     num_test_samples: 50
+    cache_targets: true
 
 validation:
     split: validation

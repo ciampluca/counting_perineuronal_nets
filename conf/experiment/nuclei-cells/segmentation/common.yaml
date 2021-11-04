@@ -15,7 +15,9 @@ optim:
     milestones: [750, 900]
 
   batch_size: 1
-  batch_accumulation: 5
+  batch_accumulation: 4
+
+  num_workers: 0
   
   val_device: cuda
   val_freq: 5
