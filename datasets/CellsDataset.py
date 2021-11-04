@@ -26,6 +26,7 @@ class CellsDataset(PatchedMultiImageDataset):
             num_samples=None,
             target_=None,
             target_params={},
+            cache_targets=False,
             transforms=None,
     ):
 
@@ -74,6 +75,7 @@ class CellsDataset(PatchedMultiImageDataset):
             annotations=self.annot,
             target_builder=self.target_builder,
             transforms=self.transforms,
+            cache_targets=cache_targets
         )
         datasets = [PatchedImageDataset(p, **data_params) for p in self.image_paths]
         super().__init__(datasets)

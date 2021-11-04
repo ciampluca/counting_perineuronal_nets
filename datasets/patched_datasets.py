@@ -96,6 +96,7 @@ class PatchedImageDataset(Dataset):
         annotations=None,
         image_id=None,
         target_builder=None,
+        cache_targets=False,
         transforms=None,
         max_cache_mem=None
     ):
@@ -110,15 +111,18 @@ class PatchedImageDataset(Dataset):
             annotations (pd.DataFrame, optional): Dataframe containing points annotations; must be provided if target_builder != None. Defaults to None.
             image_id (str, optional): the ID of this image in the annotations; if None, the image name is used. Defaults to None.
             target_builder (obj, optional): A *TargetBuilder for building and returning also training targets. Defaults to None.
+            cache_targets (bool, optional): Whether to cache built targets; is incompatible with random_offset != 0. Defaults to False.
             transforms (callable, optional): A callable for applying transformations on patches. Defaults to None.
             max_cache_mem (int, optional): Cache size in bytes (only for HDF5). Defaults to None.
         """
         assert split in ('left', 'right', 'all'), "split must be one of ('left', 'right', 'all')"
         assert target_builder is None or annotations is not None, 'annotations must be != None if a target_builder is specified'
-        
+        assert not(cache_targets and (random_offset != 0)), 'cannot enable cache_targets when random_offset != 0'
+
         self.path = Path(path)
         self.random_offset = random_offset
         self.target_builder = target_builder
+        self.cache_targets = cache_targets
         self.transforms = transforms
         self.split = split
 
@@ -161,12 +165,28 @@ class PatchedImageDataset(Dataset):
 
         # the number of patches in a row and a column
         self.num_patches = np.ceil(1 + ((self.region_hw - self.patch_hw) / self.stride_hw)).astype(np.int64)
+
+        # dict to keep the target cache
+        self._target_cache = {}
         
     def __len__(self):
         # total number of patches
         return self.num_patches.prod().item()
     
     def __getitem__(self, index):
+        if self.cache_targets and (index in self._target_cache):
+            datum, patch_info = self._target_cache[index]
+        else:
+            datum, patch_info = self._get_datum(index)
+            if self.cache_targets:
+                self._target_cache[index] = (datum, patch_info)
+
+        if self.transforms:
+            datum = self.transforms(datum)
+
+        return (datum,) + patch_info
+
+    def _get_datum(self, index):
         n_rows, n_cols = self.num_patches
         # row and col indices of the patch
         row_col_idx = np.array((index // n_cols, index % n_cols))
@@ -206,11 +226,9 @@ class PatchedImageDataset(Dataset):
         else:
             datum = np.expand_dims(patch, axis=-1)  # add channels dimension
 
-        if self.transforms:
-            datum = self.transforms(datum)
-
         patch_info = (patch_hw, local_start_yx, self.region_hw, self.image_id)
-        return (datum,) + patch_info
+
+        return datum, patch_info
 
 
 class RandomAccessMultiImageDataset(ConcatDataset):
