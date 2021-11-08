@@ -39,7 +39,7 @@ class CellsDataset(PatchedMultiImageDataset):
                     num_samples is not None)), "You must supply split_seed and num_samples when split != 'all'"
         assert split == 'all' or (isinstance(num_samples, collections.abc.Sequence) and len(
             num_samples) == 2), 'num_samples must be a tuple of two ints'
-        assert split == 'all' or sum(num_samples) <= max_num_train_val_sample, \
+        assert split == 'all' or sum(abs(n) for n in num_samples) <= max_num_train_val_sample, \
             f'n_train + n_val samples must be <= {max_num_train_val_sample}'
 
         self.root = Path(root)
@@ -93,13 +93,31 @@ class CellsDataset(PatchedMultiImageDataset):
         # reproducible shuffle
         random.Random(self.split_seed).shuffle(image_paths)
 
-        n_train_samples, n_val_samples = self.num_samples
+        n_train, n_val = self.num_samples
         if self.split == 'train':
-            return image_paths[:n_train_samples]
+            start, end = (None, n_train) if n_train >= 0 else (n_train, None)
+
         elif self.split == 'validation':
-            return image_paths[n_train_samples:n_train_samples + n_val_samples]
+            if n_train >= 0 and n_val >= 0:
+                start, end = n_train, n_train + n_val
+            elif n_train >= 0 and n_val < 0:
+                start, end = n_val, None
+            elif n_train < 0 and n_val >= 0:
+                start, end = None, n_val
+            else:  # n_train_samples < 0 and n_val_samples < 0:
+                start, end = n_train + n_val, n_train
+
         else:  # elif self.split == 'test':
-            return image_paths[n_train_samples + n_val_samples:n_train_samples + n_val_samples + self.num_test_samples]
+            if n_train >= 0 and n_val >= 0:
+                start, end = n_train + n_val, n_train + n_val + self.num_test_samples
+            elif n_train >= 0 and n_val < 0:
+                start, end = n_train, n_train + self.num_test_samples
+            elif n_train < 0 and n_val >= 0:
+                start, end = n_val, n_val + self.num_test_samples
+            else:  # n_train_samples < 0 and n_val_samples < 0:
+                start, end = None, self.num_test_samples
+
+        return image_paths[start:end]
 
     def _load_annotations(self):
 
@@ -127,6 +145,13 @@ if __name__ == "__main__":
     from tqdm import trange
     from methods.detection.transforms import RandomVerticalFlip, RandomHorizontalFlip, Compose
     from PIL import ImageDraw
+
+    fold1 = CellsDataset(root="data/nuclei-cells", split='train', split_seed=13, num_samples=(50, 50), max_num_train_val_sample=100)
+    fold2 = CellsDataset(root="data/nuclei-cells", split='validation', split_seed=13, num_samples=(-50, -50), max_num_train_val_sample=100)
+
+    f1 = set(map(str, fold1.image_paths))
+    f2 = set(map(str, fold2.image_paths))
+    assert f1 == f2
 
     # vgg-cells --> side: 12, mbm-cells --> side: 20
     side = 20
