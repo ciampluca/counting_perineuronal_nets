@@ -45,7 +45,7 @@ class CellsDataset(PatchedMultiImageDataset):
         self.root = Path(root)
 
         self.split = split
-        self.split_seed = None
+        self.split_seed = split_seed
         self.num_samples = num_samples
         self.num_test_samples = num_test_samples
 
