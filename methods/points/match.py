@@ -50,8 +50,8 @@ def match(groundtruth, predictions, threshold):
     groundtruth_and_predictions['Yp'] = np.nan
     groundtruth_and_predictions['score'] = np.nan
 
-    gt_points = groundtruth[['X', 'Y']].values
-    pred_points = predictions[['X', 'Y']].values
+    gt_points = np.atleast_2d(groundtruth[['X', 'Y']].values)
+    pred_points = np.atleast_2d(predictions[['X', 'Y']].values)
 
     distance_matrix = cdist(gt_points, pred_points, 'euclidean')
     matches = distance_matrix < threshold

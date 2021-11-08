@@ -259,7 +259,7 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
         image_hw = image.shape
         image = (255 * image).astype(np.uint8)
 
-        groundtruth = dataloader.dataset.annot.loc[image_id]
+        groundtruth = dataloader.dataset.annot.loc[[image_id]]
         if 'AV' in groundtruth.columns:  # for the PNN dataset only
             groundtruth['agreement'] = groundtruth.loc[:, 'AV':'VT'].sum(axis=1)
 

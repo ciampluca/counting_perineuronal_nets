@@ -238,8 +238,9 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
     for image_id, image_hw, image, density_map in progress:
         image = (255 * image).astype(np.uint8)
 
-        groundtruth = dataloader.dataset.annot.loc[image_id].copy()
-        groundtruth['agreement'] = groundtruth.loc[:, 'AV':'VT'].sum(axis=1)
+        groundtruth = dataloader.dataset.annot.loc[[image_id]].copy()
+        if 'AV' in groundtruth.columns:  # for the PNN dataset only
+            groundtruth['agreement'] = groundtruth.loc[:, 'AV':'VT'].sum(axis=1)
 
         if outdir and debug:  # debug
             outdir.mkdir(parents=True, exist_ok=True)

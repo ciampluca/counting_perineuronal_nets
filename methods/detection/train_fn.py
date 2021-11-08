@@ -200,7 +200,7 @@ def validate(dataloader, model, device, epoch, cfg):
         # threshold-dependent metrics
         image_thr_metrics = []
 
-        groundtruth = dataloader.dataset.annot.loc[image_id]
+        groundtruth = dataloader.dataset.annot.loc[[image_id]]
         gt_points = groundtruth[['X', 'Y']].values
 
         half_box = cfg.data.validation.target_params.side / 2
@@ -382,7 +382,8 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
 
         # TODO: check when there are no anns in the image
         groundtruth = dataloader.dataset.annot.loc[[image_id]].copy()
-        groundtruth['agreement'] = groundtruth.loc[:, 'AV':'VT'].sum(axis=1)
+        if 'AV' in groundtruth.columns:  # for the PNN dataset only
+            groundtruth['agreement'] = groundtruth.loc[:, 'AV':'VT'].sum(axis=1)
 
         if outdir and debug:  # debug
             outdir.mkdir(parents=True, exist_ok=True)
