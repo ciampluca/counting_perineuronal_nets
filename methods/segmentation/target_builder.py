@@ -1,11 +1,23 @@
-import networkx as nx
+import logging
 import numpy as np
 
 from skimage.draw import disk, line_aa
 from scipy.ndimage import distance_transform_edt
 from scipy.spatial import Voronoi
 from scipy.spatial.qhull import QhullError
-from scipy.spatial.distance import pdist, squareform
+
+
+class DuplicateFilter(object):
+    def __init__(self):
+        self.msgs = set()
+
+    def filter(self, record):
+        rv = record.msg not in self.msgs
+        self.msgs.add(record.msg)
+        return rv
+
+log = logging.getLogger(__name__)
+log.addFilter(DuplicateFilter())
 
     
 class SegmentationTargetBuilder:
@@ -49,8 +61,9 @@ class SegmentationTargetBuilder:
         self.lambda_sep = lambda_sep
         self.width_sep = width_sep
 
-
     def build(self, shape, points_yx):
+        if len(points_yx) < 3:  # fallback to simple case
+            return self.build_cliques(shape, points_yx)
 
         radius = self.radius
         radius_ign = self.radius_ignore
@@ -58,7 +71,7 @@ class SegmentationTargetBuilder:
         s_bal = self.sigma_bal
         s_sep = self.sigma_sep
         lambda_sep = self.lambda_sep
-        
+
         min_yx, max_yx = np.array((0, 0)), np.array(shape) - 1
         segmentation = np.zeros(shape, dtype=np.float32)
         
@@ -74,7 +87,8 @@ class SegmentationTargetBuilder:
             rr, cc = disk(center, radius_ign, shape=shape)
             segmentation[rr, cc] = -1
         
-        distance_maps = []
+        dmap1 = np.full(shape, np.inf, dtype=np.float32)
+        dmap2 = np.full(shape, np.inf, dtype=np.float32)
         for center in points_yx:  # fg regions (overwrites ignore regions)
             rr, cc = disk(center, radius, shape=shape)
             segmentation[rr, cc] = 1
@@ -83,23 +97,16 @@ class SegmentationTargetBuilder:
             distance_map = np.ones(shape, dtype=np.float32)
             distance_map[rr, cc] = 0
             distance_map = distance_transform_edt(distance_map)
-            distance_maps.append(distance_map)
-            
-        distance_maps = np.stack(distance_maps)
-        
-        # insert bg ridges to separate overlapping instances
-        intersections = squareform(pdist(points_yx, 'sqeuclidean')) <= 4 * radius ** 2
-        for group in self._find_cliques(intersections):
-            points_idx = np.array(list(group))
-            if len(points_idx) < 2:
-                continue
-                
-            points = points_yx[points_idx]
-            for ridge_start, ridge_end in self._find_ridges(points, radius_ign):
-                r0, c0 = np.clip(ridge_start, min_yx, max_yx).astype(int)
-                r1, c1 = np.clip(ridge_end  , min_yx, max_yx).astype(int)
-                rr, cc, _ = line_aa(r0, c0, r1, c1)
-                segmentation[rr, cc] = 0  # set to bg to create separation
+
+            # keep smallest and second smallest per pixel
+            dmap1, dmap2 = np.sort(np.stack((dmap1, dmap2, distance_map)), axis=0)[:2]
+
+        # draw ridge as background
+        for start, end in self._find_ridges(points_yx, max_yx):
+            r0, c0 = np.clip(start, min_yx, max_yx).astype(int)
+            r1, c1 = np.clip(end  , min_yx, max_yx).astype(int)
+            rr, cc, _ = line_aa(r0, c0, r1, c1)
+            segmentation[rr, cc] = 0  # set to bg to create separation
                 
         # build w_bal
         is_fg, is_bg, is_ign = segmentation > 0, segmentation == 0, segmentation < 0       
@@ -108,8 +115,7 @@ class SegmentationTargetBuilder:
         weights_balance = np.select([is_fg, is_bg, is_ign], [1, smooth_v_bal, 0])
         
         # build w_sep 
-        distance_maps.sort(axis=0)
-        d1_plus_d2 = distance_maps[:2].sum(axis=0)  # sum of distances to nearest and second nearest foreground component
+        d1_plus_d2 = dmap1 + dmap2  # sum of distances to nearest and second nearest foreground component
         weights_separation = np.exp(- (d1_plus_d2 ** 2) / (2 * s_sep ** 2))  # smootly increase weight of bg near ridge
         weights_separation[segmentation > 0] = 0  # zero out on foreground regions
         
@@ -128,106 +134,81 @@ class SegmentationTargetBuilder:
 
         # stack in a unique RGB-like tensor, useful for applying data augmentation
         return np.stack((image, segmentation, weights), axis=-1)
-    
-    @staticmethod
-    def _find_cliques(adj_matrix):
-        """ Finds cliques in graphs, used for building the target segmentation maps. """
-        graph = nx.from_numpy_matrix(adj_matrix)
-        yield from nx.algorithms.clique.find_cliques(graph)
 
     @classmethod
-    def _find_ridges(cls, points, radius):
+    def _find_ridges(cls, points, limits):
         """ This finds and yields all the segments that separate overlapping points. """
-        
-        # work only on the region of the intersecting points to save computation
-        round_points = points.astype(int)
-        region_start_yx = round_points.min(axis=0) - radius
-        region_end_yx = round_points.max(axis=0) + radius
-        region_hw = region_end_yx - region_start_yx
-        
-        points -= region_start_yx
         n_points = len(points)
-        center = points.mean(axis=0)
+
+        if n_points == 1:
+            yield  # no ridges
         
-        if n_points == 2:  # ridge is perpendicular bisector
+        elif n_points == 2:  # ridge is perpendicular bisector
             a, b = points
             if not np.allclose(a, b):  # discard duplicate points
-                yield cls._find_ridge_between_two(a, b, radius, region_hw, region_start_yx)
+                yield cls._find_ridge_between_two(a, b, limits)
             
         else:  # ridge is found using voronoi partitioning
-            # this was useful: https://gist.github.com/Sklavit/e05f0b61cb12ac781c93442fbea4fb55
             try:
-                v = Voronoi(points)
-                for ridge_vertices_idx, ridge_points_idx in zip(v.ridge_vertices, v.ridge_points):
-                    end_idx, start_idx = ridge_vertices_idx
-                    start = v.vertices[start_idx]
-                    if end_idx > 0:
-                        end = v.vertices[end_idx]
-                    else:
-                        a, b = v.points[ridge_points_idx]
-                        middle = (a + b) / 2
-                        ridge_dir = middle - start
-                        ridge_versus = np.sign(np.dot(middle - center, ridge_dir))
-                        ridge_dir = ridge_versus * ridge_dir / (np.linalg.norm(ridge_dir) + np.finfo(np.float32).eps)
+                vor = Voronoi(points)
+                center = vor.points.mean(axis=0)
 
-                        d_sq = np.sum((a - b) ** 2)
-                        h = np.sqrt(radius ** 2 - d_sq / 4)
-                        
+                for pointidx, simplex in zip(vor.ridge_points, vor.ridge_vertices):
+                    simplex = np.asarray(simplex)
+                    if np.all(simplex >= 0):
+                        yield vor.vertices[simplex]
+                    else:
+                        i = simplex[simplex >= 0][0]  # finite end Voronoi vertex
+
+                        t = vor.points[pointidx[1]] - vor.points[pointidx[0]]  # tangent
+                        t /= np.linalg.norm(t)
+                        n = np.array([-t[1], t[0]])  # normal
+
+                        midpoint = vor.points[pointidx].mean(axis=0)
+                        direction = np.sign(np.dot(midpoint - center, n)) * n
+
+                        start_point = vor.vertices[i]
+                        if np.any(start_point < 0) or np.any(start_point >= limits):
+                            log.warn(f'Ignoring Voronoi vertex outside image limits.')
+                            continue
+
                         # check intersection with patch limits:
-                        # middle + t * ridge_dir == (0, 0) or region_hw - 1
-                        with np.errstate(divide='ignore'):
-                            t0 = - middle / ridge_dir
-                            t1 = (region_hw - 1 - middle) / ridge_dir
+                        # start_point + t * direction == (0, 0) or (shape - 1)
+                        with np.errstate(divide='ignore'):  # division by zero are ok (result is +-inf)
+                            t0 = - start_point / direction
+                            t1 = (limits - start_point) / direction
                         t = np.hstack((t0, t1))
-                        h_max = np.min(t[t >= 0])
-                        h = np.minimum(h, h_max)
-                        
-                        end = middle + h * ridge_dir
-                    
-                    # translate back to patch coordinates
-                    start = start + region_start_yx
-                    end = end + region_start_yx
-                    
-                    yield start, end
+                        t = np.min(t[t >= 0])
+                        far_point = start_point + t * direction
+
+                        yield start_point, far_point
 
             except QhullError as e:
                 # 3+ points that do not span the plane => collinear, we separate them in pairs
                 sorted_points = points[np.lexsort(points.T)]
                 for a, b in zip(sorted_points[:-1], sorted_points[1:]):
                     if not np.allclose(a, b):  # discard duplicate points
-                        yield cls._find_ridge_between_two(a, b, radius, region_hw, region_start_yx)
+                        yield cls._find_ridge_between_two(a, b, limits)
+
     
     @staticmethod
-    def _find_ridge_between_two(a, b, radius, region_hw, region_start_yx):
+    def _find_ridge_between_two(a, b, limits):
         """ helper function for _find_ridges() when only 2 points overlap """
         middle = (a + b) / 2
         ab_dir = b - a
-        
         ridge_dir = np.array((-ab_dir[1], ab_dir[0]))
-        ridge_dir = ridge_dir / np.linalg.norm(ridge_dir)
-        
-        d_sq = np.sum((a - b) ** 2)
-        h = np.sqrt(radius ** 2 - d_sq / 4)
-        
-        # check intersections with patch limits:
-        # middle +- t * ridge_dir == (0, 0) or region_hw - 1
 
-        with np.errstate(divide='ignore'):  # division by zero are ok (result is +-inf)
+        # check intersections with patch limits:
+        # middle +- t * ridge_dir == (0, 0) or limits
+        with np.errstate(divide='ignore'):
             t0 = middle / ridge_dir
-            t1 = (middle - region_hw + 1) / ridge_dir
+            t1 = (middle - limits) / ridge_dir
         t = np.hstack((t0, t1))
         
         h_min = np.max(t[t < 0])
         h_max = np.min(t[t >= 0])
         
-        hs = np.maximum(-h, h_min)
-        he = np.minimum( h, h_max)
-        
-        start = middle + hs * ridge_dir
-        end = middle + he * ridge_dir
-
-        # translate back to patch coordinates
-        start += region_start_yx
-        end += region_start_yx
+        start = middle + h_min * ridge_dir
+        end = middle + h_max * ridge_dir
 
         return start, end
