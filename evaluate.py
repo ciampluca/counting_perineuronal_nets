@@ -24,9 +24,7 @@ def main(args):
     # create test dataset and dataloader
     test_dataset = cfg.data.validation
     test_dataset.root = args.data_root if args.data_root else test_dataset.root
-    # TODO: better with hydra parameters to eventually set to 'all' when needed
-    test_dataset.split = 'test'
-    # test_dataset.split = 'all'
+    test_dataset.split = args.test_split
     test_dataset.target_ = None
     test_dataset = hydra.utils.instantiate(test_dataset)
 
@@ -59,6 +57,7 @@ if __name__ == "__main__":
     parser.add_argument('--no-save', action='store_false', dest='save', help='draw images with predictions')
     parser.add_argument('--debug', action='store_true', default=False, help='draw images with predictions')
     parser.add_argument('--data-root', default=None, help='root of the test subset')
+    parser.add_argument('--test-split', default='test', help='split to be used for evaluation')
     parser.set_defaults(save=True)
 
     args = parser.parse_args()
