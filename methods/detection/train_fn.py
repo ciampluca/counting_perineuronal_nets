@@ -203,8 +203,10 @@ def validate(dataloader, model, device, epoch, cfg):
         groundtruth = dataloader.dataset.annot.loc[[image_id]]
         gt_points = groundtruth[['X', 'Y']].values
 
+        image_h, image_w = image_hw
         half_box = cfg.data.validation.target_params.side / 2
         gt_boxes = np.hstack((gt_points - half_box, gt_points + half_box))
+        gt_boxes = np.clip(gt_boxes, 0, [image_w, image_h, image_w, image_h])
 
         if cfg.optim.debug and epoch % cfg.optim.debug == 0:
             _save_image_with_boxes(image, image_id, boxes, gt_boxes, cfg)
