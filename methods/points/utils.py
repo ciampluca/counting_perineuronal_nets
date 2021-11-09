@@ -89,7 +89,7 @@ def draw_groundtruth_and_predictions(image, gp, radius=10, marker='circle', pale
         image = image.copy()
 
     # iterate gt and predictions
-    for c_gt, r_gt, c_p, r_p, score, agreement in gp[['X', 'Y', 'Xp', 'Yp', 'score', 'agreement']].values:
+    for c_gt, r_gt, c_p, r_p in gp[['X', 'Y', 'Xp', 'Yp']].values:
         has_gt = not np.isnan(r_gt)
         has_p = not np.isnan(r_p)
 
