@@ -146,8 +146,8 @@ if __name__ == "__main__":
     from methods.detection.transforms import RandomVerticalFlip, RandomHorizontalFlip, Compose
     from PIL import ImageDraw
 
-    fold1 = CellsDataset(root="data/nuclei-cells", split='train', split_seed=13, num_samples=(50, 50), max_num_train_val_sample=100)
-    fold2 = CellsDataset(root="data/nuclei-cells", split='validation', split_seed=13, num_samples=(-50, -50), max_num_train_val_sample=100)
+    fold1 = CellsDataset(root="data/nuclei-cells", split='train', split_seed=13, num_samples=(50, -50), max_num_train_val_sample=100)
+    fold2 = CellsDataset(root="data/nuclei-cells", split='validation', split_seed=13, num_samples=(-50, 50), max_num_train_val_sample=100)
 
     f1 = set(map(str, fold1.image_paths))
     f2 = set(map(str, fold2.image_paths))
