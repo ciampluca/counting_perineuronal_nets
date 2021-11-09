@@ -1,0 +1,14 @@
+# @package _global_
+
+defaults:
+ - nuclei-cells/segmentation/common
+
+data:
+    train: &common
+        split_seed: 87
+        num_samples:
+            - -50  # num of train images (last 50)
+            - 50  # num of validation images (first 50)
+        max_num_train_val_sample: 100
+    validation:
+        <<: *common
