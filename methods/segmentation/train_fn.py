@@ -146,7 +146,7 @@ def validate(dataloader, model, device, epoch, cfg):
             # counting metrics
             progress_thrs.set_description(f'thr={thr:.2f} (count)')
             localizations = segmentation_map_to_points(segmentation_map.cpu().numpy(), thr=thr)
-            groundtruth = dataloader.dataset.annot.loc[image_id]
+            groundtruth = dataloader.dataset.annot.loc[[image_id]]
 
             tolerance = 1.25 * cfg.data.validation.target_params.radius  # min distance to match points
             groundtruth_and_predictions = match(groundtruth, localizations, tolerance)
@@ -347,6 +347,8 @@ def predict_points(dataloader, model, device, threshold, cfg):
     n_images = dataloader.dataset.num_images()
     progress = tqdm(processed_images, total=n_images, desc='PRED', leave=False)
     for image_id, segmentation_map in progress:
+        # from skimage.transform import rescale
+        # io.imsave('debug_' + image_id, rescale(segmentation_map, scale=0.15, anti_aliasing=True))
         # find connected components and centroids
         localizations = segmentation_map_to_points(segmentation_map, thr=threshold)
         localizations['imgName'] = image_id
