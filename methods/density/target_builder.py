@@ -26,7 +26,7 @@ class DensityTargetBuilder:
             method = self.build_nocv2
         elif self.method == 'move-cv2':
             method = self.build_cv2
-        if self.method == 'reflect':
+        elif self.method == 'reflect':
             method = self.build_reflect
         elif self.method == 'normalize':
             method = self.build_normalize
