@@ -28,6 +28,7 @@ class CellsDataset(PatchedMultiImageDataset):
             target_params={},
             cache_targets=False,
             transforms=None,
+            annot_transforms=None,
     ):
 
         target = target_  # XXX TOREMOVE for hydra bug
@@ -68,6 +69,8 @@ class CellsDataset(PatchedMultiImageDataset):
 
         # create pandas dataframe containing dot annotations (to be compliant with other implementation)
         self.annot = self._load_annotations()
+        if annot_transforms:
+            self.annot = annot_transforms(self.annot)
 
         data_params = dict(
             split='all',

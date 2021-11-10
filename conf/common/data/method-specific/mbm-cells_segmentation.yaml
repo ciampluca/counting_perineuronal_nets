@@ -18,7 +18,11 @@ train: &common
               - _target_: torchvision.transforms.Resize
                 _args_:
                     - 608
-              - _target_: torchvision.transforms.RandomHorizontalFlip        
+              - _target_: torchvision.transforms.RandomHorizontalFlip
+    annot_transforms:
+        _target_: methods.points.transforms.AnnotationResize
+        source_size: 600
+        destination_size: 608
 
 validation:
     <<: *common   # reinsert 'train' block content
