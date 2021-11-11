@@ -1,0 +1,24 @@
+          # @package _global_
+
+defaults:
+ - nuclei-cells/detection/common
+
+data:
+    train: &common
+        split_seed: 87
+        num_samples:
+          - 50  # num of train images (first 50)
+          - -50  # num of validation images (last 50)
+        max_num_train_val_sample: 100
+    validation:
+        <<: *common   # reinsert 'train' block content
+
+model:
+    module:
+        max_dets_per_image: 1200
+        nms: 0.8
+
+optim:
+    batch_size: 1
+    batch_accumulation: 3
+    log_every: 2
