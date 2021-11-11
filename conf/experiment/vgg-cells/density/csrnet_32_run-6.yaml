@@ -5,10 +5,10 @@ defaults:
 
 data:
     train: &common
-        split_seed: 87
+        split_seed: 27
         num_samples:
-            - 8   # num of train images
-            - 8  # num of validation images
+            - 32   # num of train images
+            - 32  # num of validation images
         target_params:
             method: reflect
     validation:
