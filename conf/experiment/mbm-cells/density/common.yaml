@@ -25,6 +25,12 @@ optim:
     epochs: 1000
     log_every: 1
 
+data:
+    train:
+        root: "/mnt/datino/Cells/MBM_cells"
+    validation:
+        root: "/mnt/datino/Cells/MBM_cells"
+
 misc:
     font_size: 15
     text_pos: 30

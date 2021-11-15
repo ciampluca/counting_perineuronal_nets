@@ -27,9 +27,9 @@ optim:
 
 data:
     train:
-        root: "/mnt/datino/VGG_cells"
+        root: "/mnt/datino/Cells/VGG_cells"
     validation:
-        root: "/mnt/datino/VGG_cells"
+        root: "/mnt/datino/Cells/VGG_cells"
 
 misc:
     font_size: 8

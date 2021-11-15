@@ -5,7 +5,7 @@ defaults:
 
 data:
     train: &common
-        split_seed: 87
+        split_seed: 13
         num_samples:
             - 32   # num of train images
             - 32  # num of validation images
