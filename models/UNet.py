@@ -1,8 +1,10 @@
 # Adapted from https://discuss.pytorch.org/t/unet-implementation/426
+import math 
 
 import torch
 from torch import nn
 import torch.nn.functional as F
+from torchvision.transforms.functional import resize
 
 
 class UNet(nn.Module):
@@ -62,6 +64,14 @@ class UNet(nn.Module):
         self.last = nn.Conv2d(prev_channels, n_classes, kernel_size=1, bias=last_bias)
 
     def forward(self, x):
+        h, w = x.shape[-2:]
+        need_resize = (h % 32) or (w % 32)
+
+        if need_resize:
+            newH = math.ceil(h / 32) * 32
+            newW = math.ceil(w / 32) * 32
+            x = resize(x, (newH, newW))
+
         blocks = []
         for i, down in enumerate(self.down_path):
             x = down(x)
@@ -72,7 +82,12 @@ class UNet(nn.Module):
         for i, up in enumerate(self.up_path):
             x = up(x, blocks[-i - 1])
 
-        return self.last(x)
+        output = self.last(x)
+
+        if need_resize:
+            output = resize(output, (h, w))
+        
+        return output
 
 
 class UNetConvBlock(nn.Module):

@@ -1,8 +1,10 @@
 from _collections import OrderedDict
+import math
 
 import torch
 import torch.nn as nn
 from torchvision import models
+from torchvision.transforms.functional import resize
 
 
 class CSRNet(nn.Module):
@@ -30,11 +32,23 @@ class CSRNet(nn.Module):
     def forward(self, x, bmask=None):
         if bmask is not None:
             x = x * bmask   # zero input values outside the active region
+
+        h, w = x.shape[-2:]
+        need_resize = (h % 8) or (w % 8)
+
+        if need_resize:
+            newH = math.ceil(h / 8) * 8
+            newW = math.ceil(w / 8) * 8
+            x = resize(x, (newH, newW))
+
         x = self.frontend(x)
         x = self.backend(x)
         x = self.output_layer(x)
         # x = nn.functional.interpolate(x, scale_factor=8, mode="nearest")
         x = nn.functional.interpolate(x, scale_factor=8, mode="bilinear")
+
+        if need_resize:
+            x = resize(x, (h, w))
 
         return x
 
