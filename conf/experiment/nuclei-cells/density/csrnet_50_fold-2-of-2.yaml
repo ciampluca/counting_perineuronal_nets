@@ -12,5 +12,6 @@ data:
         max_num_train_val_sample: 100
         target_params:
             method: reflect
+        root: /home/luca/luca-cnr/mnt/datino/Cells/crc_histophenotypes_cells
     validation:
         <<: *common

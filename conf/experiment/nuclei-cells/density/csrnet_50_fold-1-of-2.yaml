@@ -1,0 +1,17 @@
+# @package _global_
+
+defaults:
+ - nuclei-cells/density/common
+
+data:
+    train: &common
+        split_seed: 87
+        num_samples:
+          - 50  # num of train images (first 50)
+          - -50  # num of validation images (last 50)
+        max_num_train_val_sample: 100
+        target_params:
+            method: reflect
+        root: /home/luca/luca-cnr/mnt/datino/Cells/crc_histophenotypes_cells
+    validation:
+        <<: *common

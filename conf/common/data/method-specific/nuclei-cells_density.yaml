@@ -11,14 +11,7 @@ train: &common
         _target_: torchvision.transforms.Compose
         _args_:
             - - _target_: torchvision.transforms.ToTensor
-              - _target_: torchvision.transforms.Resize
-                _args_:
-                    - 504
               - _target_: torchvision.transforms.RandomHorizontalFlip
-    annot_transforms:
-      _target_: methods.points.transforms.AnnotationResize
-      source_size: 504
-      destination_size: 504
 
 validation:
     <<: *common   # reinsert 'train' block content

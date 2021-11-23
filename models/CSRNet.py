@@ -44,8 +44,15 @@ class CSRNet(nn.Module):
         x = self.frontend(x)
         x = self.backend(x)
         x = self.output_layer(x)
-        # x = nn.functional.interpolate(x, scale_factor=8, mode="nearest")
+        # Since upsample_bilinear2d cuda does not have a deterministic implementation, a workaround is to move the
+        # tensor in the cpu (to guarantee reproducibility)
+        device = "cpu"
+        if x.is_cuda:
+            device = x.get_device()
+            torch.cuda.synchronize()
+            x = x.cpu()
         x = nn.functional.interpolate(x, scale_factor=8, mode="bilinear")
+        x = x.to(device)
 
         if need_resize:
             x = resize(x, (h, w))

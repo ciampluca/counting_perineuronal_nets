@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm, trange
 
-from utils import CheckpointManager, seed_everything
+from utils import CheckpointManager, seed_everything, seed_worker
 
 log = logging.getLogger(__name__)
 tqdm = partial(tqdm, dynamic_ncols=True)
@@ -41,13 +41,17 @@ def main(cfg):
         collate_fn = None
         log.warning('No collate_fn found, using the default one ...')
 
+    g = torch.Generator()
+    g.manual_seed(cfg.seed)     # To guarantee reproducibility
     train_dataset = hydra.utils.instantiate(cfg.data.train)
-    train_loader = DataLoader(train_dataset, batch_size=cfg.optim.batch_size, shuffle=True, num_workers=cfg.optim.num_workers, collate_fn=collate_fn)
+    train_loader = DataLoader(train_dataset, batch_size=cfg.optim.batch_size, shuffle=True, num_workers=cfg.optim.num_workers, collate_fn=collate_fn, worker_init_fn=seed_worker, generator=g)
     log.info(f'[TRAIN] {train_dataset}')
 
     # validation dataset and dataloader
+    g = torch.Generator()
+    g.manual_seed(cfg.seed)     # To guarantee reproducibility
     valid_dataset = hydra.utils.instantiate(cfg.data.validation)
-    valid_loader = DataLoader(valid_dataset, batch_size=cfg.optim.val_batch_size, num_workers=cfg.optim.num_workers, collate_fn=collate_fn)
+    valid_loader = DataLoader(valid_dataset, batch_size=cfg.optim.val_batch_size, num_workers=cfg.optim.num_workers, collate_fn=collate_fn, worker_init_fn=seed_worker, generator=g)
     log.info(f'[VALID] {valid_dataset}')
 
     # create model
