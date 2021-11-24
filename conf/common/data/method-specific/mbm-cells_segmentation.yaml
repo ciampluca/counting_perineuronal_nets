@@ -23,6 +23,3 @@ validation:
         _target_: torchvision.transforms.Compose
         _args_:
             - - _target_: torchvision.transforms.ToTensor
-              - _target_: torchvision.transforms.Resize
-                _args_:
-                    - 608

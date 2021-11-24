@@ -1,0 +1,36 @@
+# @package _global_
+
+defaults:
+  - /common: default
+  - /common/data: dcc-cells
+  - /common/method: density
+  - /common/data/method-specific: dcc-cells_density
+  - /common/model: csrnet
+  - /common/optim: default
+
+optim:
+    optimizer:
+        lr: 0.00001
+    
+    lr_scheduler:
+        milestones: [ 800, 900, 1000 ]
+
+    loss:
+        _target_: torch.nn.MSELoss
+
+    border_pad: 0      # must be divisible by 32
+    batch_size: 1
+    batch_accumulation: 3
+
+    epochs: 1000
+    log_every: 1
+
+data:
+    train:
+        root: "/mnt/datino/Cells/DCC_cells/trainval"
+    validation:
+        root: "/mnt/datino/Cells/DCC_cells/trainval"
+
+misc:
+    font_size: 20
+    text_pos: 40

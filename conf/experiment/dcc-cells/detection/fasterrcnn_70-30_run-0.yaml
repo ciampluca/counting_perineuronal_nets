@@ -1,16 +1,15 @@
-# @package _global_
+          # @package _global_
 
 defaults:
- - nuclei-cells/detection/common
+ - dcc-cells/detection/common
 
 data:
     train: &common
         split_seed: 87
         num_samples:
-          - 50  # num of train images (first 50)
-          - -50  # num of validation images (last 50)
+            - 67  # num of train images - 70% train 30% val
+            - 33  # num of validation images - 70% train 30% val
         max_num_train_val_sample: 100
-        root: /home/luca/luca-cnr/mnt/datino/Cells/crc_histophenotypes_cells
     validation:
         <<: *common   # reinsert 'train' block content
 
