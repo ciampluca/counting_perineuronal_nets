@@ -304,7 +304,7 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
             gp = pd.concat(image_gt_and_preds, ignore_index=True)
             gp = gp[gp.thr == best_thr]
 
-            image = draw_groundtruth_and_predictions(image, gp, radius=10, marker='circle')
+            image = draw_groundtruth_and_predictions(image, gp, radius=cfg.data.validation.target_params.radius, marker='circle')
             io.imsave(outdir / f'annot_{image_id}', image)
 
     all_metrics = pd.DataFrame(all_metrics)
