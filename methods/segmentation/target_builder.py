@@ -141,7 +141,7 @@ class SegmentationTargetBuilder:
         n_points = len(points)
 
         if n_points == 1:
-            yield  # no ridges
+            yield from []  # no ridges
         
         elif n_points == 2:  # ridge is perpendicular bisector
             a, b = points
