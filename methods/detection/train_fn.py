@@ -35,6 +35,7 @@ def _save_image_with_boxes(image, image_id, det_boxes, gt_boxes, cfg):
 
     for box in gt_boxes:
         box = [max(min(x, 499), 1) for x in box]  # clipping
+        print(cfg.misc.bb_outline_width)
         draw.rectangle(box, outline='red', width=cfg.misc.bb_outline_width)
 
     for box in det_boxes:
@@ -429,7 +430,7 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
             gp = pd.concat(image_gt_and_preds, ignore_index=True)
             gp = gp[gp.thr == best_thr]
 
-            image = draw_groundtruth_and_predictions(image, gp, radius=10, marker='square')
+            image = draw_groundtruth_and_predictions(image, gp, radius=int(cfg.data.validation.target_params.side/2), marker='square')
             io.imsave(outdir / f'annot_{image_id}', image)
 
     all_metrics = pd.DataFrame(all_metrics)
