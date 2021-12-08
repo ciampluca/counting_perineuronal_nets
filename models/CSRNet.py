@@ -8,6 +8,10 @@ from torchvision.transforms.functional import resize
 
 
 class CSRNet(nn.Module):
+    """
+    Congested Scene Recognition Network (CSRNet)
+    Ref. Y. Li et al. 'CSRNet: Dilated Convolutional Neural Networks for Understanding the Highly Congested Scenes'
+    """
 
     def __init__(self, skip_weights_loading=False):
         super(CSRNet, self).__init__()
@@ -29,10 +33,7 @@ class CSRNet(nn.Module):
                 fsd[temp_key] = list(mod.state_dict().items())[i][1]
             self.frontend.load_state_dict(fsd)
 
-    def forward(self, x, bmask=None):
-        if bmask is not None:
-            x = x * bmask   # zero input values outside the active region
-
+    def forward(self, x):
         h, w = x.shape[-2:]
         need_resize = (h % 8) or (w % 8)
 
@@ -95,8 +96,7 @@ if __name__ == "__main__":
     torch.hub.set_dir('../model_zoo/')
     model = CSRNet()
     input_img = torch.rand(1, 3, 256, 256)
-    bmask = torch.ones(1, 1, 256, 256)
-    density = model(input_img, bmask=bmask)
+    density = model(input_img)
 
     print(density.shape)
-    print(density)
+    # print(density)

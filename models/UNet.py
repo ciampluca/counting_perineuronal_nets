@@ -1,4 +1,3 @@
-# Adapted from https://discuss.pytorch.org/t/unet-implementation/426
 import math 
 
 import torch
@@ -8,41 +7,15 @@ from torchvision.transforms.functional import resize
 
 
 class UNet(nn.Module):
-    def __init__(
-            self,
-            in_channels=1,
-            n_classes=2,
-            depth=5,
-            wf=6,
-            padding=False,
-            batch_norm=False,
-            up_mode='upconv',
-            last_bias=False,
-            skip_weights_loading=True
-    ):
-        """
-        Implementation of
-        U-Net: Convolutional Networks for Biomedical Image Segmentation
-        (Ronneberger et al., 2015)
-        https://arxiv.org/abs/1505.04597
-        Using the default arguments will yield the exact version used
-        in the original paper
-        Args:
-            in_channels (int): number of input channels
-            n_classes (int): number of output channels
-            depth (int): depth of the network
-            wf (int): number of filters in the first layer is 2**wf
-            padding (bool): if True, apply padding such that the input shape
-                            is the same as the output.
-                            This may introduce artifacts
-            batch_norm (bool): Use BatchNorm after layers with an
-                               activation function
-            up_mode (str): one of 'upconv' or 'upsample'.
-                           'upconv' will use transposed convolutions for
-                           learned upsampling.
-                           'upsample' will use bilinear upsampling.
-        """
+    """
+    UNet
+    Ref. O. Ronneberger et al. 'U-Net: Convolutional Networks for Biomedical Image Segmentation'
+    Adapted from https://discuss.pytorch.org/t/unet-implementation/426
+    """
+    
+    def __init__(self, in_channels=1, n_classes=2, depth=5, wf=6, padding=False, batch_norm=False, up_mode='upconv', last_bias=False, skip_weights_loading=True):
         super(UNet, self).__init__()
+        
         assert up_mode in ('upconv', 'upsample')
         self.padding = padding
         self.depth = depth
@@ -91,6 +64,7 @@ class UNet(nn.Module):
 
 
 class UNetConvBlock(nn.Module):
+    
     def __init__(self, in_size, out_size, padding, batch_norm):
         super(UNetConvBlock, self).__init__()
         block = []
@@ -109,10 +83,12 @@ class UNetConvBlock(nn.Module):
 
     def forward(self, x):
         out = self.block(x)
+        
         return out
 
 
 class UNetUpBlock(nn.Module):
+    
     def __init__(self, in_size, out_size, up_mode, padding, batch_norm):
         super(UNetUpBlock, self).__init__()
         if up_mode == 'upconv':
@@ -129,9 +105,8 @@ class UNetUpBlock(nn.Module):
         _, _, layer_height, layer_width = layer.size()
         diff_y = (layer_height - target_size[0]) // 2
         diff_x = (layer_width - target_size[1]) // 2
-        return layer[
-               :, :, diff_y: (diff_y + target_size[0]), diff_x: (diff_x + target_size[1])
-               ]
+        
+        return layer[:, :, diff_y: (diff_y + target_size[0]), diff_x: (diff_x + target_size[1])]
 
     def forward(self, x, bridge):
         up = self.up(x)
