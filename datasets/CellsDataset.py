@@ -223,9 +223,6 @@ if __name__ == "__main__":
         io.imsave(os.path.dirname(__file__) + '/trash/debug/image_den_' + image_id, image)
         dmap = (255 * normalize_map(dmap)).astype(np.uint8)
         io.imsave(os.path.dirname(__file__) + '/trash/debug/den_' + image_id, dmap)
-        #centers = (boxes[:, :2] + boxes[:, 2:]) / 2
-        #image = draw_points(image, centers, radius=int(radius))
-        #io.imsave(os.path.dirname(__file__) + '/trash/debug/annot_' + image_id, image)
     
         break
 
