@@ -39,9 +39,10 @@ class FCRN_A(nn.Module):
     """
     Fully Convolutional Regression Network A (FCRN-A)
     Ref. W. Xie et al. 'Microscopy Cell Counting with Fully Convolutional Regression Networks'
+    Code based on: https://github.com/NeuroSYS-pl/objects_counting_dmap
     """
 
-    def __init__(self, N: int=1, input_filters: int=3, **kwargs):
+    def __init__(self, N: int=1, input_filters: int=3, n_classes: int=1, **kwargs):
         """
         Create FCRN-A model with:
             * fixed kernel size = (3, 3)
@@ -72,7 +73,7 @@ class FCRN_A(nn.Module):
             nn.Upsample(scale_factor=2),
             conv_block(channels=(128, 64), size=(3, 3), N=N),
             nn.Upsample(scale_factor=2),
-            conv_block(channels=(64, 1), size=(3, 3), N=N),
+            conv_block(channels=(64, n_classes), size=(3, 3), N=N),
         )
 
     def forward(self, x: torch.Tensor):
@@ -94,10 +95,12 @@ class FCRN_A(nn.Module):
     
 # Testing code
 if __name__ == "__main__":
-    torch.hub.set_dir('../model_zoo/')
-    num_channels = 1
-    model = FCRN_A(input_filters=num_channels)
-    input_img = torch.rand(1, num_channels, 600, 600)
+    # It works with 1 or 3 channels input images
+    in_channels = 3
+    num_classes = 2
+    
+    model = FCRN_A(input_filters=in_channels, n_classes=num_classes)
+    input_img = torch.rand(1, in_channels, 600, 600)
     density = model(input_img)
 
     print(density.shape)

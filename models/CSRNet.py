@@ -11,9 +11,10 @@ class CSRNet(nn.Module):
     """
     Congested Scene Recognition Network (CSRNet)
     Ref. Y. Li et al. 'CSRNet: Dilated Convolutional Neural Networks for Understanding the Highly Congested Scenes'
+    Code based on: https://github.com/CommissarMa/CSRNet-pytorch
     """
 
-    def __init__(self, skip_weights_loading=False):
+    def __init__(self, n_classes=1, skip_weights_loading=False):
         super(CSRNet, self).__init__()
 
         self.frontend_feat = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512]
@@ -21,7 +22,7 @@ class CSRNet(nn.Module):
         self.frontend = self._make_layers(self.frontend_feat)
         self.backend = self._make_layers(
             self.backend_feat, in_channels=512, dilation=True)
-        self.output_layer = nn.Conv2d(64, 1, kernel_size=1)
+        self.output_layer = nn.Conv2d(64, n_classes, kernel_size=1)
 
         if not skip_weights_loading:
             mod = models.vgg16(pretrained=True)
@@ -93,9 +94,12 @@ class CSRNet(nn.Module):
 
 # Testing code
 if __name__ == "__main__":
+    # It works with 3 channels input images
+    num_classes = 2
     torch.hub.set_dir('../model_zoo/')
-    model = CSRNet()
-    input_img = torch.rand(1, 3, 256, 256)
+    
+    model = CSRNet(n_classes=num_classes)
+    input_img = torch.rand(2, 3, 256, 256)
     density = model(input_img)
 
     print(density.shape)
