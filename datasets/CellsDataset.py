@@ -10,6 +10,7 @@ from datasets.patched_datasets import PatchedImageDataset, PatchedMultiImageData
 from methods.segmentation.target_builder import SegmentationTargetBuilder
 from methods.detection.target_builder import DetectionTargetBuilder
 from methods.density.target_builder import DensityTargetBuilder
+from methods.countception.target_builder import CountmapTargetBuilder
 
 
 class CellsDataset(PatchedMultiImageDataset):
@@ -33,7 +34,7 @@ class CellsDataset(PatchedMultiImageDataset):
 
         target = target_  # XXX TOREMOVE for hydra bug
 
-        assert target in (None, 'segmentation', 'detection', 'density'), f'Unsupported target type: {target}'
+        assert target in (None, 'segmentation', 'detection', 'density', 'countmap'), f'Unsupported target type: {target}'
         assert split in (
         'all', 'train', 'validation', 'test'), "Split must be one of ('train', 'validation', 'test', 'all')"
         assert split == 'all' or ((split_seed is not None) and (
@@ -61,6 +62,8 @@ class CellsDataset(PatchedMultiImageDataset):
             target_builder = DetectionTargetBuilder
         elif target == 'density':
             target_builder = DensityTargetBuilder
+        elif target == 'countmap':
+            target_builder = CountmapTargetBuilder
 
         self.target_builder = target_builder(**target_params) if target else None
 
@@ -146,6 +149,7 @@ if __name__ == "__main__":
     from skimage import io
     from tqdm import trange
     from methods.detection.transforms import RandomVerticalFlip, RandomHorizontalFlip, Compose
+    import torchvision.transforms
     import os
 
     # Check 2-fold cross-validation splits for nuclei dataset
@@ -204,25 +208,61 @@ if __name__ == "__main__":
 
         break
     
-    # Check data loading for detection
+    # Check data loading for density
     # Radius --> MBM=10, VGG=6, DCC=15, NUCLEI=9, BCD=15, HeLa=12, PSU=12, ADIPOCYTE=5
     data_path="data/hela-cells/train"
     radius = 12
-    transforms = Compose([
-        RandomHorizontalFlip(),
-        RandomVerticalFlip(),
+    transforms = torchvision.transforms.Compose([
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.RandomHorizontalFlip(),
+        torchvision.transforms.RandomVerticalFlip(),
     ])
     dataset = CellsDataset(target_='density', target_params={'k_size': 51, 'sigma': radius}, transforms=transforms, root=data_path)
     print(dataset)
     
     for i in trange(0, 200, 5):
         datum, patch_hw, start_yx, image_hw, image_id = dataset[i]
-        image, dmap = np.dsplit(datum,datum.shape[-1])
+        image, dmap = datum.split(1, dim=0)
+        image, dmap = image.cpu().detach().numpy(), dmap.cpu().detach().numpy()
 
         image = (255 * image.squeeze()).astype(np.uint8)
         io.imsave(os.path.dirname(__file__) + '/trash/debug/image_den_' + image_id, image)
-        dmap = (255 * normalize_map(dmap)).astype(np.uint8)
+        dmap = (255 * normalize_map(dmap.squeeze())).astype(np.uint8)
         io.imsave(os.path.dirname(__file__) + '/trash/debug/den_' + image_id, dmap)
     
         break
-
+    
+    # Check data loading for count-ception
+    # Scale --> MBM=2, VGG=1, DCC=, NUCLEI=, BCD=, HeLa=, PSU=, ADIPOCYTE=
+    # Target-patch-size --> MBM=32, VGG=32, DCC=, NUCLEI=, BCD=, HeLa=, PSU=, ADIPOCYTE=
+    data_path="data/vgg-cells"
+    scale = 2
+    target_patch_size = 32
+    transforms = torchvision.transforms.Compose([
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.RandomHorizontalFlip(),
+        torchvision.transforms.RandomVerticalFlip(),
+    ])
+    target_params = {
+                        'scale': scale,       
+                        'target_patch_size': target_patch_size, 
+                        'stride': 1         
+                    }
+    dataset = CellsDataset(target_='countmap', target_params=target_params, transforms=transforms, root=data_path)
+    print(dataset)
+    
+    for i in trange(0, 200, 5):
+        datum, patch_hw, start_yx, image_hw, image_id = dataset[i]
+        image, label = datum.split(1, dim=0)
+        image, label = image.cpu().detach().numpy().squeeze(), label.cpu().detach().numpy().squeeze()
+        
+        gt_count = (label / (target_patch_size ** 2.0)).sum()
+        image_hw = int(image_hw[0] / scale), int(image_hw[1] / scale)
+        pad_to_remove_hw = int((image.shape[0]-image_hw[0])/2), int((image.shape[1]-image_hw[1])/2)
+        image = image[pad_to_remove_hw[0]:image.shape[0]-pad_to_remove_hw[0], pad_to_remove_hw[1]:image.shape[1]-pad_to_remove_hw[1]]
+        image = (255 * image).astype(np.uint8)
+        io.imsave(os.path.dirname(__file__) + '/trash/debug/image_countception_' + image_id, image)
+        label = (255 * normalize_map(label)).astype(np.uint8)
+        io.imsave(os.path.dirname(__file__) + '/trash/debug/label_countception_' + image_id, label)
+        
+        #break

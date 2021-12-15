@@ -29,7 +29,7 @@ def train_one_epoch(dataloader, model, optimizer, device, writer, epoch, cfg):
     progress = tqdm(dataloader, desc='TRAIN', leave=False)
     for i, sample in enumerate(progress):
         input_and_target = sample[0].to(device)
-        # split channels to get input, target, and loss weights
+        # split channels to get input and target
         images, gt_dmaps = input_and_target.split(1, dim=1)
         # expanding images to 3 channels
         images = images.expand(-1, 3, -1, -1)
@@ -84,8 +84,8 @@ def _save_image_and_density_maps(image, image_id, pred_dmap, gt_dmap, cfg):
 
         pil_density_map = Image.fromarray(density_map)
         draw = ImageDraw.Draw(pil_density_map)
-        text = f"{prefix} Num of Nets: {count}"
-        draw.text((75, 75), text=text, font=font, fill=191)
+        text = f"{prefix} Num of Cells: {count}"
+        draw.text((cfg.misc.text_pos, cfg.misc.text_pos), text=text, font=font, fill=191)
         return pil_density_map
 
     pil_pred_dmap = _annotate_density_map(pred_dmap, 'Det')

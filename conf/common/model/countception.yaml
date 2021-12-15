@@ -1,0 +1,8 @@
+# @package model
+
+defaults:
+  - common
+
+name: CountCeption
+module:
+  _target_: models.CountCeption

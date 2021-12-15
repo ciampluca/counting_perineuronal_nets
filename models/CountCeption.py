@@ -30,15 +30,15 @@ class SimpleBlock(nn.Module):
         return output
     
     
-class Countception(nn.Module):
+class CountCeption(nn.Module):
     """
     Count-Ception
     Ref. J.P. Cohen et al. 'Count-ception: Counting by Fully Convolutional Redundant Counting'
     Code based on: https://github.com/roggirg/count-ception_mbm
     """
     
-    def __init__(self, inplanes=3, outplanes=1, use_logits=False, logits_per_output=12, debug=False):
-        super(Countception, self).__init__()
+    def __init__(self, inplanes=3, outplanes=1, use_logits=False, logits_per_output=12, debug=False, skip_weights_loading=False,):
+        super(CountCeption, self).__init__()
         
         # params
         self.inplanes = inplanes
@@ -119,9 +119,9 @@ if __name__ == "__main__":
     in_channels = 3     # It works with 3 channels input images
     num_classes = 2
     
-    model = Countception(debug=True, inplanes=in_channels, outplanes=num_classes)
+    model = CountCeption(debug=True, inplanes=in_channels, outplanes=num_classes)
     input_img = torch.rand(1, in_channels, 256, 256)
-    output = model(input_img)
+    output = model.forward(input_img)
 
     print(output.shape)
     print(output)
