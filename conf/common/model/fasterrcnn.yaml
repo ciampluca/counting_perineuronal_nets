@@ -6,7 +6,6 @@ defaults:
 name: FasterRCNN
 module:
     _target_: models.FasterRCNN
-    num_classes: 1
     backbone: resnet50    # resnet50 or resnet101
     backbone_pretrained: false   # on ImageNet
     model_pretrained: true   # on COCO; if true, no need to load the pretrained backbone
