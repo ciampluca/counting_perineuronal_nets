@@ -14,10 +14,10 @@ class UNet(nn.Module):
             out_channels=2,
             depth=5,
             wf=6,
-            padding=False,
-            batch_norm=False,
+            padding=True,
+            batch_norm=True,
             up_mode='upconv',
-            last_bias=False,
+            last_bias=True,
             skip_weights_loading=True
     ):
         """
