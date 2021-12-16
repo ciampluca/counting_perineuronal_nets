@@ -56,41 +56,62 @@ class FCRN(nn.Module):
         super(FCRN, self).__init__()
         
         assert version in ['A', 'B'], "Not implemented version (possible values are A or B)"
+        self.version = version
         
-        # downsampling
-        self.conv_block1 = nn.Sequential(
-            conv_block(channels=(input_filters, 32), size=(3, 3), N=N),
-            nn.MaxPool2d(2)
-        )
-        self.conv_block2 = nn.Sequential(
-            conv_block(channels=(32, 64), size=(3, 3), N=N),
-            nn.MaxPool2d(2)
-        )
-        self.conv_block3 = nn.Sequential(
-            conv_block(channels=(64, 128), size=(3, 3), N=N),
-            nn.MaxPool2d(2)
-        )
+        if version == 'A':
+            self.conv_block1 = nn.Sequential(
+                conv_block(channels=(input_filters, 32), size=(3, 3), N=N),
+                nn.MaxPool2d(2)
+            )
+            self.conv_block2 = nn.Sequential(
+                conv_block(channels=(32, 64), size=(3, 3), N=N),
+                nn.MaxPool2d(2)
+            )
+            self.conv_block3 = nn.Sequential(
+                conv_block(channels=(64, 128), size=(3, 3), N=N),
+                nn.MaxPool2d(2)
+            )
+            
+            self.conv_block4 = conv_block(channels=(128, 512), size=(3, 3), N=N)
+            
+            self.conv_block5 = nn.Sequential(
+                nn.Upsample(scale_factor=2),
+                conv_block(channels=(512, 128), size=(3, 3), N=N)
+            )
+            self.conv_block6 = nn.Sequential(
+                nn.Upsample(scale_factor=2),
+                conv_block(channels=(128, 64), size=(3, 3), N=N)
+            )
+            self.conv_block7 = nn.Sequential(
+                nn.Upsample(scale_factor=2),
+                conv_block(channels=(64, 32), size=(3, 3), N=N)
+            )
+            
+            self.conv_block8 = conv_block(channels=(32, n_classes), size=(3, 3), N=N)
+            
+        else:     # version 'B'
+            self.conv_block1 = conv_block(channels=(input_filters, 32), size=(3, 3), N=N)
+            self.conv_block2 = nn.Sequential(
+                conv_block(channels=(32, 64), size=(3, 3), N=N),
+                nn.MaxPool2d(2)
+            )
+            self.conv_block3 = conv_block(channels=(64, 128), size=(3, 3), N=N)
+            self.conv_block4 = nn.Sequential(
+                conv_block(channels=(128, 256), size=(3, 3), N=N),
+                nn.MaxPool2d(2)
+            )
+            self.conv_block5 = conv_block(channels=(256, 256), size=(5, 5), N=N)
+            
+            self.conv_block6 = nn.Sequential(
+                nn.Upsample(scale_factor=2),
+                conv_block(channels=(256, 256), size=(5, 5), N=N)
+            )
+            
+            self.conv_block7 = nn.Sequential(
+                nn.Upsample(scale_factor=2),
+                conv_block(channels=(256, num_classes), size=(5, 5), N=N)
+            )
         
-        # "convolutional fully connected"
-        self.conv_block4 = conv_block(channels=(128, 512), size=(3, 3), N=N)
-        
-        # upsampling
-        self.conv_block5 = nn.Sequential(
-            nn.Upsample(scale_factor=2),
-            conv_block(channels=(512, 128), size=(3, 3), N=N)
-        )
-        self.conv_block6 = nn.Sequential(
-            nn.Upsample(scale_factor=2),
-            conv_block(channels=(128, 64), size=(3, 3), N=N)
-        )
-        self.conv_block7 = nn.Sequential(
-            nn.Upsample(scale_factor=2),
-            conv_block(channels=(64, 32), size=(3, 3), N=N)
-        )
-        
-        # final layer
-        self.conv_block8 = conv_block(channels=(32, n_classes), size=(3, 3), N=N)
-    
 
     def forward(self, x: torch.Tensor):
         h, w = x.shape[-2:]
@@ -108,7 +129,8 @@ class FCRN(nn.Module):
         x = self.conv_block5(x)
         x = self.conv_block6(x)
         x = self.conv_block7(x)
-        x = self.conv_block8(x)    
+        if self.version == 'A':
+            x = self.conv_block8(x)    
         
         if need_resize:
             x = resize(x, (h, w))
@@ -121,7 +143,7 @@ if __name__ == "__main__":
     # It works with 1 or 3 channels input images
     in_channels = 3
     num_classes = 2
-    version = 'A'
+    version = 'B'
     
     model = FCRN(input_filters=in_channels, n_classes=num_classes, version=version)
     input_img = torch.rand(1, in_channels, 100, 100)
