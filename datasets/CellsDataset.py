@@ -10,7 +10,7 @@ from datasets.patched_datasets import PatchedImageDataset, PatchedMultiImageData
 from methods.segmentation.target_builder import SegmentationTargetBuilder
 from methods.detection.target_builder import DetectionTargetBuilder
 from methods.density.target_builder import DensityTargetBuilder
-from methods.countception.target_builder import CountmapTargetBuilder
+from methods.countmap.target_builder import CountmapTargetBuilder
 
 
 class CellsDataset(PatchedMultiImageDataset):

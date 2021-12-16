@@ -1,0 +1,16 @@
+# @package _global_
+
+defaults:
+ - vgg-cells/countmap/common
+
+data:
+    train: &common
+        split_seed: 87
+        num_samples:
+            - 16   # num of train images
+            - 16  # num of validation images
+    validation:
+        <<: *common
+
+
+gpu: null

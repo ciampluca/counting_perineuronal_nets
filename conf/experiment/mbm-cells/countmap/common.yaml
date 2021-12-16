@@ -3,33 +3,27 @@
 defaults:
   - /common: default
   - /common/data: mbm-cells
-  - /common/method: density
-  - /common/data/method-specific: mbm-cells_density
-  - /common/model: csrnet
+  - /common/method: countmap
+  - /common/data/method-specific: mbm-cells_countmap
+  - /common/model: countception
   - /common/optim: default
 
 optim:
     optimizer:
-        lr: 0.00001
+        lr: 0.00005
     
     lr_scheduler:
         milestones: [ 800, 900, 1000 ]
 
     loss:
-        _target_: torch.nn.MSELoss
+        _target_: torch.nn.L1Loss
 
     border_pad: 0      # must be divisible by 32
-    batch_size: 5
+    batch_size: 8
     batch_accumulation: 1
 
     epochs: 1000
     log_every: 1
-
-data:
-    train:
-        root: "/mnt/datino/Cells/MBM_cells"
-    validation:
-        root: "/mnt/datino/Cells/MBM_cells"
 
 misc:
     font_size: 20

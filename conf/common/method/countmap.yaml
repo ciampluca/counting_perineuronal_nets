@@ -1,6 +1,6 @@
 # @package _global_
 
-method: countception
+method: countmap
 
 data:
     train:

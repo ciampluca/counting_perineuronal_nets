@@ -1,0 +1,16 @@
+# @package _global_
+
+defaults:
+ - mbm-cells/countmap/common
+
+data:
+    train: &common
+        split_seed: 87
+        num_samples:
+            - 5   # num of train images
+            - 5  # num of validation images
+    validation:
+        <<: *common
+
+
+gpu: null

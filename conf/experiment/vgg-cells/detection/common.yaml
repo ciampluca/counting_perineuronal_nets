@@ -37,9 +37,6 @@ data:
     validation:
       root: "/home/modro/datino/VGG_cells"
 
-misc:
-    font_size: 8
-    text_pos: 15
 
 
 
