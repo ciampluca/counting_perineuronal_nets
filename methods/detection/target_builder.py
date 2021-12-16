@@ -26,7 +26,6 @@ class DetectionTargetBuilder:
     
     def pack(self, image, target, pad=None):
         # put in a unique tuple the patch and the target
-        image = np.expand_dims(image, axis=-1)  # add channels dimension
         return image, target
 
 

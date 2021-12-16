@@ -34,7 +34,7 @@ def draw_points(image, points_yx, radius=10, marker='circle', color=RED):
     """ Draw points on the image.
 
     Args:
-        image (ndarray): (H,W)-shaped image array.
+        image (ndarray): (H,W,C)-shaped image array.
         points_yx (ndarray): (N,2)-shaped array of points.
         radius (int, optional): Half size of the markers. Defaults to 10.
         marker (str, optional): Type of the marker; can be 'circle' or 'square'. Defaults to 'circle'.
@@ -47,8 +47,8 @@ def draw_points(image, points_yx, radius=10, marker='circle', color=RED):
     elif marker == 'square':
         draw_marker_fn = _square_marker
 
-    if image.ndim == 2:
-        image = np.stack((image, image, image), axis=-1)
+    if image.shape[2] == 1:
+        image = np.concatenate((image, image, image), axis=-1)
     else:
         image = image.copy()
 
@@ -63,7 +63,7 @@ def draw_groundtruth_and_predictions(image, gp, radius=10, marker='circle', pale
     """ Draw groundtruth and predicted points on the image.
 
     Args:
-        image (ndarray, uint8): (H,W)-shaped array in [0, 255].
+        image (ndarray, uint8): (H,W,C)-shaped array in [0, 255].
         gp (pd.DataFrame): dataframe with matched groundtruth and predictions.
         radius (int, optional): Half size of the markers. Defaults to 10.
         marker (str, optional): Type of the marker; can be 'circle' or 'square'. Defaults to 'circle'.
@@ -83,8 +83,8 @@ def draw_groundtruth_and_predictions(image, gp, radius=10, marker='circle', pale
     elif marker == 'square':
         draw_marker_fn = _square_marker
 
-    if image.ndim == 2:
-        image = np.stack((image, image, image), axis=-1)
+    if image.shape[2] == 1:
+        image = np.concatenate((image, image, image), axis=-1)
     else:
         image = image.copy()
 

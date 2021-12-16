@@ -1,5 +1,8 @@
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
+from PIL import Image
 from skimage import io
 import torch
 import torch.nn.functional as F
@@ -24,7 +27,8 @@ def train_one_epoch(dataloader, model, optimizer, device, writer, epoch, cfg):
         input_and_target = sample[0]
         input_and_target = input_and_target.to(device)
         # split channels to get input, target, and loss weights
-        images, targets, weights = input_and_target.split(1, dim=1)
+        n_channels = input_and_target.shape[1]
+        images, targets, weights = input_and_target.split((n_channels - 2, 1, 1), dim=1)
 
         logits = model(images)
         loss = F.binary_cross_entropy_with_logits(logits, targets, weights)
@@ -64,6 +68,29 @@ def train_one_epoch(dataloader, model, optimizer, device, writer, epoch, cfg):
     return metrics
 
 
+def _save_image_and_segmentation_maps(image, image_id, segmentation_map, target_map, weights_map, cfg):
+    import matplotlib
+
+    debug_dir = Path('output_debug')
+    debug_dir.mkdir(exist_ok=True)
+
+    image_id = Path(image_id)
+
+    def _scale_and_save(graymap, path):
+        graymap = (255 * graymap.cpu().numpy().squeeze()).astype(np.uint8)
+        pil_image = Image.fromarray(graymap).convert("RGB")
+        pil_image.save(path)
+        
+    _scale_and_save(image, debug_dir / image_id)
+    _scale_and_save(segmentation_map, debug_dir / f'{image_id.stem}_segm.png')
+    _scale_and_save(target_map, debug_dir / f'{image_id.stem}_target.png')
+
+    weights_map = matplotlib.cm.viridis(weights_map.cpu().squeeze())
+    weights_map = (255 * weights_map).astype(np.uint8)
+    pil_image = Image.fromarray(weights_map).convert("RGB")
+    pil_image.save(debug_dir / f'{image_id.stem}_weights.png')
+
+
 @torch.no_grad()
 def validate(dataloader, model, device, epoch, cfg):
     """ Evaluate model on validation data. """
@@ -76,34 +103,49 @@ def validate(dataloader, model, device, epoch, cfg):
         input_and_target = batch.to(device)
 
         # split channels to get input, target, and loss weights
-        images, targets, weights = input_and_target.split(1, dim=1)
+        n_channels = input_and_target.shape[1]
+        images, targets, weights = input_and_target.split((n_channels - 2, 1, 1), dim=1)
         logits = model(images)
         predictions = torch.sigmoid(logits)
 
         processed_batch = (images, targets, weights, predictions)
-        # remove single channel dimension, move to validation device
-        processed_batch = [x[:, 0].to(validation_device) for x in processed_batch]
+        # move channel dimension, move to validation device
+        processed_batch = [x.movedim(1, -1).to(validation_device) for x in processed_batch]
         return processed_batch
 
     def collate_fn(image_info, image_patches):
         image_id, image_hw = image_info
 
-        # image = torch.empty(image_hw, dtype=torch.float32, device=validation_device)
-        segmentation_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
-        target_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
-        weights_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
-        normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
+        image = None
+        segmentation_map = None
+        target_map = None
+        weights_map = None
+        normalization_map = None
 
         # build full map from patches
         for (patch_hw, start_yx), (patch, target, weights, prediction) in image_patches:
+
+            if segmentation_map is None:
+                in_channels = patch.shape[-1]
+                out_channels = prediction.shape[-1]
+
+                in_hwc = image_hw + (in_channels,)
+                out_hwc = image_hw + (out_channels,)
+
+                image = torch.empty(in_hwc, dtype=torch.float32, device=validation_device)
+                segmentation_map = torch.zeros(out_hwc, dtype=torch.float32, device=validation_device)
+                target_map = torch.zeros(out_hwc, dtype=torch.float32, device=validation_device)
+                weights_map = torch.zeros(out_hwc, dtype=torch.float32, device=validation_device)
+                normalization_map = torch.zeros(out_hwc, dtype=torch.float32, device=validation_device)
+
             (y, x), (h, w) = start_yx, patch_hw
-            # image[y:y+h, x:x+w] = patch[:h, :w]
+            image[y:y+h, x:x+w] = patch[:h, :w]
             segmentation_map[y:y+h, x:x+w] += prediction[:h, :w]
             target_map[y:y+h, x:x+w] += target[:h, :w]
             weights_map[y:y+h, x:x+w] += weights[:h, :w]
             normalization_map[y:y+h, x:x+w] += 1.0
             
-        # image /= normalization_map
+        image /= normalization_map
         segmentation_map /= normalization_map
         segmentation_map = torch.clamp(segmentation_map, 0, 1)  # XXX to fix, sporadically something goes off limits
 
@@ -111,16 +153,19 @@ def validate(dataloader, model, device, epoch, cfg):
         weights_map /= normalization_map
         del normalization_map
 
-        return image_id, image_hw, segmentation_map, target_map, weights_map
+        return image_id, image_hw, image, segmentation_map, target_map, weights_map
 
     metrics = []
     thr_metrics = []
 
     processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn)
     progress = tqdm(processed_images, total=n_images, desc='EVAL (patches)', leave=False)
-    for image_id, image_hw, segmentation_map, target_map, weights_map in progress:
+    for image_id, image_hw, image, segmentation_map, target_map, weights_map in progress:
         # compute metrics
         progress.set_description('EVAL (metrics)')
+
+        if cfg.optim.debug and epoch % cfg.optim.debug == 0:
+            _save_image_and_segmentation_maps(image, image_id, segmentation_map, target_map, weights_map, cfg)
 
         ## threshold-free metrics
         weighted_bce_loss = F.binary_cross_entropy(segmentation_map, target_map, weights_map)
@@ -145,7 +190,7 @@ def validate(dataloader, model, device, epoch, cfg):
         
             # counting metrics
             progress_thrs.set_description(f'thr={thr:.2f} (count)')
-            localizations = segmentation_map_to_points(segmentation_map.cpu().numpy(), thr=thr)
+            localizations = segmentation_map_to_points(segmentation_map.cpu().numpy().squeeze(), thr=thr)
             groundtruth = dataloader.dataset.annot.loc[[image_id]]
 
             tolerance = 1.25 * cfg.data.validation.target_params.radius  # min distance to match points
@@ -227,17 +272,33 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
     @torch.no_grad()
     def process_fn(inputs):
         logits = model(inputs.to(device))
-        predictions = torch.sigmoid(logits).squeeze(axis=1)
-        predictions = predictions.cpu()
-        return inputs.squeeze(axis=1).numpy(), predictions.numpy()
+        predictions = torch.sigmoid(logits)
+
+        # channels as last dim
+        predictions = predictions.cpu().movedim(1, -1).numpy()
+        inputs = inputs.movedim(1, -1).numpy()
+        return inputs, predictions
 
     def collate_fn(image_info, image_patches):
         image_id, image_hw = image_info
-        full_input = np.empty(image_hw, dtype=np.float32)
-        full_output = np.zeros(image_hw, dtype=np.float32)
-        normalization_map = np.zeros(image_hw, dtype=np.float32)
+        
+        full_input = None
+        full_output = None
+        normalization_map = None
 
         for (patch_hw, start_yx), (patch, processed_patch) in image_patches:
+
+            if full_input is None:
+                in_channels = patch.shape[-1]
+                out_channels = processed_patch.shape[-1]
+
+                in_hwc = image_hw + (in_channels,)
+                out_hwc = image_hw + (out_channels,)
+
+                full_input = np.empty(in_hwc, dtype=np.float32)
+                full_output = np.zeros(out_hwc, dtype=np.float32)
+                normalization_map = np.zeros(out_hwc, dtype=np.float32)
+
             (y, x), (h, w) = start_yx, patch_hw
             full_input[y:y+h, x:x+w] = patch[:h, :w]
             full_output[y:y+h, x:x+w] += processed_patch[:h, :w]
@@ -256,8 +317,9 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
     all_gt_and_preds = []
     thrs = np.linspace(0, 1, 201).tolist() + [2]
     for image_id, image, segmentation_map in progress:
-        image_hw = image.shape
+        image_hw = image.shape[:2]
         image = (255 * image).astype(np.uint8)
+        segmentation_map = segmentation_map.squeeze()
 
         annot = dataloader.dataset.annot
         groundtruth = annot.loc[[image_id]] if image_id in annot.index else pd.DataFrame([], columns=['X','Y'], dtype=np.int)
@@ -329,10 +391,17 @@ def predict_points(dataloader, model, device, threshold, cfg):
 
     def collate_fn(image_info, image_patches):
         image_id, image_hw = image_info
-        segmentation_map = np.zeros(image_hw, dtype=np.float32)
-        normalization_map = np.zeros(image_hw, dtype=np.float32)
+        segmentation_map = None
+        normalization_map = None
 
         for (patch_hw, start_yx), (processed_patch,) in image_patches:
+
+            if segmentation_map is None:
+                out_channels = processed_patch.shape[-1]
+                out_hwc = image_hw + (out_channels,)
+                segmentation_map = np.zeros(out_hwc, dtype=np.float32)
+                normalization_map = np.zeros(out_hwc, dtype=np.float32)
+
             (y, x), (h, w) = start_yx, patch_hw
             segmentation_map[y:y+h, x:x+w] += processed_patch[:h, :w]
             normalization_map[y:y+h, x:x+w] += 1.0
