@@ -127,3 +127,14 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+/data/
+/tmp/
+/trash/
+/.vscode/
+/.envrc
+/model_zoo/
+/runs*/
+/figures/
+*.zip
+*.png
