@@ -37,12 +37,20 @@ class CountCeption(nn.Module):
     Code based on: https://github.com/roggirg/count-ception_mbm
     """
     
-    def __init__(self, inplanes=3, outplanes=1, use_logits=False, logits_per_output=12, debug=False, skip_weights_loading=False,):
+    def __init__(
+        self,
+        in_channels=3,
+        out_channels=1,
+        use_logits=False,
+        logits_per_output=12,
+        debug=False,
+        skip_weights_loading=False,
+    ):
         super(CountCeption, self).__init__()
         
         # params
-        self.inplanes = inplanes
-        self.outplanes = outplanes
+        self.in_channels = in_channels
+        self.out_channels = out_channels
         self.activation = nn.LeakyReLU(0.01)
         self.final_activation = nn.LeakyReLU(0.01)
         self.patch_size = 32
@@ -50,9 +58,7 @@ class CountCeption(nn.Module):
         self.logits_per_output = logits_per_output
         self.debug = debug
 
-        torch.LongTensor()
-
-        self.conv1 = ConvBlock(self.inplanes, 64, ksize=3, pad=self.patch_size, activation=self.activation)
+        self.conv1 = ConvBlock(self.in_channels, 64, ksize=3, pad=self.patch_size, activation=self.activation)
         self.simple1 = SimpleBlock(64, 16, 16, activation=self.activation)
         self.simple2 = SimpleBlock(32, 16, 32, activation=self.activation)
         self.conv2 = ConvBlock(48, 16, ksize=14, activation=self.activation)
@@ -65,9 +71,9 @@ class CountCeption(nn.Module):
         self.conv5 = ConvBlock(64, 64, ksize=1, activation=self.activation)
         if use_logits:
             self.conv6 = nn.ModuleList([ConvBlock(
-                64, logits_per_output, ksize=1, activation=self.final_activation) for _ in range(outplanes)])
+                64, logits_per_output, ksize=1, activation=self.final_activation) for _ in range(out_channels)])
         else:
-            self.conv6 = ConvBlock(64, self.outplanes, ksize=1, activation=self.final_activation)
+            self.conv6 = ConvBlock(64, self.out_channels, ksize=1, activation=self.final_activation)
 
         # Weight initialization
         for m in self.modules():
@@ -117,9 +123,9 @@ class CountCeption(nn.Module):
 # Testing code
 if __name__ == "__main__":
     in_channels = 3     # It works with 3 channels input images
-    num_classes = 2
+    out_channels = 2
     
-    model = CountCeption(debug=True, inplanes=in_channels, outplanes=num_classes)
+    model = CountCeption(debug=True, in_channels=in_channels, out_channels=out_channels)
     input_img = torch.rand(1, in_channels, 256, 256)
     output = model.forward(input_img)
 
