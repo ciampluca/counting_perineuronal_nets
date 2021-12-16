@@ -23,12 +23,6 @@ optim:
   val_freq: 5
   log_every: 1
 
-data:
-    train:
-        root: "/mnt/datino/Cells/crc_histophenotypes_cells"
-    validation:
-      root: "/mnt/datino/Cells/crc_histophenotypes_cells"
-
 misc:
     font_size: 15
     text_pos: 30

@@ -10,7 +10,6 @@ data:
           - -50  # num of train images (last 50)
           - 50  # num of validation images (first 50)
         max_num_train_val_sample: 100
-        root: /home/luca/luca-cnr/mnt/datino/Cells/crc_histophenotypes_cells
     validation:
         <<: *common   # reinsert 'train' block content
 
