@@ -45,7 +45,14 @@ class FCRN(nn.Module):
     
     """
 
-    def __init__(self, N: int=1, input_filters: int=3, n_classes: int=1, version='A', **kwargs):
+    def __init__(
+        self,
+        N: int=1,
+        in_channels: int=3,
+        out_channels: int=1,
+        version='A',
+        **kwargs
+    ):
         """
         Create FCRN model
         
@@ -60,7 +67,7 @@ class FCRN(nn.Module):
         
         if version == 'A':
             self.conv_block1 = nn.Sequential(
-                conv_block(channels=(input_filters, 32), size=(3, 3), N=N),
+                conv_block(channels=(in_channels, 32), size=(3, 3), N=N),
                 nn.MaxPool2d(2)
             )
             self.conv_block2 = nn.Sequential(
@@ -87,10 +94,10 @@ class FCRN(nn.Module):
                 conv_block(channels=(64, 32), size=(3, 3), N=N)
             )
             
-            self.conv_block8 = conv_block(channels=(32, n_classes), size=(3, 3), N=N)
+            self.conv_block8 = conv_block(channels=(32, out_channels), size=(3, 3), N=N)
             
         else:     # version 'B'
-            self.conv_block1 = conv_block(channels=(input_filters, 32), size=(3, 3), N=N)
+            self.conv_block1 = conv_block(channels=(in_channels, 32), size=(3, 3), N=N)
             self.conv_block2 = nn.Sequential(
                 conv_block(channels=(32, 64), size=(3, 3), N=N),
                 nn.MaxPool2d(2)
@@ -109,7 +116,7 @@ class FCRN(nn.Module):
             
             self.conv_block7 = nn.Sequential(
                 nn.Upsample(scale_factor=2),
-                conv_block(channels=(256, num_classes), size=(5, 5), N=N)
+                conv_block(channels=(256, out_channels), size=(5, 5), N=N)
             )
         
 
@@ -145,7 +152,7 @@ if __name__ == "__main__":
     num_classes = 2
     version = 'B'
     
-    model = FCRN(input_filters=in_channels, n_classes=num_classes, version=version)
+    model = FCRN(in_channels=in_channels, out_channels=num_classes, version=version)
     input_img = torch.rand(1, in_channels, 100, 100)
     density = model(input_img)
 
