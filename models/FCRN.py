@@ -35,28 +35,27 @@ def conv_block(channels: Tuple[int, int], size: Tuple[int, int], stride: Tuple[i
     return nn.Sequential(*[block(channels[bool(i)]) for i in range(N)])
 
 
-class FCRN_A(nn.Module):
+class FCRN(nn.Module):
     """
-    Fully Convolutional Regression Network A (FCRN-A)
+    Fully Convolutional Regression Network A and B (FCRN-A, FCRN-B)
     Ref. W. Xie et al. 'Microscopy Cell Counting with Fully Convolutional Regression Networks'
-    Code inspired by: https://github.com/NeuroSYS-pl/objects_counting_dmap
+    Code inspired (for FCRN-A) by: https://github.com/NeuroSYS-pl/objects_counting_dmap
     
     Args:
     
     """
 
-    def __init__(self, N: int=1, input_filters: int=3, n_classes: int=1, **kwargs):
+    def __init__(self, N: int=1, input_filters: int=3, n_classes: int=1, version='A', **kwargs):
         """
-        Create FCRN-A model with:
-            * fixed kernel size = (3, 3)
-            * fixed max pooling kernel size = (2, 2) and upsampling factor = 2
-            * no. of filters as defined in the original model:
-              input size -> 32 -> 64 -> 128 -> 512 -> 128 -> 64 -> 1
+        Create FCRN model
+        
         Args:
             N: no. of convolutional layers per block (see conv_block)
             input_filters: no. of input channels
         """
-        super(FCRN_A, self).__init__()
+        super(FCRN, self).__init__()
+        
+        assert version in ['A', 'B'], "Not implemented version (possible values are A or B)"
         
         # downsampling
         self.conv_block1 = nn.Sequential(
@@ -86,9 +85,12 @@ class FCRN_A(nn.Module):
         )
         self.conv_block7 = nn.Sequential(
             nn.Upsample(scale_factor=2),
-            conv_block(channels=(64, n_classes), size=(3, 3), N=N)
+            conv_block(channels=(64, 32), size=(3, 3), N=N)
         )
         
+        # final layer
+        self.conv_block8 = conv_block(channels=(32, n_classes), size=(3, 3), N=N)
+    
 
     def forward(self, x: torch.Tensor):
         h, w = x.shape[-2:]
@@ -105,7 +107,8 @@ class FCRN_A(nn.Module):
         x = self.conv_block4(x)
         x = self.conv_block5(x)
         x = self.conv_block6(x)
-        x = self.conv_block7(x)    
+        x = self.conv_block7(x)
+        x = self.conv_block8(x)    
         
         if need_resize:
             x = resize(x, (h, w))
@@ -118,9 +121,10 @@ if __name__ == "__main__":
     # It works with 1 or 3 channels input images
     in_channels = 3
     num_classes = 2
+    version = 'A'
     
-    model = FCRN_A(input_filters=in_channels, n_classes=num_classes)
-    input_img = torch.rand(1, in_channels, 256, 256)
+    model = FCRN(input_filters=in_channels, n_classes=num_classes, version=version)
+    input_img = torch.rand(1, in_channels, 100, 100)
     density = model(input_img)
 
     print(density.shape)
