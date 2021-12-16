@@ -27,17 +27,3 @@ class DetectionTargetBuilder:
     def pack(self, image, target, pad=None):
         # put in a unique tuple the patch and the target
         return image, target
-
-
-if __name__ == "__main__":   
-    image_hw = (100, 100)
-    tb = DetectionTargetBuilder()
-    
-    np.random.seed(7)
-    points_yx = np.random.uniform(0, 100, size=(50, 2))
-    target = tb.build(image_hw, points_yx)
-    print(target)
-    
-    points_yx = np.empty((0, 2))
-    target = tb.build(image_hw, points_yx)
-    print(target)

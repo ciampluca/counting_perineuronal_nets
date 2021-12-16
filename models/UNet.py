@@ -143,14 +143,3 @@ class UNetUpBlock(nn.Module):
         out = self.conv_block(out)
 
         return out
-
-
-# Testing code
-if __name__ == "__main__":
-    model = UNet(padding=True, batch_norm=True, in_channels=3, n_classes=1)
-    input_img = torch.rand(2, 3, 600, 600)
-    density = model(input_img)
-
-    print(density.shape)
-    print(density)
-

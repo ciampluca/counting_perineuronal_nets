@@ -100,17 +100,3 @@ class CSRNet(nn.Module):
                 in_channels = v
 
         return nn.Sequential(*layers)
-
-
-# Testing code
-if __name__ == "__main__":
-    # It works with 3 channels input images
-    num_classes = 2
-    torch.hub.set_dir('../model_zoo/')
-    model = CSRNet(skip_weights_loading=True)
-    input_img = torch.rand(1, 3, 252, 252)
-    bmask = torch.ones(1, 1, 252, 252)
-    density = model(input_img, bmask=bmask)
-
-    print(density.shape)
-    # print(density)

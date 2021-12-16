@@ -138,7 +138,6 @@ def main(cfg):
                 if threshold is not None:
                     writer.add_scalar(f'valid/{metric}_thr', threshold, epoch)
 
-            
             # save only if best on some metric (via CheckpointManager)
             best_metrics = ckpt_manager.save({
                 'model': model.state_dict(),

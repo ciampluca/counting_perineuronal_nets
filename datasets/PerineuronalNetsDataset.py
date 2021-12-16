@@ -98,23 +98,3 @@ class PerineuronalNetsDataset(PatchedMultiImageDataset):
             f'{len(self.datasets)} images, ' \
             f'{len(self)} patches ({self.patch_size}x{self.patch_size})'
         return s
-
-
-if __name__ == "__main__":
-    from torch.utils.data import DataLoader
-    from detection.transforms import ToTensor
-    from detection.utils import collate_fn, build_coco_compliant_batch
-    from tqdm import tqdm
-
-    data_root = 'data/perineuronal-nets'
-
-    for split in ('train-fold1245', 'train-fold3', 'train-half1', 'train-half2', 'test'):
-        dataset = PerineuronalNetsDataset(data_root, split=split)
-        print(split, len(dataset))
-
-    dataset = PerineuronalNetsDataset(data_root, split='test', patch_size=None, overlap=0, random_offset=320, target_='detection', transforms=ToTensor(), max_cache_mem=8*1024**3)  # bytes = 8 GiB
-    dataloader = DataLoader(dataset, batch_size=8, shuffle=True, num_workers=0, collate_fn=collate_fn)
-
-    for batch in tqdm(dataloader):
-        coco_batch = build_coco_compliant_batch(batch[0])
-        import pdb; pdb.set_trace()

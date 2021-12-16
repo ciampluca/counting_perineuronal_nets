@@ -150,28 +150,3 @@ class PerineuronalNetsRankDataset(Dataset):
                 f'{self.patches.num_images()} image(s)'
 
         return s
-
-
-if __name__ == "__main__":
-
-    import torch
-    from torch.utils.data import DataLoader
-    from torchvision.utils import make_grid, save_image
-    from tqdm import tqdm
-    
-    means = []
-    for split in ('train', 'validation', 'test'):
-        dset = PerineuronalNetsRankDataset(split=split, split_seed=23, n_tuples=1000, neg_fraction=0.5)
-        loader = DataLoader(dset, batch_size=1)
-
-        mean = torch.zeros((8, 1, 64, 64))
-        for sample in tqdm(loader):
-            mean += torch.stack([s.float() / 255. for s in sample])
-        
-        mean /= 1000
-        means.append(mean)
-
-    mean = torch.cat(means, dim=0)
-    img = make_grid(mean, nrow=8, normalize=True)
-    save_image(img, 'mean_samples_per_agreement.png')
-    
