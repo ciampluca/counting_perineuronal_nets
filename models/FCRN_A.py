@@ -39,7 +39,10 @@ class FCRN_A(nn.Module):
     """
     Fully Convolutional Regression Network A (FCRN-A)
     Ref. W. Xie et al. 'Microscopy Cell Counting with Fully Convolutional Regression Networks'
-    Code based on: https://github.com/NeuroSYS-pl/objects_counting_dmap
+    Code inspired by: https://github.com/NeuroSYS-pl/objects_counting_dmap
+    
+    Args:
+    
     """
 
     def __init__(self, N: int=1, input_filters: int=3, n_classes: int=1, **kwargs):
@@ -47,7 +50,7 @@ class FCRN_A(nn.Module):
         Create FCRN-A model with:
             * fixed kernel size = (3, 3)
             * fixed max pooling kernel size = (2, 2) and upsampling factor = 2
-            * no. of filters as defined in an original model:
+            * no. of filters as defined in the original model:
               input size -> 32 -> 64 -> 128 -> 512 -> 128 -> 64 -> 1
         Args:
             N: no. of convolutional layers per block (see conv_block)
@@ -55,26 +58,37 @@ class FCRN_A(nn.Module):
         """
         super(FCRN_A, self).__init__()
         
-        self.model = nn.Sequential(
-            # downsampling
+        # downsampling
+        self.conv_block1 = nn.Sequential(
             conv_block(channels=(input_filters, 32), size=(3, 3), N=N),
-            nn.MaxPool2d(2),
-            conv_block(channels=(32, 64), size=(3, 3), N=N),
-            nn.MaxPool2d(2),
-            conv_block(channels=(64, 128), size=(3, 3), N=N),
-            nn.MaxPool2d(2),
-
-            # "convolutional fully connected"
-            conv_block(channels=(128, 512), size=(3, 3), N=N),
-
-            # upsampling
-            nn.Upsample(scale_factor=2),
-            conv_block(channels=(512, 128), size=(3, 3), N=N),
-            nn.Upsample(scale_factor=2),
-            conv_block(channels=(128, 64), size=(3, 3), N=N),
-            nn.Upsample(scale_factor=2),
-            conv_block(channels=(64, n_classes), size=(3, 3), N=N),
+            nn.MaxPool2d(2)
         )
+        self.conv_block2 = nn.Sequential(
+            conv_block(channels=(32, 64), size=(3, 3), N=N),
+            nn.MaxPool2d(2)
+        )
+        self.conv_block3 = nn.Sequential(
+            conv_block(channels=(64, 128), size=(3, 3), N=N),
+            nn.MaxPool2d(2)
+        )
+        
+        # "convolutional fully connected"
+        self.conv_block4 = conv_block(channels=(128, 512), size=(3, 3), N=N)
+        
+        # upsampling
+        self.conv_block5 = nn.Sequential(
+            nn.Upsample(scale_factor=2),
+            conv_block(channels=(512, 128), size=(3, 3), N=N)
+        )
+        self.conv_block6 = nn.Sequential(
+            nn.Upsample(scale_factor=2),
+            conv_block(channels=(128, 64), size=(3, 3), N=N)
+        )
+        self.conv_block7 = nn.Sequential(
+            nn.Upsample(scale_factor=2),
+            conv_block(channels=(64, n_classes), size=(3, 3), N=N)
+        )
+        
 
     def forward(self, x: torch.Tensor):
         h, w = x.shape[-2:]
@@ -85,7 +99,13 @@ class FCRN_A(nn.Module):
             newW = math.ceil(w / 8) * 8
             x = resize(x, (newH, newW))
             
-        x = self.model(x)
+        x = self.conv_block1(x)
+        x = self.conv_block2(x)
+        x = self.conv_block3(x)
+        x = self.conv_block4(x)
+        x = self.conv_block5(x)
+        x = self.conv_block6(x)
+        x = self.conv_block7(x)    
         
         if need_resize:
             x = resize(x, (h, w))
@@ -100,7 +120,7 @@ if __name__ == "__main__":
     num_classes = 2
     
     model = FCRN_A(input_filters=in_channels, n_classes=num_classes)
-    input_img = torch.rand(1, in_channels, 600, 600)
+    input_img = torch.rand(1, in_channels, 256, 256)
     density = model(input_img)
 
     print(density.shape)
