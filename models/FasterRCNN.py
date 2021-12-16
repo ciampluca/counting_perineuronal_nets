@@ -15,6 +15,7 @@ MODEL_URLS = {
 
 class FasterRCNNWrapper(FasterRCNNTorch):
     def __init__(self,
+        in_channels=3,
         num_classes=1,
         backbone='resnet50',
         backbone_pretrained=False,

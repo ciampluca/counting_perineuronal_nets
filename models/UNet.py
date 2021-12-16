@@ -7,23 +7,41 @@ from torchvision.transforms.functional import resize
 
 
 class UNet(nn.Module):
-    """
-    UNet
-    Ref. O. Ronneberger et al. 'U-Net: Convolutional Networks for Biomedical Image Segmentation'
-    Adapted from https://discuss.pytorch.org/t/unet-implementation/426
-    
-    Args:
-        in_channels (int): number of input channels
-        n_classes (int): number of output channels
-        depth (int): depth of the network
-        wf (int): number of filters in the first layer is 2**wf
-        padding (bool): if True, apply padding such that the input shape is the same as the output. This may introduce artifacts
-        batch_norm (bool): Use BatchNorm after layers with an activation function
-        up_mode (str): one of 'upconv' or 'upsample'. 'upconv' will use transposed convolutions for learned upsampling.
-                       'upsample' will use bilinear upsampling.
-    """
-    
-    def __init__(self, in_channels=1, n_classes=2, depth=5, wf=6, padding=False, batch_norm=False, up_mode='upconv', last_bias=False, skip_weights_loading=True):
+
+    def __init__(
+            self,
+            in_channels=3,
+            out_channels=2,
+            depth=5,
+            wf=6,
+            padding=False,
+            batch_norm=False,
+            up_mode='upconv',
+            last_bias=False,
+            skip_weights_loading=True
+    ):
+        """
+        Implementation of
+        U-Net: Convolutional Networks for Biomedical Image Segmentation 
+        (Ronneberger et al., 2015)
+        https://arxiv.org/abs/1505.04597
+        Using the default arguments will yield the exact version used
+        in the original paper
+        Args:
+            in_channels (int): number of input channels
+            out_channels (int): number of output channels
+            depth (int): depth of the network
+            wf (int): number of filters in the first layer is 2**wf
+            padding (bool): if True, apply padding such that the input shape
+                            is the same as the output.
+                            This may introduce artifacts
+            batch_norm (bool): Use BatchNorm after layers with an
+                               activation function
+            up_mode (str): one of 'upconv' or 'upsample'.
+                           'upconv' will use transposed convolutions for
+                           learned upsampling.
+                           'upsample' will use bilinear upsampling.
+        """
         super(UNet, self).__init__()
         
         assert up_mode in ('upconv', 'upsample')
@@ -44,7 +62,7 @@ class UNet(nn.Module):
             )
             prev_channels = 2 ** (wf + i)
 
-        self.last = nn.Conv2d(prev_channels, n_classes, kernel_size=1, bias=last_bias)
+        self.last = nn.Conv2d(prev_channels, out_channels, kernel_size=1, bias=last_bias)
 
     def forward(self, x):
         h, w = x.shape[-2:]
@@ -129,12 +147,8 @@ class UNetUpBlock(nn.Module):
 
 # Testing code
 if __name__ == "__main__":
-    # It works with 1 or 3 channels input images
-    in_channels = 3
-    num_classes = 1
-    
-    model = UNet(padding=True, batch_norm=True, in_channels=in_channels, n_classes=num_classes)
-    input_img = torch.rand(2, in_channels, 640, 640)
+    model = UNet(padding=True, batch_norm=True, in_channels=3, n_classes=1)
+    input_img = torch.rand(2, 3, 600, 600)
     density = model(input_img)
 
     print(density.shape)

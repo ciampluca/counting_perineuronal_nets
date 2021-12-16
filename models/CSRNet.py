@@ -14,15 +14,21 @@ class CSRNet(nn.Module):
     Code based on: https://github.com/CommissarMa/CSRNet-pytorch
     """
 
-    def __init__(self, n_classes=1, skip_weights_loading=False):
+    def __init__(
+        self,
+        in_channels=3,
+        out_channels=1,
+        skip_weights_loading=False
+    ):
         super(CSRNet, self).__init__()
 
+        self.in_channels = in_channels
         self.frontend_feat = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512]
         self.backend_feat = [512, 512, 512, 256, 128, 64]
-        self.frontend = self._make_layers(self.frontend_feat)
-        self.backend = self._make_layers(
-            self.backend_feat, in_channels=512, dilation=True)
-        self.output_layer = nn.Conv2d(64, n_classes, kernel_size=1)
+
+        self.frontend = self._make_layers(self.frontend_feat, in_channels=3)
+        self.backend = self._make_layers(self.backend_feat, in_channels=512, dilation=True)
+        self.output_layer = nn.Conv2d(64, out_channels, kernel_size=1)
 
         if not skip_weights_loading:
             mod = models.vgg16(pretrained=True)
@@ -35,6 +41,10 @@ class CSRNet(nn.Module):
             self.frontend.load_state_dict(fsd)
 
     def forward(self, x):
+
+        if self.in_channels == 1:
+            x = x.expand(-1, 3, -1, -1)  # gray to RGB
+
         h, w = x.shape[-2:]
         need_resize = (h % 8) or (w % 8)
 
@@ -97,10 +107,10 @@ if __name__ == "__main__":
     # It works with 3 channels input images
     num_classes = 2
     torch.hub.set_dir('../model_zoo/')
-    
-    model = CSRNet(n_classes=num_classes)
-    input_img = torch.rand(2, 3, 256, 256)
-    density = model(input_img)
+    model = CSRNet(skip_weights_loading=True)
+    input_img = torch.rand(1, 3, 252, 252)
+    bmask = torch.ones(1, 1, 252, 252)
+    density = model(input_img, bmask=bmask)
 
     print(density.shape)
     # print(density)
