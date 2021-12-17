@@ -30,20 +30,17 @@ class FasterRCNNWrapper(FasterRCNNTorch):
     
         assert backbone in ("resnet50", "resnet101"), f"Backbone not supported: {backbone}"
 
-        # replace the classifier with a new one, that has num_classes which is user-defined
-        num_classes += 1    # num classes + background
-
         if skip_weights_loading:
             model_pretrained = False
             backbone_pretrained = False
 
-        # anchor generator: these are default values, but maybe we have to change them
+        # anchor generator: these are default values, but in this way we can eventually change them
         anchor_sizes = ((32,), (64,), (128,), (256,), (512,))
         aspect_ratios = ((0.5, 1.0, 2.0),) * len(anchor_sizes)
         rpn_anchor_generator = AnchorGenerator(anchor_sizes, aspect_ratios)
 
-        # these are default values, but maybe we can change them
-        roi_pooler = torchvision.ops.MultiScaleRoIAlign(
+        # box roi pooler: these are default values, but in this way we can eventually change them
+        box_roi_pooler = torchvision.ops.MultiScaleRoIAlign(
             featmap_names=['0', '1', '2', '3'],
             output_size=7,
             sampling_ratio=2
@@ -60,7 +57,7 @@ class FasterRCNNWrapper(FasterRCNNTorch):
             box_nms_thresh=nms,
             box_score_thresh=det_thresh,
             rpn_anchor_generator=rpn_anchor_generator,
-            box_roi_pool=roi_pooler
+            box_roi_pool=box_roi_pooler
         )
 
         if model_pretrained:
@@ -69,5 +66,6 @@ class FasterRCNNWrapper(FasterRCNNTorch):
 
         # get number of input features for the classifier
         in_features = self.roi_heads.box_predictor.cls_score.in_features
-        # replace the pre-trained head with a new one
+        # replace the pre-trained head with a new one that has num_classes which is user-defined
+        num_classes += 1    # num classes + background
         self.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
