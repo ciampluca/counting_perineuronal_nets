@@ -47,11 +47,15 @@ class TestModels(unittest.TestCase):
     def test_csrnet(self):
         self._test_map_model(model_class=CSRNet)
     
-    def test_countception(self):
-        self._test_map_model(model_class=CountCeption)
+    # def test_countception(self):
+    #     self._test_map_model(model_class=CountCeption)
     
     def test_fcrn(self):
         for version in ('A', 'B'):
             with self.subTest(version=version):
                 model_class = functools.partial(FCRN, version=version)
                 self._test_map_model(model_class=model_class)
+                
+    def test_cfcrn(self):
+        self._test_map_model(model_class=C_FCRN)
+        # self._test_map_model(model_class=C_FCRN, with_aux=True)

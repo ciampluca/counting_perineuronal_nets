@@ -136,5 +136,7 @@ dmypy.json
 /model_zoo/
 /runs*/
 /figures/
+datasets/trash/
 *.zip
 *.png
+*.pkl

@@ -118,16 +118,3 @@ class CountCeption(nn.Module):
             self._print(net)
             
         return net
-
-
-# Testing code
-if __name__ == "__main__":
-    in_channels = 3     # It works with 3 channels input images
-    out_channels = 2
-    
-    model = CountCeption(debug=True, in_channels=in_channels, out_channels=out_channels)
-    input_img = torch.rand(1, in_channels, 256, 256)
-    output = model.forward(input_img)
-
-    print(output.shape)
-    print(output)

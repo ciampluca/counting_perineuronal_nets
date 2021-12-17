@@ -44,14 +44,20 @@ class C_FCRN(nn.Module):
     Args:
     
     """
-
-    def __init__(self, N: int=1, input_filters: int=3, n_classes: int=1, with_aux=True, **kwargs):
+    
+    def __init__(
+        self,
+        N: int=1,
+        in_channels: int=3,
+        out_channels: int=1,
+        with_aux=False,
+        **kwargs
+    ):
         """
         Create C-FCRN or C-FCRN-Aux model.
         
         Args:
-            N: no. of convolutional layers per block (see conv_block)
-            input_filters: no. of input channels
+        
         """
         super(C_FCRN, self).__init__()
         
@@ -59,7 +65,7 @@ class C_FCRN(nn.Module):
         
         # downsampling
         self.conv_block1 = nn.Sequential(
-            conv_block(channels=(input_filters, 32), size=(3, 3), N=N),
+            conv_block(channels=(in_channels, 32), size=(3, 3), N=N),
             nn.MaxPool2d(2)
         )
         self.conv_block2 = nn.Sequential(
@@ -89,7 +95,7 @@ class C_FCRN(nn.Module):
         )
         
         # Final layer
-        self.conv_block8 = conv_block(channels=(32, n_classes), size=(1, 1), N=N)
+        self.conv_block8 = conv_block(channels=(32, out_channels), size=(1, 1), N=N)
         
         self.aux_conv_block1 = nn.Sequential(
             conv_block(channels=(512, 32), size=(3, 3), N=N),
@@ -144,18 +150,4 @@ class C_FCRN(nn.Module):
             return aux_out1, aux_out2, aux_out3, final_out
         else:
             return final_out
-    
-    
-# Testing code
-if __name__ == "__main__":
-    # It works with 1 or 3 channels input images
-    in_channels = 3
-    num_classes = 1
-    with_aux = True
-    # TODO check with aux the generated dmaps when need resize 
-    model = C_FCRN(input_filters=in_channels, n_classes=num_classes, with_aux=with_aux)
-    input_img = torch.rand(1, in_channels, 128, 128)
-    output = model(input_img)
 
-    for out in output:
-        print(out.shape)

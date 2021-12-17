@@ -143,18 +143,4 @@ class FCRN(nn.Module):
             x = resize(x, (h, w))
         
         return x
-    
-    
-# Testing code
-if __name__ == "__main__":
-    # It works with 1 or 3 channels input images
-    in_channels = 3
-    num_classes = 2
-    version = 'B'
-    
-    model = FCRN(in_channels=in_channels, out_channels=num_classes, version=version)
-    input_img = torch.rand(1, in_channels, 100, 100)
-    density = model(input_img)
 
-    print(density.shape)
-    #print(density)
