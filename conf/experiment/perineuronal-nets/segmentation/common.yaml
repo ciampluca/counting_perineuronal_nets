@@ -1,9 +1,0 @@
-# @package _global_
-
-defaults:
-  - /common: default
-  - /common/data: perineuronal-nets
-  - /common/method: segmentation
-  - /common/data/method-specific: perineuronal-nets_segmentation
-  - /common/model: unet
-  - /common/optim: default

@@ -2,9 +2,7 @@
 
 <img src="pnn-banner.gif" width="100%">
 
-TODO
 PyTorch code for training and evaluating cell counting and localization methodologies.
-We provide pretrained models for **counting perineuronal nets** in fluorescence microscopy images.
 
 ## Getting Started
 
@@ -71,31 +69,6 @@ E.g.,
 python evaluate.py runs/experiment=perineuronal-nets/detection/fasterrcnn_480/
 ```
 Metrics and predictions will be saved in the run folder under `test_predictions/`.
-
-### Stage 2: Scoring Model Training
-
-Train configurations for scoring models are specified in `conf_score/`. You can run a training experiment by passing as argument `method=<method_name>` to the `train_score.py` script, where `<method_name>` is the path to a YAML configuration relative to `conf_score/method` and without the `.yaml` extension (e.g., `ordinal_regression`).
-
-Scoring models can be trained only on the Perineuronal Nets dataset that contains multi-rater data.
-
-#### Examples:
-
-  ```bash
-  # train scorer with Agreement Ordinal Regression method
-  python train_score.py method=ordinal_regression seed=87
-
-  # train scorer with Agreement Rank Learning method
-  python train_score.py method=pairwise_balanced seed=67
-  ```
-
-Runs files will be produced in the `runs_score` folder. Once trained, you can evaluate the trained models on the corresponding test sets using the `evaluate_score.py` script.
-E.g.,
-```bash
-# check python evaluate_score.py -h for more options
-python evaluate_score.py runs_score/method=pairwise_balanced,seed=67/
-```
-Metrics and predictions will be saved in the run folder under `test_predictions/`.
-
 
 ## Reproducing Experiments
 

@@ -67,7 +67,11 @@ class CSRNet(nn.Module):
         x = x.to(device)
 
         if need_resize:
+            # Normalize to maintain same num of objs
+            count = torch.sum(x, dim=(1,2,3))
             x = resize(x, (h, w))
+            res_count = torch.sum(x, dim=(1,2,3))
+            x = (count.view(-1,1,1,1) * x) / res_count.view(-1,1,1,1)
 
         return x
 
@@ -105,11 +109,15 @@ class CSRNet(nn.Module):
 
 # Testing code
 if __name__ == "__main__":
+    in_channels = 3
+    out_channels = 2
+    batch_size = 3
+    shape = (250, 250)
+    
     torch.hub.set_dir('../model_zoo/')
-    model = CSRNet()
-    input_img = torch.rand(2, 3, 256, 256)
-    bmask = torch.ones(1, 1, 256, 256)
-    density = model(input_img, bmask=bmask)
+    model = CSRNet(in_channels=in_channels, out_channels=out_channels)
+    input_img = torch.rand(batch_size, in_channels, shape[0], shape[1])
+    density = model(input_img)
 
     print(density.shape)
     print(density)
