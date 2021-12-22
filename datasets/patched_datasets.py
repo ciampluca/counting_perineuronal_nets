@@ -1,12 +1,10 @@
 import itertools
 from pathlib import Path
 
-import h5py
 import numpy as np
 import pandas as pd
 from prefetch_generator import BackgroundGenerator
 from skimage import io
-from skimage.color import rgb2gray
 from torch.utils.data import Dataset, ConcatDataset
 from tqdm import tqdm
 
@@ -89,6 +87,7 @@ class PatchedImageDataset(Dataset):
     def __init__(
         self,
         path,
+        as_gray=False,
         split='all',
         patch_size=640,
         stride=None,
@@ -104,6 +103,7 @@ class PatchedImageDataset(Dataset):
 
         Args:
             path (str): Path to TIFF or HDF5 file; if HDF5, data must be stored in the hdf5 path '/data'.
+            as_gray (bool, optional): Whether to load data as grayscale image; ignored for HDF5 data. Defaults to False.
             split (str, optional): Data split to return; available choices are 'left', 'right', or 'all'. Defaults to 'all'.
             patch_size (int, optional): Size of patches in which the data will be splitted; if None, the entire image is returned (no patch splitting). Defaults to 640.
             stride (int, optional): Stride for overlapping patches; None stands for non-overlapping patches. Defaults to None.
@@ -120,27 +120,25 @@ class PatchedImageDataset(Dataset):
         assert not(cache_targets and (random_offset != 0)), 'cannot enable cache_targets when random_offset != 0'
 
         self.path = Path(path)
+        self.as_gray = as_gray
         self.random_offset = random_offset
         self.target_builder = target_builder
         self.cache_targets = cache_targets
         self.transforms = transforms
         self.split = split
 
-        # hdf5 dataset
-        if self.path.suffix.lower() in ('.h5', '.hdf5'):
-            self.data = h5py.File(path, 'r', rdcc_nbytes=max_cache_mem)['data']
-        else:  # image format
-            image = io.imread(path).astype(np.float32)
-            self.data = rgb2gray(image) if image.ndim > 2 else image  # TODO add custom transform params
+        self.data = io.imread(path, as_gray=self.as_gray).astype(np.float32)
+        self.data *= 255. if self.as_gray else 1.  # gray values are stored between 0 and 1 by skimage's imread
 
         # patch size (height and width)
-        self.patch_hw = np.array((patch_size, patch_size), dtype=np.int64) if patch_size else np.array(self.data.shape)
+        self.patch_hw = (patch_size, patch_size) if patch_size else self.data.shape[:2]
+        self.patch_hw = np.array(self.patch_hw).astype(np.int64)
 
         # windows stride size (height and width)
         self.stride_hw = np.array((stride, stride), dtype=np.int64) if stride else self.patch_hw
 
         # size of the region from which we take patches
-        image_hw = np.array(self.data.shape)
+        image_hw = np.array(self.data.shape[:2])
         image_half_hw = image_hw // np.array((1, 2))  # half only width
         if split == 'all':
             self.region_hw = image_hw
@@ -201,7 +199,9 @@ class PatchedImageDataset(Dataset):
 
         # read patch
         patch = self.data[sy:ey, sx:ex] / np.array(255., dtype=np.float32)
-        patch_hw = np.array(patch.shape)  # before padding
+        if patch.ndim == 2:
+            patch = np.expand_dims(patch, axis=-1)  # add channels dimension
+        patch_hw = np.array(patch.shape[:2])  # before padding
 
         # patch coordinates in the region space (useful for reconstructing the full region)
         local_start_yx = start_yx - self.origin_yx
@@ -217,115 +217,17 @@ class PatchedImageDataset(Dataset):
 
         # pad patch (in case of patches in last col/rows)
         py, px = - patch_hw % self.patch_hw
-        pad = ((0, py), (0, px))
+        pad = ((0, py), (0, px), (0, 0))
 
         patch = np.pad(patch, pad)  # defaults to zero padding
 
         if self.target_builder:
             datum = self.target_builder.pack(patch, target, pad=pad)
         else:
-            datum = np.expand_dims(patch, axis=-1)  # add channels dimension
+            datum = patch
 
         patch_info = (patch_hw, local_start_yx, self.region_hw, self.image_id)
 
         return datum, patch_info
 
 
-class RandomAccessMultiImageDataset(ConcatDataset):
-
-    @classmethod
-    def from_paths_and_locs(cls, paths, locs, **kwargs):
-        return cls([RandomAccessImageDataset(p, l, **kwargs) for p, l in zip(paths, locs)])
-    
-    def __init__(self, datasets):
-        assert all(isinstance(d, RandomAccessImageDataset) for d in datasets), 'All datasets must be RandomAccessImageDataset.'
-        super().__init__(datasets)   
-    
-    def num_images(self):
-        return len(self.datasets)
-
-    def __str__(self):
-        s = f'{self.__class__.__name__}: ' \
-            f'{len(self.datasets)} image(s), ' \
-            f'{len(self)} patches'
-        return s
-
-
-class RandomAccessImageDataset(Dataset):
-    """ Dataset that provides random access to patches belonging to a single big image file
-        stored in TIFF or HDF5 format. """
-
-    def __init__(
-        self,
-        path,
-        locations,
-        patch_size=64,
-        transforms=None,
-        max_cache_mem=None
-    ):
-        """ Constructor.
-
-        Args:
-            path (str): Path to image or HDF5 file.
-            locations (ndarray): (N,2)-shaped array of YX location to extract patches from.
-            patch_size (int, optional): Size of the patch to be extracted. Defaults to 16.
-            transforms (callable, optional): A callable to apply transformations to patches. Defaults to None.
-            max_cache_mem (int, optional): Cache size in bytes (only for HDF5). Defaults to None.
-        """
-
-        self.path = Path(path)
-        self.locations = locations
-        self.patch_size = patch_size
-        self.transforms = transforms
-
-        # hdf5 dataset
-        if self.path.suffix.lower() in ('.h5', '.hdf5'):
-            self.data = h5py.File(path, 'r', rdcc_nbytes=max_cache_mem)['data']
-        else:  # image format
-            image = io.imread(path).astype(np.float32)
-            self.data = rgb2gray(image) if image.ndim > 2 else image  # TODO add custom transform params
-        
-        self.patch_hw = np.array((patch_size, patch_size), dtype=int)
-        self.half_hw = self.patch_hw // 2
-    
-    def __len__(self):
-        return len(self.locations)
-
-    def __getitem__(self, index):
-        y, x = self.locations[index]
-        hy, hx = self.half_hw
-        h, w = self.data.shape
-
-        sy, sx = max(y - hy, 0), max(x - hx, 0)
-        ey, ex = min(y + hy, h), min(x + hx, w)
-
-        patch = self.data[sy:ey, sx:ex]
-        patch_hw = np.array(patch.shape)
-        py, px = - patch_hw % self.patch_hw
-
-        if py or px:  # pad is needed
-            pad = ((py if sy == 0 else 0, py if ey == h else 0),
-                   (px if sx == 0 else 0, px if ex == w else 0))
-            patch = np.pad(patch, pad)
-        
-        if self.transforms:
-            patch = self.transforms(patch)
-        
-        return patch
-
-
-if __name__ == "__main__":
-    import torch
-    from torchvision.utils import make_grid, save_image
-    from torchvision.transforms import ToTensor
-
-    data_path = 'data/perineuronal-nets/test/'
-    image_name = '061_A1_s08_C1_crop.tif'
-    path = data_path + 'fullFrames/' + image_name
-    locations = pd.read_csv(data_path + 'annotations.csv', index_col=0).loc[image_name, ['Y', 'X']].values
-    dset = RandomAccessImageDataset(path, locations, transforms=ToTensor())
-
-    samples = torch.stack([dset[i] for i in range(64)])
-
-    img = make_grid(samples, padding=2, normalize=True)
-    save_image(img, 'pnn_samples.png')
