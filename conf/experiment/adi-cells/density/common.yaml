@@ -2,9 +2,9 @@
 
 defaults:
   - /common: default
-  - /common/data: nuclei-cells
+  - /common/data: adi-cells
   - /common/method: density
-  - /common/data/method-specific: nuclei-cells_density
+  - /common/data/method-specific: adi-cells_density
   - /common/model: csrnet
   - /common/optim: default
 
@@ -18,19 +18,13 @@ optim:
     loss:
         _target_: torch.nn.MSELoss
 
-    border_pad: 0      # must be divisible by 32
-    batch_size: 5
+    border_pad: 0     
+    batch_size: 4
     batch_accumulation: 1
 
     epochs: 1000
     log_every: 1
 
-data:
-    train:
-        root: "/mnt/datino/Cells/crc_histophenotypes_cells"
-    validation:
-      root: "/mnt/datino/Cells/crc_histophenotypes_cells"
-
 misc:
-    font_size: 15
-    text_pos: 30
+    font_size: 20
+    text_pos: 15

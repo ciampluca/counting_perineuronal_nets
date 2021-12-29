@@ -3,7 +3,7 @@
 train: &common
     target_: detection
     target_params:
-        side: 12  # side (in px) of the bounding box localizing a cell
+        side: 12  # side (in px) of the bounding box localizing a biological structure
 
 validation:
     <<: *common   # reinsert 'train' block content

@@ -9,6 +9,7 @@ data:
             _args_:
                 - - _target_: torchvision.transforms.ToTensor
                   - _target_: torchvision.transforms.RandomHorizontalFlip
+                  - _target_: torchvision.transforms.RandomVerticalFlip
     validation:
         transforms:
             _target_: torchvision.transforms.ToTensor

@@ -25,12 +25,6 @@ optim:
     epochs: 1000
     log_every: 1
 
-data:
-    train:
-        root: "/mnt/datino/Cells/VGG_cells"
-    validation:
-        root: "/mnt/datino/Cells/VGG_cells"
-
 misc:
     font_size: 8
     text_pos: 15

@@ -1,9 +1,0 @@
-# @package data
-
-train: &common
-    target_: detection
-    target_params:
-        side: 30  # side (in px) of the bounding box localizing a biological structure
-
-validation:
-    <<: *common   # reinsert 'train' block content
