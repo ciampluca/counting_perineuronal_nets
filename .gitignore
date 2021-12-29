@@ -130,8 +130,15 @@ dmypy.json
 
 
 /.idea/
+/tmp/
+/trash/
 /.vscode/
-*.png
+/.envrc
+/model_zoo/
+/runs*/
+/figures/
+*.zip
+*.png 
 *.jpg
 *.jpeg
 *.bmp
