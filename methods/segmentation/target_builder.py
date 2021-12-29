@@ -129,11 +129,15 @@ class SegmentationTargetBuilder:
 
     def pack(self, image, target, pad=None):
         segmentation, weights = target
+
+        segmentation = np.expand_dims(segmentation, axis=-1)
         segmentation = np.pad(segmentation, pad) if pad else segmentation
+
+        weights = np.expand_dims(weights, axis=-1)
         weights = np.pad(weights, pad) if pad else weights  # 0 in loss weight = don't care
 
         # stack in a unique RGB-like tensor, useful for applying data augmentation
-        return np.stack((image, segmentation, weights), axis=-1)
+        return np.concatenate((image, segmentation, weights), axis=-1)
 
     @classmethod
     def _find_ridges(cls, points, limits):
@@ -169,7 +173,7 @@ class SegmentationTargetBuilder:
 
                         start_point = vor.vertices[i]
                         if np.any(start_point < 0) or np.any(start_point >= limits):
-                            log.warn(f'Ignoring Voronoi vertex outside image limits.')
+                            log.warning(f'Ignoring Voronoi vertex outside image limits.')
                             continue
 
                         # check intersection with patch limits:

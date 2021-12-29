@@ -183,6 +183,7 @@ class DensityTargetBuilder:
         return density_map
 
     def pack(self, image, target, pad=None):
-        dmap = np.pad(target, pad) if pad else target
+        dmap = np.expand_dims(target, axis=-1)
+        dmap = np.pad(dmap, pad) if pad else dmap
         # stack in a unique RGB-like tensor, useful for applying data augmentation
-        return np.stack((image, dmap), axis=-1)
+        return np.concatenate((image, dmap), axis=-1)

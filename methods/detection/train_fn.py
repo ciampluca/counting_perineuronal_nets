@@ -30,16 +30,14 @@ def _save_image_with_boxes(image, image_id, det_boxes, gt_boxes, cfg):
     debug_dir = Path('output_debug')
     debug_dir.mkdir(exist_ok=True)
 
+    image = (255 * image.squeeze()).astype(np.uint8)
     pil_image = Image.fromarray(image).convert("RGB")
     draw = ImageDraw.Draw(pil_image)
 
     for box in gt_boxes:
-        box = [max(min(x, 499), 1) for x in box]  # clipping
-        print(cfg.misc.bb_outline_width)
         draw.rectangle(box, outline='red', width=cfg.misc.bb_outline_width)
 
     for box in det_boxes:
-        box = [max(min(x, 499), 1) for x in box]  # clipping
         draw.rectangle(box, outline='green', width=cfg.misc.bb_outline_width)
 
     # Add text to image
@@ -125,7 +123,7 @@ def validate(dataloader, model, device, epoch, cfg):
 
         # prepare data for validation
         images = torch.stack(images)
-        images = images.squeeze(dim=1).to(validation_device)
+        images = images.movedim(1, -1).to(validation_device)  # channel dim as last
         targets_bbs = [t['boxes'].to(validation_device) for t in targets]
         predictions_bbs = [p['boxes'].to(validation_device) for p in predictions]
         predictions_scores = [p['scores'].to(validation_device) for p in predictions]
@@ -135,13 +133,22 @@ def validate(dataloader, model, device, epoch, cfg):
 
     def collate_fn(image_info, image_patches):
         image_id, image_hw = image_info
-        image = torch.empty(image_hw, dtype=torch.float32, device=validation_device)
-        normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
+
+        image = None
+        normalization_map = None
         boxes = []
         scores = []
 
         # build full image with preds from patches
         for (patch_hw, start_yx), (patch, _, patch_boxes, patch_scores) in image_patches:
+
+            if image is None:
+                in_channels = patch.shape[-1]
+                in_hwc = image_hw + (in_channels,)
+
+                image = torch.empty(in_hwc, dtype=torch.float32, device=validation_device)
+                normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=validation_device)
+
             (y, x), (h, w) = start_yx, patch_hw
             image[y:y+h, x:x+w] = patch[:h, :w]
             normalization_map[y:y+h, x:x+w] += 1.0
@@ -311,20 +318,29 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
         inputs = list(i.to(device) for i in patches)
         predictions = model(inputs)
         # prepare data
-        patches = patches.squeeze(dim=1)
+        patches = patches.movedim(1, -1)  # channels as last dim
         boxes = [p['boxes'].to(device) for p in predictions]
         scores = [p['scores'].to(device) for p in predictions]
         return patches, boxes, scores
 
     def collate_fn(image_info, image_patches):
         image_id, image_hw = image_info
-        image = torch.empty(image_hw, dtype=torch.float32, device=device)
-        normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=device)
+        
+        image = None
+        normalization_map = None
         boxes = []
         scores = []
 
         # build full image with preds from patches
         for (patch_hw, start_yx), (patch, patch_boxes, patch_scores) in image_patches:
+
+            if image is None:
+                in_channels = patch.shape[-1]
+                in_hwc = image_hw + (in_channels,)
+
+                image = torch.empty(in_hwc, dtype=torch.float32, device=device)
+                normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=device)
+
             (y, x), (h, w) = start_yx, patch_hw
             image[y:y+h, x:x+w] = patch[:h, :w]
             normalization_map[y:y+h, x:x+w] += 1.0
@@ -430,7 +446,8 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
             gp = pd.concat(image_gt_and_preds, ignore_index=True)
             gp = gp[gp.thr == best_thr]
 
-            image = draw_groundtruth_and_predictions(image, gp, radius=int(cfg.data.validation.target_params.side/2), marker='square')
+            radius = cfg.data.validation.target_params.side // 2
+            image = draw_groundtruth_and_predictions(image, gp, radius=radius, marker='square')
             io.imsave(outdir / f'annot_{image_id}', image)
 
     all_metrics = pd.DataFrame(all_metrics)

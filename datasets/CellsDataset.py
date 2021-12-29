@@ -26,7 +26,9 @@ class CellsDataset(PatchedMultiImageDataset):
             num_samples=None,
             target_=None,
             target_params={},
+            cache_targets=False,
             transforms=None,
+            as_gray=False,
     ):
 
         target = target_  # XXX TOREMOVE for hydra bug
@@ -49,6 +51,7 @@ class CellsDataset(PatchedMultiImageDataset):
         self.num_test_samples = num_test_samples
 
         self.transforms = transforms
+        self.as_gray = as_gray
 
         self.target = target
         self.target_params = target_params
@@ -75,6 +78,8 @@ class CellsDataset(PatchedMultiImageDataset):
             annotations=self.annot,
             target_builder=self.target_builder,
             transforms=self.transforms,
+            cache_targets=cache_targets,
+            as_gray=as_gray,
         )
         datasets = [PatchedImageDataset(p, **data_params) for p in self.image_paths]
         super().__init__(datasets)
