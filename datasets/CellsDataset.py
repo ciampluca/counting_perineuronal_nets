@@ -114,15 +114,26 @@ if __name__ == "__main__":
     from skimage import io
     from tqdm import trange
     from methods.detection.transforms import RandomVerticalFlip, RandomHorizontalFlip, Compose
-    from PIL import ImageDraw
+    import torchvision.transforms
+    import os
 
-    # vgg-cells --> side: 12, mbm-cells --> side: 20
-    side = 20
+    # Check 2-fold cross-validation splits for nuclei dataset
+    fold1 = CellsDataset(root="data/nuclei-cells", split='train', split_seed=13, num_samples=(50, -50), max_num_train_val_sample=100)
+    fold2 = CellsDataset(root="data/nuclei-cells", split='validation', split_seed=13, num_samples=(-50, 50), max_num_train_val_sample=100)
+
+    f1 = set(map(str, fold1.image_paths))
+    f2 = set(map(str, fold2.image_paths))
+    assert f1 == f2
+
+    # Check data loading for detection
+    # Radius --> MBM=10, VGG=6, BCD=15, ADIPOCYTE=5
+    data_path="data/mbm-cells"
+    radius = 10
     transforms = Compose([
         RandomHorizontalFlip(),
         RandomVerticalFlip(),
     ])
-    dataset = CellsDataset(target_='detection', target_params={'side': side}, transforms=None, root="/home/luca/luca-cnr/mnt/datino/MBM_cells")
+    dataset = CellsDataset(target_='detection', target_params={'side': radius*2}, transforms=transforms, root=data_path)
     print(dataset)
 
     for i in trange(0, 200, 5):
@@ -130,23 +141,24 @@ if __name__ == "__main__":
         image, boxes = datum
 
         image = (255 * image.squeeze()).astype(np.uint8)
-        img_draw = ImageDraw.Draw(image)
         centers = (boxes[:, :2] + boxes[:, 2:]) / 2
+        image = draw_points(image, centers, radius=int(radius))
+        io.imsave(os.path.dirname(__file__) + '/trash/debug/annot_' + image_id, image)
+        
+        break
 
-        image = draw_points(image, centers, radius=int(side/2))
-
-        io.imsave('trash/debug/annot' + image_id, image)
-
-    dataset = CellsDataset(target_='segmentation', root="data/vgg-cells",
-                              target_params={
-                                'radius': 5,         # radius (in px) of the dot placed on a cell in the segmentation map
-                                'radius_ignore': 6,  # radius (in px) of the 'ignore' zone surrounding the cell
-                                'v_bal': 0.1,         # weight of the loss of bg pixels
-                                'sigma_bal': 3,       # gaussian stddev (in px) to blur loss weights of bg pixels near fg pixels
-                                'sep_width': 1,       # width (in px) of bg ridge separating two overlapping foreground cells
-                                'sigma_sep': 3,       # gaussian stddev (in px) to blur loss weights of bg pixels near bg ridge pixels
-                                'lambda_sep': 50  
-                              })
+    # Check data loading for segmentation
+    data_path="data/vgg-cells"
+    target_params = {
+                        'radius': 5,         # radius (in px) of the dot placed on a cell in the segmentation map
+                        'radius_ignore': 6,  # radius (in px) of the 'ignore' zone surrounding the cell
+                        'v_bal': 0.1,         # weight of the loss of bg pixels
+                        'sigma_bal': 3,       # gaussian stddev (in px) to blur loss weights of bg pixels near fg pixels
+                        'sep_width': 1,       # width (in px) of bg ridge separating two overlapping foreground cells
+                        'sigma_sep': 3,       # gaussian stddev (in px) to blur loss weights of bg pixels near bg ridge pixels
+                        'lambda_sep': 50  
+                    }
+    dataset = CellsDataset(target_='segmentation', root=data_path, target_params=target_params)
     datum, patch_hw, start_yx, image_hw, image_name = dataset[0]
 
     for i in trange(0, 200, 5):
@@ -156,8 +168,32 @@ if __name__ == "__main__":
 
         segmentation_map = (255 * normalize_map(segmentation_map)).astype(np.uint8)
         weights_map = (255 * normalize_map(weights_map)).astype(np.uint8)
-        io.imsave('debug/segm' + image_id, segmentation_map)
-        io.imsave('debug/segm_weights' + image_id, weights_map)
+        io.imsave(os.path.dirname(__file__) + '/trash/debug/segm_' + image_id, segmentation_map)
+        io.imsave(os.path.dirname(__file__) + '/trash/debug/segm_weights_' + image_id, weights_map)
 
+        break
+    
+    # Check data loading for density
+    # Radius --> MBM=10, VGG=6, BCD=15, ADIPOCYTE=5
+    data_path="data/bcd-cells/train"
+    radius = 15
+    transforms = torchvision.transforms.Compose([
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.RandomHorizontalFlip(),
+        torchvision.transforms.RandomVerticalFlip(),
+    ])
+    dataset = CellsDataset(target_='density', target_params={'k_size': 51, 'sigma': radius}, transforms=transforms, root=data_path)
+    print(dataset)
+    
+    for i in trange(0, 200, 5):
+        datum, patch_hw, start_yx, image_hw, image_id = dataset[i]
+        image, dmap = datum.split(1, dim=0)
+        image, dmap = image.cpu().detach().numpy(), dmap.cpu().detach().numpy()
+
+        image = (255 * image.squeeze()).astype(np.uint8)
+        io.imsave(os.path.dirname(__file__) + '/trash/debug/image_den_' + image_id, image)
+        dmap = (255 * normalize_map(dmap.squeeze())).astype(np.uint8)
+        io.imsave(os.path.dirname(__file__) + '/trash/debug/den_' + image_id, dmap)
+    
         break
 

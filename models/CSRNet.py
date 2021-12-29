@@ -11,7 +11,6 @@ class CSRNet(nn.Module):
     """
     Congested Scene Recognition Network (CSRNet)
     Ref. Y. Li et al. 'CSRNet: Dilated Convolutional Neural Networks for Understanding the Highly Congested Scenes'
-    Code based on: https://github.com/CommissarMa/CSRNet-pytorch
     """
 
     def __init__(

@@ -35,9 +35,11 @@ def _save_image_with_boxes(image, image_id, det_boxes, gt_boxes, cfg):
     draw = ImageDraw.Draw(pil_image)
 
     for box in gt_boxes:
+        box = [max(min(x, 499), 1) for x in box]  # clipping
         draw.rectangle(box, outline='red', width=cfg.misc.bb_outline_width)
 
     for box in det_boxes:
+        box = [max(min(x, 499), 1) for x in box]  # clipping
         draw.rectangle(box, outline='green', width=cfg.misc.bb_outline_width)
 
     # Add text to image
