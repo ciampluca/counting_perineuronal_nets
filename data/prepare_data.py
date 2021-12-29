@@ -4,7 +4,6 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 from skimage import io
-import scipy.io
 import h5py
 
 DATA_NAMES = ['VGG', 'MBM', 'BCD', 'Adipocyte']
@@ -26,6 +25,8 @@ def create_df_ann_from_imgs(data_path, image_paths, data_name):
             y, x = np.where((label_map == 255))
         elif data_name == 'MBM':
             y, x = np.where((label_map == 255))
+        elif data_name == 'DCC':
+            y, x = np.where((label_map < 128))
         elif data_name == 'Adipocyte':
             label_map = label_map[:, :, 0]
             y, x = np.where((label_map == 254))
@@ -84,7 +85,7 @@ def main(args):
     data_path = Path(__file__).resolve().parent /  Path(args.data_path)
     
     # VGG, MBM
-    if args.data_name == 'VGG' or args.data_name == 'MBM':
+    if args.data_name == 'VGG' or args.data_name == 'MBM' or args.data_name == 'DCC':
         image_paths = data_path.glob('*cell.*')
         df_ann = create_df_ann_from_imgs(data_path, image_paths, args.data_name)
         df_ann.to_csv(data_path / 'annotations.csv', encoding='utf-8')

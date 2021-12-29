@@ -13,15 +13,15 @@ from methods.density.target_builder import DensityTargetBuilder
 
 
 class CellsDataset(PatchedMultiImageDataset):
-    """ Dataset class implementation for the following cells datasets: VGGCells, MBMCells, AdipocyteCells
+    """ Dataset class implementation for the following cells datasets: VGG, MBM, ADI, BCD
     """
 
     def __init__(
             self,
             root='data/vgg-cells',
             split='all',
-            max_num_train_val_sample=30,   # should be 100 for VGGCells and 30 for MBMCells
-            num_test_samples=10,    # should be 100 for VGGCells and 10 for MBMCells
+            max_num_train_val_sample=30,   
+            num_test_samples=10,
             split_seed=None,
             num_samples=None,
             target_=None,
@@ -65,8 +65,9 @@ class CellsDataset(PatchedMultiImageDataset):
         # get list of images in the given split
         self.image_paths = self._get_images_in_split()
 
-        # create pandas dataframe containing dot annotations (to be compliant with other implementation)
-        self.annot = self._load_annotations()
+        # load pandas dataframe containing dot annotations
+        self.annot = pd.read_csv(Path(self.root / 'annotations.csv'))
+        self.annot = self.annot.set_index('imgName')
 
         data_params = dict(
             split='all',
@@ -99,25 +100,9 @@ class CellsDataset(PatchedMultiImageDataset):
         else:  # elif self.split == 'test':
             return image_paths[n_train_samples + n_val_samples:n_train_samples + n_val_samples + self.num_test_samples]
 
-    def _load_annotations(self):
-
-        def _load_one_annotation(image_name):
-            image_id = image_name.name
-            label_map_path = self.root / image_id.replace('cell', 'dots')
-            label_map = io.imread(label_map_path)
-            if label_map.ndim == 3:
-                label_map = label_map[:, :, 0]
-            y, x = np.where((label_map == 255) | (label_map == 254))
-            annot = pd.DataFrame({'Y': y, 'X': x})
-            annot['imgName'] = image_id
-            return annot
-
-        annot = map(_load_one_annotation, self.image_paths)
-        annot = pd.concat(annot, ignore_index=True)
-        annot = annot.set_index('imgName')
-        return annot
 
 
+# Testo Code
 if __name__ == "__main__":
     from methods.density.utils import normalize_map
     from methods.points.utils import draw_points
