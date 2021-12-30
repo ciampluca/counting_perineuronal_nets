@@ -1,0 +1,9 @@
+# @package _global_
+
+defaults:
+ - bcd-cells/segmentation/common
+
+data:
+    train: &common
+    validation:
+        <<: *common

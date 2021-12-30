@@ -196,9 +196,9 @@ if __name__ == "__main__":
     ######################################
     # Sigma --> MBM=10, VGG=5, BCD=15, ADIPOCYTE=5, BCD=15
     # K_Size --> MBM=51, VGG=41, BCD=, ADIPOCYTE=41, BCD=81
-    data_path="data/mbm-cells/train"
-    sigma = 15
-    k_size = 81
+    data_path="data/mbm-cells"
+    sigma = 10
+    k_size = 51
     target_params = {
         'k_size': k_size,
         'sigma': sigma,
@@ -213,7 +213,7 @@ if __name__ == "__main__":
     dataset = CellsDataset(target_='density', target_params=target_params, transforms=transforms, root=data_path, as_gray=as_gray)
     print(dataset)
     
-    for i in trange(0, 40, 5):
+    for i in trange(0, 40, 1):
         datum, patch_hw, start_yx, image_hw, image_id = dataset[i]
         n_channels = datum.shape[0]
         image, dmap = datum.split((n_channels - 1, 1), dim=0)

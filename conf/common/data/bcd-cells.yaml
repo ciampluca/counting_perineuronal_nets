@@ -1,0 +1,18 @@
+# @package data
+
+data:
+    train: &common
+        _target_: datasets.CellsDataset
+        root: ${hydra:runtime.cwd}/data/bcd-cells/train
+        split: all
+        as_gray: false
+        cache_targets: true
+
+    validation:
+        root: ${hydra:runtime.cwd}/data/bcd-cells/validation
+        split: all
+        <<: *common   # reinsert 'train' block content
+
+model:
+    module:
+        in_channels: 3

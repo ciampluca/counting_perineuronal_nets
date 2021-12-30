@@ -2,9 +2,9 @@
 
 defaults:
   - /common: default
-  - /common/data: mbm-cells
+  - /common/data: bcd-cells
   - /common/method: detection
-  - /common/data/method-specific: mbm-cells_detection
+  - /common/data/method-specific: bcd-cells_detection
   - /common/model: fasterrcnn
   - /common/optim: default
 

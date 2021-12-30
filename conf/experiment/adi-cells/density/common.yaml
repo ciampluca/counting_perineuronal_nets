@@ -25,6 +25,8 @@ optim:
     epochs: 1000
     log_every: 1
 
+    val_device: cuda
+
 misc:
     font_size: 20
     text_pos: 15

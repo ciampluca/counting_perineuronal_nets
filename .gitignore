@@ -142,3 +142,6 @@ dmypy.json
 *.jpg
 *.jpeg
 *.bmp
+*.tif
+*.tiff
+*.h5

@@ -1,0 +1,9 @@
+# @package _global_
+
+defaults:
+ - bcd-cells/detection/common
+
+data:
+    train: &common
+    validation:
+        <<: *common   # reinsert 'train' block content

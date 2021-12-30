@@ -2,9 +2,9 @@
 
 defaults:
   - /common: default
-  - /common/data: vgg-cells
+  - /common/data: bcd-cells
   - /common/method: density
-  - /common/data/method-specific: vgg-cells_density
+  - /common/data/method-specific: bcd-cells_density
   - /common/model: csrnet
   - /common/optim: default
 
@@ -18,8 +18,8 @@ optim:
     loss:
         _target_: torch.nn.MSELoss
 
-    border_pad: 0      # must be divisible by 32
-    batch_size: 8
+    border_pad: 0     
+    batch_size: 4
     batch_accumulation: 1
 
     epochs: 1000
@@ -28,5 +28,5 @@ optim:
     val_device: cuda
 
 misc:
-    font_size: 8
+    font_size: 20
     text_pos: 15
