@@ -1,16 +1,22 @@
-# @package data
+# @package _global_
 
-train: &common
-    _target_: datasets.CellsDataset
-    root: ${hydra:runtime.cwd}/data/vgg-cells
-    split: train
-    split_seed: 87
-    num_samples:
-        - 50  # num of train images
-        - 50  # num of validation images
-    max_num_train_val_sample: 100
-    num_test_samples: 100
-  
-validation:
-    split: validation
-    <<: *common   # reinsert 'train' block content
+data:
+    train: &common
+        _target_: datasets.CellsDataset
+        root: ${hydra:runtime.cwd}/data/vgg-cells
+        split: train
+        split_seed: 87
+        num_samples:
+            - 50  # num of train images
+            - 50  # num of validation images
+        max_num_train_val_sample: 100
+        num_test_samples: 100
+        as_gray: true
+
+    validation:
+        split: validation
+        <<: *common   # reinsert 'train' block content
+
+model:
+    module:
+        in_channels: 1

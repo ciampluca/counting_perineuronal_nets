@@ -88,7 +88,7 @@ class CellsDataset(PatchedMultiImageDataset):
         return len(self.image_paths)
 
     def _get_images_in_split(self):
-        image_paths = self.root.glob('*cell.*')
+        image_paths = self.root.glob('imgs/*cell.*')
         image_paths = sorted(image_paths)
 
         if self.split == 'all':
@@ -107,93 +107,122 @@ class CellsDataset(PatchedMultiImageDataset):
 
 
 
-# Testo Code
+# Testing Code
 if __name__ == "__main__":
     from methods.density.utils import normalize_map
     from methods.points.utils import draw_points
     from skimage import io
     from tqdm import trange
-    from methods.detection.transforms import RandomVerticalFlip, RandomHorizontalFlip, Compose
+    from methods.detection.transforms import RandomVerticalFlip, RandomHorizontalFlip, Compose, ToTensor
     import torchvision.transforms
     import os
 
-    # Check 2-fold cross-validation splits for nuclei dataset
-    fold1 = CellsDataset(root="data/nuclei-cells", split='train', split_seed=13, num_samples=(50, -50), max_num_train_val_sample=100)
-    fold2 = CellsDataset(root="data/nuclei-cells", split='validation', split_seed=13, num_samples=(-50, 50), max_num_train_val_sample=100)
-
-    f1 = set(map(str, fold1.image_paths))
-    f2 = set(map(str, fold2.image_paths))
-    assert f1 == f2
-
     # Check data loading for detection
-    # Radius --> MBM=10, VGG=6, BCD=15, ADIPOCYTE=5
+    ######################################
+    # Side --> MBM=20, VGG=12, BCD=30, ADIPOCYTE=12
     data_path="data/mbm-cells"
-    radius = 10
+    side = 20
+    target_params = {
+        'side': side,
+    }
+    as_gray = False
     transforms = Compose([
         RandomHorizontalFlip(),
         RandomVerticalFlip(),
+        ToTensor(),
     ])
-    dataset = CellsDataset(target_='detection', target_params={'side': radius*2}, transforms=transforms, root=data_path)
+    dataset = CellsDataset(target_='detection', target_params=target_params, transforms=transforms, root=data_path, as_gray=as_gray)
     print(dataset)
 
-    for i in trange(0, 200, 5):
+    for i in trange(0, 40, 2):
         datum, patch_hw, start_yx, image_hw, image_id = dataset[i]
         image, boxes = datum
+        image = image.cpu().detach().permute(1, 2, 0).numpy()
 
-        image = (255 * image.squeeze()).astype(np.uint8)
+        image = (255 * image).astype(np.uint8)
         centers = (boxes[:, :2] + boxes[:, 2:]) / 2
-        image = draw_points(image, centers, radius=int(radius))
+        image = draw_points(image, centers, radius=int(side/2))
         io.imsave(os.path.dirname(__file__) + '/trash/debug/annot_' + image_id, image)
         
-        break
+        # break
 
     # Check data loading for segmentation
-    data_path="data/vgg-cells"
+    ######################################
+    # Radius --> MBM=12, VGG=5, BCD=15, ADIPOCYTE=5
+    # Radius_Ignore --> MBM=15, VGG=6, BCD=18, ADIPOCYTE=6
+    # Sigma_Bal --> MBM=5, VGG=3, BCD=7, ADIPOCYTE=3
+    # Sep_Width --> MBM=1, VGG=1, BCD=2, ADIPOCYTE=1
+    # Sigma_Sep --> MBM=4, VGG=3, BCD=8, ADIPOCYTE=3
+    data_path="data/mbm-cells"
+    radius = 12
+    radius_ignore = 15
+    sigma_bal = 5
+    sep_width = 1
+    sigma_sep = 4
     target_params = {
-                        'radius': 5,         # radius (in px) of the dot placed on a cell in the segmentation map
-                        'radius_ignore': 6,  # radius (in px) of the 'ignore' zone surrounding the cell
+                        'radius': radius,         # radius (in px) of the dot placed on a cell in the segmentation map
+                        'radius_ignore': radius_ignore,  # radius (in px) of the 'ignore' zone surrounding the cell
                         'v_bal': 0.1,         # weight of the loss of bg pixels
-                        'sigma_bal': 3,       # gaussian stddev (in px) to blur loss weights of bg pixels near fg pixels
-                        'sep_width': 1,       # width (in px) of bg ridge separating two overlapping foreground cells
-                        'sigma_sep': 3,       # gaussian stddev (in px) to blur loss weights of bg pixels near bg ridge pixels
+                        'sigma_bal': sigma_bal,       # gaussian stddev (in px) to blur loss weights of bg pixels near fg pixels
+                        'sep_width': sep_width,       # width (in px) of bg ridge separating two overlapping foreground cells
+                        'sigma_sep': sigma_sep,       # gaussian stddev (in px) to blur loss weights of bg pixels near bg ridge pixels
                         'lambda_sep': 50  
                     }
-    dataset = CellsDataset(target_='segmentation', root=data_path, target_params=target_params)
-    datum, patch_hw, start_yx, image_hw, image_name = dataset[0]
-
-    for i in trange(0, 200, 5):
-        datum, patch_hw, start_yx, image_hw, image_id = dataset[i]
-        segmentation_map = datum[:, :, 1]
-        weights_map = datum[:, :, 2]
-
-        segmentation_map = (255 * normalize_map(segmentation_map)).astype(np.uint8)
-        weights_map = (255 * normalize_map(weights_map)).astype(np.uint8)
-        io.imsave(os.path.dirname(__file__) + '/trash/debug/segm_' + image_id, segmentation_map)
-        io.imsave(os.path.dirname(__file__) + '/trash/debug/segm_weights_' + image_id, weights_map)
-
-        break
-    
-    # Check data loading for density
-    # Radius --> MBM=10, VGG=6, BCD=15, ADIPOCYTE=5
-    data_path="data/bcd-cells/train"
-    radius = 15
+    as_gray = False
     transforms = torchvision.transforms.Compose([
         torchvision.transforms.ToTensor(),
         torchvision.transforms.RandomHorizontalFlip(),
         torchvision.transforms.RandomVerticalFlip(),
     ])
-    dataset = CellsDataset(target_='density', target_params={'k_size': 51, 'sigma': radius}, transforms=transforms, root=data_path)
+    dataset = CellsDataset(target_='segmentation', root=data_path, target_params=target_params, transforms=transforms, as_gray=as_gray)
+    print(dataset)
+
+    for i in trange(0, 40, 2):
+        datum, patch_hw, start_yx, image_hw, image_id = dataset[i]
+        n_channels = datum.shape[0]
+        image, segmentation_map, weights_map = datum.split((n_channels - 2, 1, 1), dim=0)
+        image, segmentation_map, weights_map = image.cpu().detach().permute(1, 2, 0).numpy(), segmentation_map.cpu().detach().permute(1, 2, 0).numpy(), weights_map.cpu().detach().permute(1, 2, 0).numpy()
+
+        image = (255 * image).astype(np.uint8)
+        io.imsave(os.path.dirname(__file__) + '/trash/debug/image_segm_' + image_id, image)
+        segmentation_map = (255 * normalize_map(segmentation_map)).astype(np.uint8)
+        weights_map = (255 * normalize_map(weights_map)).astype(np.uint8)
+        io.imsave(os.path.dirname(__file__) + '/trash/debug/segm_' + image_id, segmentation_map)
+        io.imsave(os.path.dirname(__file__) + '/trash/debug/segm_weights_' + image_id, weights_map)
+
+        # break
+    
+    # Check data loading for density
+    ######################################
+    # Sigma --> MBM=10, VGG=5, BCD=15, ADIPOCYTE=5, BCD=15
+    # K_Size --> MBM=51, VGG=41, BCD=, ADIPOCYTE=41, BCD=81
+    data_path="data/mbm-cells/train"
+    sigma = 15
+    k_size = 81
+    target_params = {
+        'k_size': k_size,
+        'sigma': sigma,
+        'method': 'reflect',
+    }
+    as_gray = False
+    transforms = torchvision.transforms.Compose([
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.RandomHorizontalFlip(),
+        torchvision.transforms.RandomVerticalFlip(),
+    ])
+    dataset = CellsDataset(target_='density', target_params=target_params, transforms=transforms, root=data_path, as_gray=as_gray)
     print(dataset)
     
-    for i in trange(0, 200, 5):
+    for i in trange(0, 40, 5):
         datum, patch_hw, start_yx, image_hw, image_id = dataset[i]
-        image, dmap = datum.split(1, dim=0)
-        image, dmap = image.cpu().detach().numpy(), dmap.cpu().detach().numpy()
+        n_channels = datum.shape[0]
+        image, dmap = datum.split((n_channels - 1, 1), dim=0)
+        image, dmap = image.cpu().detach().permute(1, 2, 0).numpy(), dmap.cpu().detach().permute(1, 2, 0).numpy()
 
-        image = (255 * image.squeeze()).astype(np.uint8)
+        image = (255 * image).astype(np.uint8)
         io.imsave(os.path.dirname(__file__) + '/trash/debug/image_den_' + image_id, image)
         dmap = (255 * normalize_map(dmap.squeeze())).astype(np.uint8)
         io.imsave(os.path.dirname(__file__) + '/trash/debug/den_' + image_id, dmap)
     
-        break
+        # break
 
