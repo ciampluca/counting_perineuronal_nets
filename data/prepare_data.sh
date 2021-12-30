@@ -65,6 +65,7 @@ if [[ ! -d "${ADIPOCYTE_DIR}" ]]; then
     echo "Downloading and extracting: ADIPOCYTE"
     wget --no-clobber "${ADIPOCYTE_URL}" -O adipocyte-cells.zip
     unzip adipocyte-cells.zip -d "${ADIPOCYTE_DIR}"  && rm adipocyte-cells.zip
+    chmod -R 0755 "${ADIPOCYTE_DIR}"
 
     echo "Preparing: ADIPOCYTE"
     python prepare_data.py --data-name 'Adipocyte' --data-path "${ADIPOCYTE_DIR}"
