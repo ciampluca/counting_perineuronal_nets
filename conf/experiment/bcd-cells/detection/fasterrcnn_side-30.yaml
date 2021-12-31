@@ -1,0 +1,11 @@
+# @package _global_
+
+defaults:
+ - bcd-cells/detection/common
+
+data:
+    train: &common
+        target_params:
+            side: 30  
+    validation:
+        <<: *common   # reinsert 'train' block content

@@ -5,5 +5,7 @@ defaults:
 
 data:
     train: &common
+        target_params:
+            side: 32  
     validation:
         <<: *common   # reinsert 'train' block content

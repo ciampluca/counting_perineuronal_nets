@@ -6,6 +6,8 @@ defaults:
 data:
     train: &common
         target_params:
+            k_size: 91  
+            sigma: 16 
             method: reflect
     validation:
         <<: *common
