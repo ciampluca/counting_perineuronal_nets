@@ -32,7 +32,12 @@ EXPS=(
 # Train & Evaluate
 for EXP in ${EXPS[@]}; do
     python train.py experiment=$EXP
-    python evaluate.py runs/experiment=$EXP
+    if  [[ $EXP == bcd* ]]
+    then
+        python evaluate.py runs/experiment=$EXP --test-split all --data-root data/bcd-cells/test
+    else
+        python evaluate.py runs/experiment=$EXP
+    fi
 done
 
 # -----------------------------
