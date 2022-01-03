@@ -6,3 +6,6 @@ defaults:
 name: UNet
 module:
   _target_: models.UNet
+  padding: True
+  batch_norm: True
+  last_bias: True 

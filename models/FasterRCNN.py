@@ -16,7 +16,7 @@ MODEL_URLS = {
 class FasterRCNNWrapper(FasterRCNNTorch):
     def __init__(self,
         in_channels=3,
-        num_classes=1,
+        out_channels=1,
         backbone='resnet50',
         backbone_pretrained=False,
         model_pretrained=False,
@@ -30,8 +30,8 @@ class FasterRCNNWrapper(FasterRCNNTorch):
     
         assert backbone in ("resnet50", "resnet101"), f"Backbone not supported: {backbone}"
 
-        # replace the classifier with a new one, that has num_classes which is user-defined
-        num_classes += 1    # num classes + background
+        # replace the classifier with a new one, that has out_channels (num_classes) which is user-defined
+        out_channels += 1    # num classes + background
 
         if skip_weights_loading:
             model_pretrained = False
@@ -70,4 +70,4 @@ class FasterRCNNWrapper(FasterRCNNTorch):
         # get number of input features for the classifier
         in_features = self.roi_heads.box_predictor.cls_score.in_features
         # replace the pre-trained head with a new one
-        self.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
+        self.roi_heads.box_predictor = FastRCNNPredictor(in_features, out_channels)

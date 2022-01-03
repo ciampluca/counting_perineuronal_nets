@@ -34,8 +34,8 @@ optim:
     val_device: cuda
 
 misc:
-    font_size: 20
-    text_pos: 15
+    font_size: 5
+    text_pos: 5
 
 
 

@@ -20,3 +20,7 @@ optim:
   val_device: cuda
   val_freq: 5
   log_every: 1
+
+misc:
+    font_size: 5
+    text_pos: 5
