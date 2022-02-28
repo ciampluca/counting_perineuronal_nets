@@ -27,6 +27,8 @@ optim:
 
     val_device: cuda
 
+    num_workers: 0
+
 misc:
     font_size: 20
     text_pos: 15

@@ -3,6 +3,8 @@
 defaults:
  - bcd-cells/segmentation/common
 
+seed: 11
+
 data:
     train: &common
         target_params:

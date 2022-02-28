@@ -3,6 +3,9 @@
 defaults:
  - bcd-cells/detection/common
 
+#seed: 13
+seed: 15
+
 data:
     train: &common
         target_params:

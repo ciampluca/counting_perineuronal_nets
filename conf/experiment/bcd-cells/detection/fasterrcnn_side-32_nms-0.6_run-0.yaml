@@ -3,9 +3,11 @@
 defaults:
  - bcd-cells/detection/common
 
+seed: 10
+
 data:
     train: &common
         target_params:
-            side: 30  
+            side: 32  
     validation:
         <<: *common   # reinsert 'train' block content
