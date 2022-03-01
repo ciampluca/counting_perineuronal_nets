@@ -2,9 +2,7 @@ import collections
 from pathlib import Path
 import random
 
-import numpy as np
 import pandas as pd
-from skimage import io
 
 from datasets.patched_datasets import PatchedImageDataset, PatchedMultiImageDataset
 from methods.segmentation.target_builder import SegmentationTargetBuilder
@@ -14,15 +12,15 @@ from methods.countmap.target_builder import CountmapTargetBuilder
 
 
 class CellsDataset(PatchedMultiImageDataset):
-    """ Dataset class implementation for the following cells datasets: VGGCells, MBMCells, AdipocyteCells
+    """ Dataset class implementation for the following cells datasets: VGG, MBM, ADI, BCD
     """
 
     def __init__(
             self,
             root='data/vgg-cells',
             split='all',
-            max_num_train_val_sample=30,   # should be 100 for VGGCells and 30 for MBMCells
-            num_test_samples=10,    # should be 100 for VGGCells and 10 for MBMCells
+            max_num_train_val_sample=30,   
+            num_test_samples=10,
             split_seed=None,
             num_samples=None,
             target_=None,
@@ -41,13 +39,13 @@ class CellsDataset(PatchedMultiImageDataset):
                     num_samples is not None)), "You must supply split_seed and num_samples when split != 'all'"
         assert split == 'all' or (isinstance(num_samples, collections.abc.Sequence) and len(
             num_samples) == 2), 'num_samples must be a tuple of two ints'
-        assert split == 'all' or sum(abs(n) for n in num_samples) <= max_num_train_val_sample, \
+        assert split == 'all' or sum(num_samples) <= max_num_train_val_sample, \
             f'n_train + n_val samples must be <= {max_num_train_val_sample}'
 
         self.root = Path(root)
 
         self.split = split
-        self.split_seed = split_seed
+        self.split_seed = None
         self.num_samples = num_samples
         self.num_test_samples = num_test_samples
 
@@ -102,18 +100,9 @@ class CellsDataset(PatchedMultiImageDataset):
 
         n_train, n_val = self.num_samples
         if self.split == 'train':
-            start, end = (None, n_train) if n_train >= 0 else (n_train, None)
-
+            return image_paths[:n_train]
         elif self.split == 'validation':
-            if n_train >= 0 and n_val >= 0:
-                start, end = n_train, n_train + n_val
-            elif n_train >= 0 and n_val < 0:
-                start, end = n_val, None
-            elif n_train < 0 and n_val >= 0:
-                start, end = None, n_val
-            else:  # n_train_samples < 0 and n_val_samples < 0:
-                start, end = n_train + n_val, n_train
-
+            return image_paths[n_train:n_train + n_val]
         else:  # elif self.split == 'test':
             if n_train >= 0 and n_val >= 0:
                 start, end = n_train + n_val, n_train + n_val + self.num_test_samples

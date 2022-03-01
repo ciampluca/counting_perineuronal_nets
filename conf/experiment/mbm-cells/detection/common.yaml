@@ -31,9 +31,11 @@ optim:
     batch_accumulation: 1
     log_every: 2
 
+    val_device: cuda
+
 misc:
-    font_size: 15
-    text_pos: 30
+    font_size: 20
+    text_pos: 15
 
 
 

@@ -1,0 +1,13 @@
+# @package _global_
+
+defaults:
+ - adi-cells/segmentation/common
+
+data:
+    train: &common
+        split_seed: 67
+        num_samples:
+            - 10  # num of train images
+            - 10  # num of validation images
+    validation:
+        <<: *common

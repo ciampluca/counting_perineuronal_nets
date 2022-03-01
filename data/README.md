@@ -4,9 +4,6 @@
 # be sure to be in this directory
 cd data/
 
-# downloads and extracts VGG, MBM, and PNN datasets
-./download_data.sh
-
-# converts TIFFs to HDF5 for the PNN dataset
-python convert_tifs_to_hdf5.py
+# downloads, extracts and prepares VGG, MBM, ADI, BCD and PNN datasets
+./prepare_data.sh
 ```

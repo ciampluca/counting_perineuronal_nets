@@ -18,14 +18,15 @@ optim:
     loss:
         _target_: torch.nn.MSELoss
 
-    border_pad: 0      # must be divisible by 32
-    batch_size: 5
+    border_pad: 0     
+    batch_size: 4
     batch_accumulation: 1
 
     epochs: 1000
     log_every: 1
 
+    val_device: cuda
+
 misc:
     font_size: 20
     text_pos: 15
-

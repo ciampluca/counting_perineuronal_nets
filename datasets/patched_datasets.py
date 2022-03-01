@@ -126,6 +126,7 @@ class PatchedImageDataset(Dataset):
         self.target_builder = target_builder
         self.cache_targets = cache_targets
         self.transforms = transforms
+        self.as_gray = as_gray
         self.split = split
 
         # hdf5 dataset

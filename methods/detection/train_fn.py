@@ -153,7 +153,7 @@ def validate(dataloader, model, device, epoch, cfg):
             image[y:y+h, x:x+w] = patch[:h, :w]
             normalization_map[y:y+h, x:x+w] += 1.0
             if patch_boxes.nelement() != 0:
-                patch_boxes += torch.as_tensor([x, y, x, y])
+                patch_boxes += torch.as_tensor([x, y, x, y], device=validation_device)
                 boxes.append(patch_boxes)
                 scores.append(patch_scores)
 
@@ -162,7 +162,7 @@ def validate(dataloader, model, device, epoch, cfg):
 
         # progress.set_description('EVAL (cleaning)')
         # remove boxes with center outside the image     
-        image_wh = torch.tensor(image_hw[::-1])
+        image_wh = torch.tensor(image_hw[::-1], device=validation_device)
         boxes_center = (boxes[:, :2] + boxes[:, 2:]) / 2
         boxes_center = boxes_center.round().long()
         keep = (boxes_center < image_wh).all(axis=1)
@@ -173,8 +173,8 @@ def validate(dataloader, model, device, epoch, cfg):
 
         # clip boxes to image limits
         ih, iw = image_hw
-        l = torch.tensor([[0, 0, 0, 0]])
-        u = torch.tensor([[iw, ih, iw, ih]])   
+        l = torch.tensor([[0, 0, 0, 0]], device=validation_device)
+        u = torch.tensor([[iw, ih, iw, ih]], device=validation_device)   
         boxes = torch.max(l, torch.min(boxes, u))
 
         # filter boxes in the overlapped areas using nms

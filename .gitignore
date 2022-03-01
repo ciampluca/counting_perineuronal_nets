@@ -140,4 +140,10 @@ datasets/trash/
 *.zip
 *.png
 *.pkl
+*.jpg
+*.jpeg
+*.bmp
+*.tif
+*.tiff
+*.h5
 .*

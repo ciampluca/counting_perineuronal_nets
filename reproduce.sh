@@ -8,13 +8,21 @@ set -e
 
 EXPS=(
     # VGG CELLS
-    vgg-cells/segmentation/unet_{16,32,50}_run-{0..4}
+    vgg-cells/segmentation/unet_{16,32,50}_run-{0..14}
     vgg-cells/detection/fasterrcnn_{16,32,50}_run-{0..14}
-    vgg-cells/density/csrnet_{16,32,50}_run-{0..9}
+    vgg-cells/density/csrnet_{16,32,50}_run-{0..14}
     # MBM CELLS
-    mbm-cells/segmentation/unet_{5,10,15}_run-{0..4}
+    mbm-cells/segmentation/unet_{5,10,15}_run-{0..14}
     mbm-cells/detection/fasterrcnn_{5,10,15}_run-{0..14}
-    mbm-cells/density/csrnet_{5,10,15}_run-{0..9}
+    mbm-cells/density/csrnet_{5,10,15}_run-{0..14}
+    # ADI CELLS
+    adi-cells/segmentation/unet_{10,25,50}_run-{0..14}
+    adi-cells/detection/fasterrcnn_{10,25,50}_run-{0..14}
+    adi-cells/density/csrnet_{10,25,50}_run-{0..14}
+    # BCD CELLS
+    bcd-cells/segmentation/unet_radius-{15,16}
+    bcd-cells/detection/fasterrcnn_side-{30,32}
+    bcd-cells/density/csrnet_sigma-{15,16}
     # PNN
     perineuronal-nets/segmentation/unet_{256,320,480,640,800}
     perineuronal-nets/detection/fasterrcnn_{256,320,480,640,800}
@@ -24,7 +32,12 @@ EXPS=(
 # Train & Evaluate
 for EXP in ${EXPS[@]}; do
     python train.py experiment=$EXP
-    python evaluate.py runs/experiment=$EXP
+    if  [[ $EXP == bcd* ]]
+    then
+        python evaluate.py runs/experiment=$EXP --debug --test-split all --data-root data/bcd-cells/test
+    else
+        python evaluate.py runs/experiment=$EXP --debug
+    fi
 done
 
 # -----------------------------

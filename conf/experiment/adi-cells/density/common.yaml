@@ -1,0 +1,32 @@
+# @package _global_
+
+defaults:
+  - /common: default
+  - /common/data: adi-cells
+  - /common/method: density
+  - /common/data/method-specific: adi-cells_density
+  - /common/model: csrnet
+  - /common/optim: default
+
+optim:
+    optimizer:
+        lr: 0.00001
+    
+    lr_scheduler:
+        milestones: [ 800, 900, 1000 ]
+
+    loss:
+        _target_: torch.nn.MSELoss
+
+    border_pad: 0     
+    batch_size: 4
+    batch_accumulation: 1
+
+    epochs: 1000
+    log_every: 1
+
+    val_device: cuda
+
+misc:
+    font_size: 5
+    text_pos: 5

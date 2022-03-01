@@ -8,6 +8,7 @@ data:
             _target_: methods.detection.transforms.Compose
             _args_:
                 - - _target_: methods.detection.transforms.RandomHorizontalFlip
+                  - _target_: methods.detection.transforms.RandomVerticalFlip
                   - _target_: methods.detection.transforms.ToTensor
     validation:
         transforms:
