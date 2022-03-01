@@ -10,3 +10,4 @@ RUN pip install jupyter_contrib_nbextensions "nbconvert<6" && \
     jupyter nbextension enable codefolding/main && \
     jupyter nbextension enable collapsible_headings/main
 
+RUN apt install -y wget unzip
