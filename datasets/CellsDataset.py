@@ -125,21 +125,3 @@ class CellsDataset(PatchedMultiImageDataset):
                 start, end = None, self.num_test_samples
 
         return image_paths[start:end]
-
-    def _load_annotations(self):
-
-        def _load_one_annotation(image_name):
-            image_id = image_name.name
-            label_map_path = self.root / image_id.replace('cell', 'dots')
-            label_map = io.imread(label_map_path)
-            if label_map.ndim == 3:
-                label_map = label_map[:, :, 0]
-            y, x = np.where((label_map == 255) | (label_map == 254))
-            annot = pd.DataFrame({'Y': y, 'X': x})
-            annot['imgName'] = image_id
-            return annot
-
-        annot = map(_load_one_annotation, self.image_paths)
-        annot = pd.concat(annot, ignore_index=True)
-        annot = annot.set_index('imgName')
-        return annot
