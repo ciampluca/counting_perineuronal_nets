@@ -70,8 +70,10 @@ class CountCeption(nn.Module):
         self.conv4 = ConvBlock(32, 64, ksize=1, activation=self.activation)
         self.conv5 = ConvBlock(64, 64, ksize=1, activation=self.activation)
         if use_logits:
-            self.conv6 = nn.ModuleList([ConvBlock(
-                64, logits_per_output, ksize=1, activation=self.final_activation) for _ in range(out_channels)])
+            self.conv6 = nn.ModuleList([
+                ConvBlock(64, logits_per_output, ksize=1, activation=self.final_activation)
+                for _ in range(out_channels)
+            ])
         else:
             self.conv6 = ConvBlock(64, self.out_channels, ksize=1, activation=self.final_activation)
 
