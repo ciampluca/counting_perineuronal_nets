@@ -1,5 +1,5 @@
 import numpy as np
-from PIL import Image
+from skimage.transform import rescale
 
     
 class CountmapTargetBuilder:
@@ -49,7 +49,7 @@ class CountmapTargetBuilder:
         height = int((int(shape[0]) + (patch_size // 2)*2) / stride)
         width = int((int(shape[1]) + (patch_size // 2)*2) / stride)
 
-        label = np.zeros((height, width), dtype=np.float32)
+        label = np.zeros((height, width, 1), dtype=np.float32)
         
         for y in range(0, height):
             for x in range(0, width):
@@ -74,9 +74,11 @@ class CountmapTargetBuilder:
         label = np.pad(target, pad) if pad else target
         
         # eventually scale image as already done for the target
-        image = np.array(Image.fromarray(image).resize((int(image.shape[0] / self.scale), int(image.shape[1] / self.scale))))
+        image = rescale(image, 1 / self.scale, channel_axis=-1)
         # add pad to image to have same dimension of target
-        image = np.pad(image, self.target_patch_size // 2)
+        pad = self.target_patch_size // 2
+        pad = ((pad, pad), (pad, pad), (0, 0))
+        image = np.pad(image, pad)
         
         # stack in a unique RGB-like tensor, useful for applying data augmentation
-        return np.stack((image, label), axis=-1)
+        return np.concatenate((image, label), axis=-1)
