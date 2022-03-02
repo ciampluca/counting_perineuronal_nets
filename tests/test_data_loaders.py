@@ -37,6 +37,14 @@ class TestDataLoader(unittest.TestCase):
             datum, *_ = dataset[0]
             self.assertEqual(datum.shape, (expected_side, expected_side, num_channels + 1))
 
+        # countmap
+        with self.subTest(target='countmap'):
+            dataset = CellsDataset(target='countmap', **common)
+            datum, *_ = dataset[0]
+            # self.assertEqual(datum.shape, (expected_side, expected_side, num_channels + 1))  # <-- TODO
+            self.assertEqual(len(datum.shape), 3)
+            self.assertEqual(datum.shape[2], num_channels + 1)
+
     def test_vgg(self):
         self._test_dataset_basic(root='data/vgg-cells', expected_side=256, as_gray=True)
 
