@@ -45,12 +45,18 @@ class TestDataLoader(unittest.TestCase):
             self.assertEqual(len(datum.shape), 3)
             self.assertEqual(datum.shape[2], num_channels + 1)
 
+    def test_adi(self):
+        self._test_dataset_basic(root='data/adipocyte-cells', expected_side=150)
+
+    def test_bcd(self):
+        self._test_dataset_basic(root='data/bcd-cells/validation', expected_side=640)
+
     def test_vgg(self):
         self._test_dataset_basic(root='data/vgg-cells', expected_side=256, as_gray=True)
 
     def test_mbm(self):
-        self._test_dataset_basic(root='data/mbm-cells', expected_side=600, as_gray=False)
+        self._test_dataset_basic(root='data/mbm-cells', expected_side=600)
 
     def test_nuclei(self):
-        self._test_dataset_basic(root='data/nuclei-cells', expected_side=500, as_gray=False)
+        self._test_dataset_basic(root='data/nuclei-cells', expected_side=500)
     
