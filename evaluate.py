@@ -25,7 +25,7 @@ def main(args):
     test_dataset = cfg.data.validation
     test_dataset.root = args.data_root if args.data_root else test_dataset.root
     test_dataset.split = args.test_split
-    test_dataset.target_ = None
+    test_dataset.target = None
     test_dataset = hydra.utils.instantiate(test_dataset)
 
     test_batch_size = cfg.optim.batch_size

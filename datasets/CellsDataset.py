@@ -23,15 +23,12 @@ class CellsDataset(PatchedMultiImageDataset):
             num_test_samples=10,
             split_seed=None,
             num_samples=None,
-            target_=None,
+            target=None,
             target_params={},
             cache_targets=False,
             transforms=None,
             as_gray=False,
     ):
-
-        target = target_  # XXX TOREMOVE for hydra bug
-
         assert target in (None, 'segmentation', 'detection', 'density', 'countmap'), f'Unsupported target type: {target}'
         assert split in (
         'all', 'train', 'validation', 'test'), "Split must be one of ('train', 'validation', 'test', 'all')"

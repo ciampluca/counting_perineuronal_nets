@@ -21,7 +21,7 @@ class PerineuronalNetsDataset(PatchedMultiImageDataset):
         patch_size=640,
         overlap=0,
         random_offset=None,
-        target_=None,
+        target=None,
         target_params={},
         transforms=None,
         max_cache_mem=None
@@ -34,7 +34,6 @@ class PerineuronalNetsDataset(PatchedMultiImageDataset):
         self.overlap = overlap
         self.random_offset = random_offset if random_offset is not None else patch_size // 2
 
-        target = target_  # XXX TOREMOVE for hydra bug
         assert target in (None, 'segmentation', 'detection', 'density'), f'Unsupported target type: {target}'
         self.target = target
 

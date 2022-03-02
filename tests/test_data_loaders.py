@@ -18,13 +18,13 @@ class TestDataLoader(unittest.TestCase):
 
         # segmentation
         with self.subTest(target='segmentation'):
-            dataset = CellsDataset(target_='segmentation', **common)
+            dataset = CellsDataset(target='segmentation', **common)
             datum, *_ = dataset[0]
             self.assertEqual(datum.shape, (expected_side, expected_side, num_channels + 2))
 
         # detection
         with self.subTest(target='detection'):
-            dataset = CellsDataset(target_='detection', **common)
+            dataset = CellsDataset(target='detection', **common)
             datum, *_ = dataset[0]
             x, y = datum
             self.assertEqual(x.shape, (expected_side, expected_side, num_channels))
@@ -33,7 +33,7 @@ class TestDataLoader(unittest.TestCase):
 
         # density
         with self.subTest(target='density'):
-            dataset = CellsDataset(target_='density', **common)
+            dataset = CellsDataset(target='density', **common)
             datum, *_ = dataset[0]
             self.assertEqual(datum.shape, (expected_side, expected_side, num_channels + 1))
 

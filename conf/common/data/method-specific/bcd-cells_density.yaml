@@ -1,7 +1,7 @@
 # @package data
 
 train: &common
-    target_: density
+    target: density
     target_params:
         k_size: 81  # size (in px) of the kernel of the gaussian localizing a biological structure
         sigma: 15  # sigma of the gaussian
