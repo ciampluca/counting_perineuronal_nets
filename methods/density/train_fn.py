@@ -35,12 +35,16 @@ def train_one_epoch(dataloader, model, optimizer, device, writer, epoch, cfg):
 
         # computing pred dmaps
         pred_dmaps = model(images)
-        if cfg.model.name == "UNet":
-            pred_dmaps /= 1000
+        
+        if cfg.model.name == "FCRN_A":
+            gt_dmaps *= 100
 
         # computing loss and backwarding it
         loss = criterion(pred_dmaps, gt_dmaps)
         loss.backward()
+        
+        if cfg.model.name == "FCRN_A":
+            pred_dmaps /= 100
 
         batch_metrics = {'loss': loss.item()}
         metrics.append(batch_metrics)
