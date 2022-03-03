@@ -15,16 +15,8 @@ optim:
     lr_scheduler:
         milestones: [ 800, 900, 1000 ]
 
-    loss:
-        _target_: torch.nn.L1Loss
-
     border_pad: 0      # must be divisible by 32
     batch_size: 8
     batch_accumulation: 1
 
     epochs: 1000
-    log_every: 1
-
-misc:
-    font_size: 8
-    text_pos: 15

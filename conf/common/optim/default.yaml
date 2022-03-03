@@ -16,10 +16,10 @@ epochs: 100
 
 val_freq: 1
 val_batch_size: ${.batch_size}
-val_device: cpu
+val_device: cuda
 
-num_workers: 8
+num_workers: 16
 
 debug: true
 debug_freq: 700
-log_every: 20
+log_every: 1

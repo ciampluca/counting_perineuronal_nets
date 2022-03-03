@@ -11,9 +11,6 @@ defaults:
 optim:
     optimizer:
         lr: 0.00001
-    
-    loss:
-        _target_: torch.nn.MSELoss
 
     border_pad: 160      # must be divisible by 32
 

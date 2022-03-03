@@ -1,16 +1,22 @@
-# @package data
+# @package _global_
 
-train: &common
-    _target_: datasets.CellsDataset
-    root: ${hydra:runtime.cwd}/data/dcc-cells
-    split: train
-    split_seed: 87
-    num_samples:
-        - 67  # num of train images - 70% train 30% val
-        - 33  # num of validation images - 70% train 30% val
-    max_num_train_val_sample: 100
-    num_test_samples: 100
+data:
+    train: &common
+        _target_: datasets.CellsDataset
+        root: ${hydra:runtime.cwd}/data/dcc-cells
+        split: train
+        split_seed: 87
+        num_samples:
+            - 67  # num of train images - 70% train 30% val
+            - 33  # num of validation images - 70% train 30% val
+        max_num_train_val_sample: 100
+        num_test_samples: 100
 
-validation:
-    split: validation
-    <<: *common   # reinsert 'train' block content
+    validation:
+        split: validation
+        <<: *common   # reinsert 'train' block content
+
+model:
+    module:
+        in_channels: 1
+        out_channels: 1

@@ -21,21 +21,11 @@ optim:
         weight_decay: 0.0005
 
     lr_scheduler:
-        _target_: torch.optim.lr_scheduler.MultiStepLR
         milestones: [100, 150]
-        gamma: 0.1
 
     epochs: 150
 
     batch_size: 4
     batch_accumulation: 1
-    log_every: 2
-
-    val_device: cuda
-
-misc:
-    font_size: 5
-    text_pos: 5
-
 
 

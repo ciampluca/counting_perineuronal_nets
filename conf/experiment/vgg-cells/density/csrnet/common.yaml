@@ -1,0 +1,22 @@
+# @package _global_
+
+defaults:
+  - /common: default
+  - /common/data: vgg-cells
+  - /common/method: density
+  - /common/data/method-specific: vgg-cells_density
+  - /common/model: csrnet
+  - /common/optim: default
+
+optim:
+    optimizer:
+        lr: 0.00001
+    
+    lr_scheduler:
+        milestones: [ 800, 900, 1000 ]
+
+    border_pad: 0      # must be divisible by 32
+    batch_size: 8
+    batch_accumulation: 1
+
+    epochs: 1000

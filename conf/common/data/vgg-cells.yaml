@@ -21,3 +21,8 @@ model:
     module:
         in_channels: 1
         out_channels: 1
+
+misc:
+    font_size: 8
+    text_pos: 15
+    bb_outline_width: 1

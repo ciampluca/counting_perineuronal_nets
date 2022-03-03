@@ -15,18 +15,8 @@ optim:
     lr_scheduler:
         milestones: [ 800, 900, 1000 ]
 
-    loss:
-        _target_: torch.nn.MSELoss
-
     border_pad: 0     
     batch_size: 4
     batch_accumulation: 1
 
     epochs: 1000
-    log_every: 1
-
-    val_device: cuda
-
-misc:
-    font_size: 5
-    text_pos: 5

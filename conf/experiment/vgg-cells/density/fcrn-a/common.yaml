@@ -1,0 +1,27 @@
+# @package _global_
+
+defaults:
+  - /common: default
+  - /common/data: vgg-cells
+  - /common/method: density
+  - /common/data/method-specific: vgg-cells_density
+  - /common/model: fcrn_a
+  - /common/optim: default
+
+optim:
+    optimizer:
+        _target_: torch.optim.SGD
+        lr: 0.01
+        momentum: 0.9
+        weight_decay: 0.00001
+    
+    lr_scheduler:
+        _target_: torch.optim.lr_scheduler.StepLR
+        step_size: 20
+        gamma: 0.1
+
+    border_pad: 0      
+    batch_size: 8
+    batch_accumulation: 1
+
+    epochs: 150

@@ -1,15 +1,19 @@
-# @package data
+# @package _global_
 
-train: &common
-    _target_: datasets.PerineuronalNetsDataset
-    root: ${hydra:runtime.cwd}/data/perineuronal-nets
-    split: train-half1
-    patch_size: ${patch_size}
-    overlap: 0
-    random_offset: null  # auto-determined as patch_size / 2
-    max_cache_mem: 8_589_934_592  # 8GiB in bytes
+data:
+    train: &common
+        _target_: datasets.PerineuronalNetsDataset
+        root: ${hydra:runtime.cwd}/data/perineuronal-nets
+        split: train-half1
+        patch_size: ${patch_size}
+        overlap: 0
+        random_offset: null  # auto-determined as patch_size / 2
+        max_cache_mem: 8_589_934_592  # 8GiB in bytes
 
-validation:
-    split: train-half2
-    random_offset: 0
-    <<: *common   # reinsert 'train' block content
+    validation:
+        split: train-half2
+        random_offset: 0
+        <<: *common   # reinsert 'train' block content
+
+optim:
+    log_every: 20
