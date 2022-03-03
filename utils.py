@@ -83,7 +83,8 @@ class CheckpointManager:
                 # create a link indicating a best ckpt
                 best_metric_ckpt_name = self.ckpt_format(metric, value, threshold, epoch)
                 best_metric_ckpt_path = self.ckpt_dir / best_metric_ckpt_name
-                best_metric_ckpt_path.unlink(missing_ok=True)
+                if best_metric_ckpt_path.exists():
+                    best_metric_ckpt_path.unlink()
                 best_metric_ckpt_path.symlink_to(ckpt_path.name)
 
                 # update current best
