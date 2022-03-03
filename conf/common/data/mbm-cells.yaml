@@ -11,8 +11,6 @@ data:
             - 15  # num of validation images
         max_num_train_val_sample: 30
         num_test_samples: 10
-        as_gray: false
-        cache_targets: true
 
     validation:
         split: validation

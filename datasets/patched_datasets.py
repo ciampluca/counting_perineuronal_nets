@@ -2,6 +2,7 @@ import itertools
 from pathlib import Path
 
 import h5py
+import joblib
 import numpy as np
 import pandas as pd
 from prefetch_generator import BackgroundGenerator
@@ -96,7 +97,7 @@ class PatchedImageDataset(Dataset):
         annotations=None,
         image_id=None,
         target_builder=None,
-        cache_targets=False,
+        target_cache=None,
         transforms=None,
         max_cache_mem=None
     ):
@@ -112,19 +113,19 @@ class PatchedImageDataset(Dataset):
             annotations (pd.DataFrame, optional): Dataframe containing points annotations; must be provided if target_builder != None. Defaults to None.
             image_id (str, optional): the ID of this image in the annotations; if None, the image name is used. Defaults to None.
             target_builder (obj, optional): A *TargetBuilder for building and returning also training targets. Defaults to None.
-            cache_targets (bool, optional): Whether to cache built targets; is incompatible with random_offset != 0. Defaults to False.
+            target_cache (Path, optional): if not None, path to directory of cached targets; is incompatible with random_offset != 0. Defaults to None.
             transforms (callable, optional): A callable for applying transformations on patches. Defaults to None.
             max_cache_mem (int, optional): Cache size in bytes (only for HDF5). Defaults to None.
         """
         assert split in ('left', 'right', 'all'), "split must be one of ('left', 'right', 'all')"
         assert target_builder is None or annotations is not None, 'annotations must be != None if a target_builder is specified'
-        assert not(cache_targets and (random_offset != 0)), 'cannot enable cache_targets when random_offset != 0'
+        assert not(target_cache and (random_offset != 0)), 'cannot enable target_cache when random_offset != 0'
 
         self.path = Path(path)
         self.as_gray = as_gray
         self.random_offset = random_offset
         self.target_builder = target_builder
-        self.cache_targets = cache_targets
+        self.target_cache = target_cache
         self.transforms = transforms
         self.as_gray = as_gray
         self.split = split
@@ -170,20 +171,22 @@ class PatchedImageDataset(Dataset):
         # the number of patches in a row and a column
         self.num_patches = np.ceil(1 + ((self.region_hw - self.patch_hw) / self.stride_hw)).astype(np.int64)
 
-        # dict to keep the target cache
-        self._target_cache = {}
-        
     def __len__(self):
         # total number of patches
         return self.num_patches.prod().item()
     
     def __getitem__(self, index):
-        if self.cache_targets and (index in self._target_cache):
-            datum, patch_info = self._target_cache[index]
+
+        if self.target_cache:
+            cache_path = self.target_cache / f'{self.split}_{index}.npz'
+            if cache_path.exists():
+                datum, patch_info = joblib.load(cache_path)
+            else:
+                cache_path.parent.mkdir(exist_ok=True, parents=True)
+                datum, patch_info = self._get_datum(index)
+                joblib.dump((datum, patch_info), cache_path)
         else:
             datum, patch_info = self._get_datum(index)
-            if self.cache_targets:
-                self._target_cache[index] = (datum, patch_info)
 
         if self.transforms:
             datum = self.transforms(datum)
@@ -245,7 +248,7 @@ class RandomAccessMultiImageDataset(ConcatDataset):
     
     def __init__(self, datasets):
         assert all(isinstance(d, RandomAccessImageDataset) for d in datasets), 'All datasets must be RandomAccessImageDataset.'
-        super().__init__(datasets)   
+        super().__init__(datasets)
     
     def num_images(self):
         return len(self.datasets)

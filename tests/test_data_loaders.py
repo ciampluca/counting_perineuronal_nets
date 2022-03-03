@@ -1,13 +1,20 @@
+import logging
+import shutil
 import unittest
 
+import numpy as np
+
 from datasets.CellsDataset import CellsDataset
+
+
+logging.basicConfig(level=logging.INFO)
 
 
 class TestDataLoader(unittest.TestCase):
     """ Tests for dataloaders. """
 
     def _test_dataset_basic(self, root, expected_side, as_gray=False):
-        common = dict(root=root, split='all', as_gray=as_gray)
+        common = dict(root=root, split='all', as_gray=as_gray, target_cache=False)
         num_channels = 1 if as_gray else 3
 
         # no target
@@ -59,4 +66,36 @@ class TestDataLoader(unittest.TestCase):
 
     def test_nuclei(self):
         self._test_dataset_basic(root='data/nuclei-cells', expected_side=500)
+
+
+class TestCache(unittest.TestCase):
     
+    def tearDown(self):
+        shutil.rmtree('./test_cache', ignore_errors=True)
+    
+    def _test_dataset_cache(self, root):
+        common = dict(root=root, split='all', as_gray=False)
+
+        for target in ('segmentation', 'detection', 'density', 'countmap'):
+            with self.subTest(target=target):
+                dataset = CellsDataset(target=target, target_cache='./test_cache', **common)
+                x = dataset[0]
+                
+                dataset = CellsDataset(target=target, target_cache='./test_cache', **common)
+                cached_x = dataset[0]
+
+                for xi, xci in zip(x, cached_x):
+                    np.testing.assert_equal(xi, xci)
+
+    def test_cache(self):
+        datasets = [
+            ('adi', 'data/adipocyte-cells'),
+            ('bcd', 'data/bcd-cells/validation'),
+            ('vgg', 'data/vgg-cells'),
+            ('mbm', 'data/mbm-cells'),
+            ('nuclei', 'data/nuclei-cells'),
+        ]
+
+        for dataset, root in datasets:
+            with self.subTest(dataset=dataset):
+                self._test_dataset_cache(root=root)

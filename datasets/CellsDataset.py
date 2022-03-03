@@ -1,4 +1,6 @@
 import collections
+import itertools
+import logging
 from pathlib import Path
 import random
 
@@ -10,6 +12,8 @@ from methods.detection.target_builder import DetectionTargetBuilder
 from methods.density.target_builder import DensityTargetBuilder
 from methods.countmap.target_builder import CountmapTargetBuilder
 
+log = logging.getLogger(__name__)
+
 
 class CellsDataset(PatchedMultiImageDataset):
     """ Dataset class implementation for the following cells datasets: VGG, MBM, ADI, BCD
@@ -19,13 +23,13 @@ class CellsDataset(PatchedMultiImageDataset):
             self,
             root='data/vgg-cells',
             split='all',
-            max_num_train_val_sample=30,   
+            max_num_train_val_sample=30,
             num_test_samples=10,
             split_seed=None,
             num_samples=None,
             target=None,
             target_params={},
-            cache_targets=False,
+            target_cache=None,
             transforms=None,
             as_gray=False,
     ):
@@ -51,6 +55,7 @@ class CellsDataset(PatchedMultiImageDataset):
 
         self.target = target
         self.target_params = target_params
+        self.target_cache = (self.root / 'cache') if target_cache is None else target_cache
 
         if target == 'segmentation':
             target_builder = SegmentationTargetBuilder
@@ -65,6 +70,7 @@ class CellsDataset(PatchedMultiImageDataset):
 
         # get list of images in the given split
         self.image_paths = self._get_images_in_split()
+        self.target_cache_paths = self._get_cache_paths()
 
         # load pandas dataframe containing dot annotations
         self.annot = pd.read_csv(Path(self.root / 'annotations.csv'))
@@ -76,10 +82,9 @@ class CellsDataset(PatchedMultiImageDataset):
             annotations=self.annot,
             target_builder=self.target_builder,
             transforms=self.transforms,
-            cache_targets=cache_targets,
             as_gray=as_gray,
         )
-        datasets = [PatchedImageDataset(p, **data_params) for p in self.image_paths]
+        datasets = [PatchedImageDataset(p, target_cache=c, **data_params) for p, c in zip(self.image_paths, self.target_cache_paths)]
         super().__init__(datasets)
 
     def __len__(self):
@@ -111,3 +116,20 @@ class CellsDataset(PatchedMultiImageDataset):
                 start, end = None, self.num_test_samples
 
         return image_paths[start:end]
+
+    def _get_cache_paths(self):
+        if not self.target or not self.target_cache:
+            return itertools.repeat(None, len(self.image_paths))
+
+        def stringify(builder):
+            tokens = [k[0] + ('-' if isinstance(v, str) else '') + str(v) for k, v in builder.__dict__.items()]
+            return '_'.join(tokens)
+
+        cache_root = Path(self.target_cache)
+        cache_name = f'{self.target}_{stringify(self.target_builder)}'
+        cache_dir = cache_root / cache_name
+
+        log.info(f'Using cache: {cache_dir}')
+
+        cache_paths = [cache_dir / p.stem for p in self.image_paths]
+        return cache_paths

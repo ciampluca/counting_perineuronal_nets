@@ -12,7 +12,6 @@ data:
         max_num_train_val_sample: 100
         num_test_samples: 100
         as_gray: true
-        cache_targets: true
 
     validation:
         split: validation
