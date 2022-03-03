@@ -8,7 +8,6 @@ optimizer:
 
 lr_scheduler:
     _target_: torch.optim.lr_scheduler.MultiStepLR
-    milestones: [50, 75, 100]
     gamma: 0.1
 
 batch_size: 8
