@@ -1,10 +1,13 @@
 import logging
+from pathlib import Path
 import shutil
 import unittest
 
 import numpy as np
+from skimage.io import imsave
 
 from datasets.CellsDataset import CellsDataset
+from methods.segmentation.utils import segmentation_map_to_points
 
 
 logging.basicConfig(level=logging.INFO)
@@ -25,18 +28,39 @@ class TestDataLoader(unittest.TestCase):
 
         # segmentation
         with self.subTest(target='segmentation'):
-            dataset = CellsDataset(target='segmentation', **common)
+            target_params = {
+                'radius': expected_side // 25,
+                'radius_ign': expected_side // 24
+            }
+            dataset = CellsDataset(target='segmentation', target_params=target_params, **common)
             datum, *_ = dataset[0]
             self.assertEqual(datum.shape, (expected_side, expected_side, num_channels + 2))
+
+            n_cells = len(dataset.datasets[0].split_annot)
+            segmentation_map = datum[:, :, num_channels]
+            n_cells_in_target = len(segmentation_map_to_points(segmentation_map))
+
+            self.assertAlmostEqual(n_cells, n_cells_in_target)
+            if n_cells != n_cells_in_target:
+                path = Path('./test_fails/')
+                path.mkdir(exist_ok=True)
+                path = path / (self.id() + '_segm.png')
+                imsave(path, segmentation_map)
+
+                self.fail(f'n_cells != n_cells_in_target: {n_cells} vs {n_cells_in_target}')
 
         # detection
         with self.subTest(target='detection'):
             dataset = CellsDataset(target='detection', **common)
-            datum, *_ = dataset[0]
-            x, y = datum
+            (x, y), *_ = dataset[0]
+
             self.assertEqual(x.shape, (expected_side, expected_side, num_channels))
             self.assertTrue(y.ndim == 2)
             self.assertTrue(y.shape[1] == 4)
+
+            n_cells = len(dataset.datasets[0].split_annot)
+            n_cells_in_target = y.shape[0]
+            self.assertEqual(n_cells, n_cells_in_target)
 
         # density
         with self.subTest(target='density'):
@@ -44,13 +68,29 @@ class TestDataLoader(unittest.TestCase):
             datum, *_ = dataset[0]
             self.assertEqual(datum.shape, (expected_side, expected_side, num_channels + 1))
 
+            n_cells = len(dataset.datasets[0].split_annot)
+            n_cells_in_target = datum[:, :, num_channels:].sum()
+            self.assertAlmostEqual(n_cells_in_target, n_cells, places=3)
+
         # countmap
         with self.subTest(target='countmap'):
-            dataset = CellsDataset(target='countmap', **common)
+            target_params = {'target_patch_size': 32}
+            dataset = CellsDataset(target='countmap', target_params=target_params, **common)
             datum, *_ = dataset[0]
             # self.assertEqual(datum.shape, (expected_side, expected_side, num_channels + 1))  # <-- TODO
             self.assertEqual(len(datum.shape), 3)
             self.assertEqual(datum.shape[2], num_channels + 1)
+
+            n_cells = len(dataset.datasets[0].split_annot)
+            countmap = datum[:, :, num_channels]
+            n_cells_in_target = (countmap / 32 ** 2.0).sum()
+
+            self.assertAlmostEqual(n_cells, n_cells_in_target, delta=1)
+            if n_cells != n_cells_in_target:
+                path = Path('./test_fails/')
+                path.mkdir(exist_ok=True)
+                path = path / (self.id() + '_countmap.png')
+                imsave(path, countmap)
 
     def test_adi(self):
         self._test_dataset_basic(root='data/adipocyte-cells', expected_side=150)
