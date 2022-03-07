@@ -8,18 +8,19 @@ from skimage.filters import gaussian as gaussian_filter
 class DensityTargetBuilder:
     """ This builds the density map for counting. """
 
-    def __init__(self, k_size=51, sigma=30, method='reflect', **kwargs):
+    def __init__(self, k_size=51, sigma=30, method='reflect', target_normalize_scale_factor=1.0, **kwargs):
         """ Constructor.
         Args:
             kernel_size (int, optional): Size (in px) of the kernel of the gaussian localizing an object. Defaults to 51.
             sigma (int, optional): Sigma of the gaussian. Defaults to 30.
         """
 
-        assert method in ('move', 'reflect', 'normalize', 'move-cv2'), f'Unsupported method: {method}'
+        assert method in ('move', 'reflect', 'normalize', 'move-cv2', 'normalize-scale'), f'Unsupported method: {method}'
 
         self.kernel_size = k_size
         self.sigma = sigma
         self.method = method
+        self.target_normalize_scale_factor=target_normalize_scale_factor
 
     def build(self, shape, locations):
         if self.method == 'move':
@@ -91,7 +92,8 @@ class DensityTargetBuilder:
                                 (cv2.getGaussianKernel(int(x2h - x1h + 1), sigma)).T)  # H.shape == (r, c)
 
             dmap[y1: y2 + 1, x1: x2 + 1] = dmap[y1: y2 + 1, x1: x2 + 1] + H
-
+            
+        dmap *= self.target_normalize_scale_factor
         return dmap
 
     def build_nocv2(self, hw, points_yx):
@@ -122,8 +124,8 @@ class DensityTargetBuilder:
             (y0, x0), (y1, x1) = lt, rb
             dmap[y0:y1, x0:x1] += H
 
+        dmap *= self.target_normalize_scale_factor
         return dmap
-
 
     def build_reflect(self, hw, points_yx):
         """ This builds the density map, putting a gaussian over each dots localizing an object.
@@ -165,6 +167,7 @@ class DensityTargetBuilder:
 
         # unpad
         dmap = dmap[r:-r, r:-r]
+        dmap *= self.target_normalize_scale_factor
         return dmap
 
     def build_normalize(self, hw, points_yx):
@@ -180,6 +183,7 @@ class DensityTargetBuilder:
         
         density_map = gaussian_filter(density_map, sigma=self.sigma, mode='constant')
         density_map = num_points * density_map / density_map.sum()  # renormalize density map
+        density_map *= self.target_normalize_scale_factor
         return density_map
 
     def pack(self, image, target, pad=None):

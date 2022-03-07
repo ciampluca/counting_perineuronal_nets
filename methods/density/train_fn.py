@@ -35,16 +35,10 @@ def train_one_epoch(dataloader, model, optimizer, device, writer, epoch, cfg):
 
         # computing pred dmaps
         pred_dmaps = model(images)
-        
-        if cfg.model.name == "FCRN_A":
-            gt_dmaps *= 100
 
         # computing loss and backwarding it
         loss = criterion(pred_dmaps, gt_dmaps)
         loss.backward()
-        
-        if cfg.model.name == "FCRN_A":
-            pred_dmaps /= 100
 
         batch_metrics = {'loss': loss.item()}
         metrics.append(batch_metrics)
@@ -114,13 +108,17 @@ def validate(dataloader, model, device, epoch, cfg):
         # split channels to get input and target
         n_channels = input_and_target.shape[1]
         patches, gt_dmaps = input_and_target.split((n_channels - 1, 1), dim=1)
-
+            
         # pad to mitigate border errors
         pad = cfg.optim.border_pad
         padded_patches = F.pad(patches, pad)
 
         # Computing predictions
         predicted_density_patches = model(padded_patches)
+        
+        # Eventually rescale target and predicted pixel values 
+        gt_dmaps /= cfg.data.validation.target_params.target_normalize_scale_factor
+        predicted_density_patches /= cfg.data.validation.target_params.target_normalize_scale_factor
 
         # unpad
         h, w = predicted_density_patches.shape[2:]
@@ -215,6 +213,8 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
         padded_patches = F.pad(patches, pad)
         # predict
         predicted_density_patches = model(padded_patches.to(device))
+        # Eventually rescale prediction pixel values 
+        predicted_density_patches /= cfg.data.validation.target_params.target_normalize_scale_factor
         # unpad
         h, w = predicted_density_patches.shape[2:]
         predicted_density_patches = predicted_density_patches[:, :, pad:(h - pad), pad:(w - pad)]
@@ -284,6 +284,8 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
         # compute dmap metrics (no thresholding or peak finding)
         gt_points = groundtruth[['Y', 'X']].values
         gt_dmap = density_map_builder.build(image_hw, gt_points)
+        # Eventually rescale target pixel values 
+        gt_dmap /= cfg.data.validation.target_params.target_normalize_scale_factor
         dmap_metrics = counting(gt_dmap, density_map)
         dmap_metrics['imgName'] = image_id
         all_dmap_metrics.append(dmap_metrics)
@@ -302,6 +304,7 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
             localizations = density_map_to_points(density_map, min_distance, thr)
 
             # match groundtruths and predictions
+            # TODO instead of using target.sigma better to use estimated obecjt radius
             tolerance = 1.25 * cfg.data.validation.target_params.sigma  # min distance to match points
             groundtruth_and_predictions = match(groundtruth, localizations, tolerance)
             groundtruth_and_predictions['imgName'] = groundtruth_and_predictions.imgName.fillna(image_id)

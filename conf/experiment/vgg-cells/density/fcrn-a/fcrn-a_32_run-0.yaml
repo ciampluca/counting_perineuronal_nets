@@ -7,9 +7,7 @@ data:
     train: &common
         split_seed: 87
         num_samples:
-            - 50   # num of train images
-            - 50  # num of validation images
-        target_params:
-            method: reflect
+            - 32   # num of train images
+            - 32  # num of validation images
     validation:
         <<: *common

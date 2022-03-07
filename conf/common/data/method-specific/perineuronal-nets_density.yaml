@@ -5,6 +5,7 @@ train: &common
     target_params:
         k_size: 151         # size (in px) of the kernel of the gaussian localizing a perineural nets
         sigma: 15            # sigma of the gaussian
+        target_normalize_scale_factor: 1.0  # rescaling value for target pixels
 
 validation:
     overlap: 120

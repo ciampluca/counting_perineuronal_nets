@@ -51,6 +51,7 @@ class FCRN(nn.Module):
         in_channels: int=3,
         out_channels: int=1,
         version='A',
+        skip_weights_loading=False,
         **kwargs
     ):
         """
@@ -118,7 +119,14 @@ class FCRN(nn.Module):
                 nn.Upsample(scale_factor=2),
                 conv_block(channels=(256, out_channels), size=(5, 5), N=N)
             )
+            
+        if not skip_weights_loading:
+            self._initialize_weights()
         
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.orthogonal_(m.weight)
 
     def forward(self, x: torch.Tensor):
         h, w = x.shape[-2:]
