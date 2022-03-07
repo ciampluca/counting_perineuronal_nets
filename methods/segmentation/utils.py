@@ -15,7 +15,7 @@ def segmentation_map_to_points(y_pred, thr=None):
 
     # find connected components and centroids
     labeled_map, num_components = measure.label(y_pred_hard, return_num=True, connectivity=1)
-    localizations = measure.regionprops_table(labeled_map, properties=('centroid', 'bbox'))
+    localizations = measure.regionprops_table(labeled_map, properties=('centroid', 'bbox', 'area'))
     localizations = pd.DataFrame(localizations).rename({
         'centroid-0': 'Y',
         'centroid-1': 'X',
@@ -25,6 +25,7 @@ def segmentation_map_to_points(y_pred, thr=None):
         'bbox-3': 'x1',
     }, axis=1)
 
+    localizations = localizations[localizations['area'] > 1]  # filter out degenerate regions
     bboxes = localizations[['y0', 'x0', 'y1', 'x1']].values
     localizations['score'] = [y_pred[y0:y1,x0:x1].max() for y0, x0, y1, x1 in bboxes]
     localizations = localizations.drop(columns=['y0', 'x0', 'y1', 'x1'])
