@@ -36,4 +36,4 @@ def normalize_map(density_map):
     dmin, dmax = density_map.min(), density_map.max()
     if dmin == dmax:
         return density_map
-    return (density_map - dmin) / dmax - dmin
+    return (density_map - dmin) / (dmax - dmin)
