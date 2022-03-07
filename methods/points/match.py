@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 
@@ -80,5 +81,5 @@ def match(groundtruth, predictions, threshold):
         non_matched_predictions = predictions[~predictions.index.isin(pred_idx)]
     
     non_matched_predictions = non_matched_predictions.rename({'X':'Xp', 'Y':'Yp'}, axis=1)
-    groundtruth_and_predictions = groundtruth_and_predictions.append(non_matched_predictions, ignore_index=True)
+    groundtruth_and_predictions = pd.concat([groundtruth_and_predictions, non_matched_predictions], ignore_index=True)
     return groundtruth_and_predictions
