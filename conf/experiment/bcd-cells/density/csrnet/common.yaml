@@ -13,10 +13,10 @@ optim:
         lr: 0.00001
     
     lr_scheduler:
-        milestones: [ 800, 900, 1000 ]
+        milestones: [ 200, 250, 300 ]
 
     border_pad: 0     
     batch_size: 4
     batch_accumulation: 1
 
-    epochs: 1000
+    epochs: 300

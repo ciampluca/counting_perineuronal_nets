@@ -63,7 +63,7 @@ class CSRNet(nn.Module):
             device = x.get_device()
             torch.cuda.synchronize()
             x = x.cpu()
-        x = nn.functional.interpolate(x, scale_factor=8, mode="bilinear")
+        x = nn.functional.interpolate(x, scale_factor=8, mode="bilinear", align_corners=False)
         x = x.to(device)
 
         if need_resize:
