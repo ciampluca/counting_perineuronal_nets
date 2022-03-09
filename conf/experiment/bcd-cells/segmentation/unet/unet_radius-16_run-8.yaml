@@ -3,7 +3,7 @@
 defaults:
  - bcd-cells/segmentation/common
 
-seed: 10
+seed: 97
 
 data:
     train: &common

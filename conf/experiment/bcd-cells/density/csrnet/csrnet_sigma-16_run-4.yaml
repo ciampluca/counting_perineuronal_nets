@@ -3,11 +3,13 @@
 defaults:
  - bcd-cells/density/common
 
+seed: 47
+
 data:
     train: &common
         target_params:
-            k_size: 81  
-            sigma: 15 
+            k_size: 91  
+            sigma: 16 
             method: reflect
     validation:
         <<: *common

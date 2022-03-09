@@ -3,7 +3,7 @@
 defaults:
  - bcd-cells/detection/common
 
-seed: 10
+seed: 37
 
 data:
     train: &common

@@ -43,7 +43,7 @@ def create_df_ann_from_imgs(data_path, image_paths, data_name):
     return annot
 
 
-def create_df_ann_bcd_data(image_paths, split):
+def create_df_ann_bcd_data(image_paths, split, only_positive=False):
     """ 
     Create a dataframe containing annotations for the BCD dataset. 
     """
@@ -64,6 +64,8 @@ def create_df_ann_bcd_data(image_paths, split):
                 num_cl.append(int(num_class))
                 
         annot = pd.DataFrame({'Y': np.array(ann_y), 'X': np.array(ann_x), 'class': np.array(num_cl)})
+        if only_positive:
+            annot = annot.loc[annot['class'] == 0]
         image_id = image_id.replace('.png', '_cell.png')
         annot['imgName'] = image_id
         
@@ -93,7 +95,7 @@ def main(args):
     if args.data_name == 'BCD':    
         image_paths = data_path.glob('*.png')
         split = data_path.name
-        df_ann = create_df_ann_bcd_data(image_paths, split)
+        df_ann = create_df_ann_bcd_data(image_paths, split, only_positive=(not args.multi_class))
         dst_fld = data_path.parent.parent.parent / split
         Path(dst_fld / 'imgs').mkdir(parents=True, exist_ok=True)
         df_ann.to_csv(dst_fld / 'annotations.csv', encoding='utf-8')
@@ -116,8 +118,9 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Prepare a dataset to be compliant with the framework', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--data-name', help="Name of the dataset (can be VGG, MBM, BCD, Adipocyte)")
-    parser.add_argument('--data-path', help="Root path of the dataset")
+    parser.add_argument('--data-name', help="Name of the dataset (can be VGG, MBM, BCD, Adipocyte)", required=True)
+    parser.add_argument('--data-path', help="Root path of the dataset", required=True)
+    parser.add_argument('--multi-class', help="Enable creation of multi class annotations", action='store_true')
     
     args = parser.parse_args()
     main(args)

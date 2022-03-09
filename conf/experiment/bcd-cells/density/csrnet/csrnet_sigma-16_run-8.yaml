@@ -3,6 +3,8 @@
 defaults:
  - bcd-cells/density/common
 
+seed: 97
+
 data:
     train: &common
         target_params:

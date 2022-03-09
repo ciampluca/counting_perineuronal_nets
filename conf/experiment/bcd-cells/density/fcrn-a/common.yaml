@@ -2,9 +2,9 @@
 
 defaults:
   - /common: default
-  - /common/data: adi-cells
+  - /common/data: bcd-cells
   - /common/method: density
-  - /common/data/method-specific: adi-cells_density
+  - /common/data/method-specific: bcd-cells_density
   - /common/model: fcrn-a
   - /common/optim: default
 

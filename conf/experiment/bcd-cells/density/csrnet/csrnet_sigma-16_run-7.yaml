@@ -1,0 +1,15 @@
+# @package _global_
+
+defaults:
+ - bcd-cells/density/common
+
+seed: 17
+
+data:
+    train: &common
+        target_params:
+            k_size: 91  
+            sigma: 16 
+            method: reflect
+    validation:
+        <<: *common
