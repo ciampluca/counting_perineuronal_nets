@@ -4,8 +4,9 @@ from skimage.draw import disk, polygon2mask, polygon_perimeter
 from scipy.ndimage import distance_transform_edt
 from scipy.spatial import Voronoi
 
+from methods.base_target_builder import BaseTargetBuilder
     
-class SegmentationTargetBuilder:
+class SegmentationTargetBuilder(BaseTargetBuilder):
     """ This builds the segmantation and loss weights maps, as described
         in the 'Methods' section of the paper:
 
@@ -46,7 +47,26 @@ class SegmentationTargetBuilder:
         self.lambda_sep = lambda_sep
         self.width_sep = width_sep
 
-    def build(self, shape, points_yx):
+    def build(self, shape, locations, n_classes=None):
+        if 'class' not in locations.columns:
+            locations['class'] = 0
+        
+        if n_classes is None:
+            n_classes = locations['class'].max() + 1
+        
+        segmentations = []
+        weights = []
+        for i in range(n_classes):
+            points_i = locations[locations['class'] == i][['Y', 'X']].values
+            segmentation_i, weights_i = self._build_single_class(shape, points_i)
+            segmentations.append(segmentation_i)
+            weights.append(weights_i)
+        
+        segmentations = np.stack(segmentations, axis=-1)
+        weights = np.stack(weights, axis=-1)
+        return segmentations, weights
+
+    def _build_single_class(self, shape, points_yx):
 
         radius = self.radius
         radius_ign = self.radius_ignore
@@ -125,16 +145,13 @@ class SegmentationTargetBuilder:
         return segmentation, weights
 
     def pack(self, image, target, pad=None):
-        segmentation, weights = target
+        segmentations, weights = target
 
-        segmentation = np.expand_dims(segmentation, axis=-1)
-        segmentation = np.pad(segmentation, pad) if pad else segmentation
-
-        weights = np.expand_dims(weights, axis=-1)
+        segmentations = np.pad(segmentations, pad) if pad else segmentations
         weights = np.pad(weights, pad) if pad else weights  # 0 in loss weight = don't care
 
         # stack in a unique RGB-like tensor, useful for applying data augmentation
-        return np.concatenate((image, segmentation, weights), axis=-1)
+        return np.concatenate((image, segmentations, weights), axis=-1)
 
     @staticmethod
     def _voronoi_finite_polygons_2d(vor, radius=None):

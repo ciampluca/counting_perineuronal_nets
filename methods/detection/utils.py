@@ -7,19 +7,24 @@ def collate_fn(batch):
 
 
 def build_coco_compliant_batch(image_and_target_batch):
-    images, bboxes = zip(*image_and_target_batch)
+    images, bboxes, labels = zip(*image_and_target_batch)
 
-    def _get_coco_target(bboxes):
+    def _get_coco_target(bboxes, labels):
         n_boxes = len(bboxes)
-        boxes = [[x0, y0, x1, y1] for y0, x0, y1, x1 in bboxes] if n_boxes else [[]]
         shape = (n_boxes,) if n_boxes else (1, 0)
+
+        boxes = [[x0, y0, x1, y1] for y0, x0, y1, x1 in bboxes] if n_boxes else [[]]
+        boxes = torch.as_tensor(boxes, dtype=torch.float32)
+
+        labels = torch.as_tensor(labels, dtype=torch.int64) if n_boxes else torch.ones((1, 0), dtype=torch.int64)
+        
         return {
-            'boxes': torch.as_tensor(boxes, dtype=torch.float32),
-            'labels': torch.ones(shape, dtype=torch.int64),  # there is only one class
+            'boxes': boxes,
+            'labels': labels,
             'iscrowd': torch.zeros(shape, dtype=torch.int64)  # suppose all instances are not crowd
         }
 
-    targets = [_get_coco_target(b) for b in bboxes]
+    targets = [_get_coco_target(b, l) for b, l in zip(bboxes, labels)]
     return images, targets
 
 

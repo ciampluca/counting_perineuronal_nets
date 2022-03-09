@@ -8,7 +8,7 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from ..points.metrics import detection_and_counting
+from ..points.metrics import detection_and_counting, detection_average_precision
 from ..points.match import match
 from ..points.utils import draw_groundtruth_and_predictions
 from .metrics import dice_jaccard
@@ -28,19 +28,23 @@ def train_one_epoch(dataloader, model, optimizer, device, writer, epoch, cfg):
         input_and_target = input_and_target.to(device)
         # split channels to get input, target, and loss weights
         n_channels = input_and_target.shape[1]
-        images, targets, weights = input_and_target.split((n_channels - 2, 1, 1), dim=1)
+        x_channels = cfg.model.module.in_channels
+        y_channels = (n_channels - x_channels) // 2
+        images, targets, weights = input_and_target.split((x_channels, y_channels, y_channels), dim=1)
 
         logits = model(images)
         loss = F.binary_cross_entropy_with_logits(logits, targets, weights)
         predictions = torch.sigmoid(logits)
-        soft_dice, soft_jaccard = dice_jaccard(targets, predictions)
+
+        # NCHW -> NHWC
+        coefs = dice_jaccard(targets.movedim(1, -1), predictions.movedim(1, -1))
 
         loss.backward()
 
         batch_metrics = {
             'loss': loss.item(),
-            'soft_dice': soft_dice.item(),
-            'soft_jaccard': soft_jaccard.item()
+            'soft_dice': coefs['segm/dice/macro'],
+            'soft_jaccard': coefs['segm/jaccard/macro'],
         }
 
         metrics.append(batch_metrics)
@@ -60,8 +64,9 @@ def train_one_epoch(dataloader, model, optimizer, device, writer, epoch, cfg):
 
             if cfg.optim.debug and (i + 1) % cfg.optim.debug_freq == 0:
                 writer.add_images('train/inputs', images, n_iter)
-                writer.add_images('train/targets', targets, n_iter)
-                writer.add_images('train/predictions', predictions, n_iter)
+                for j in range(y_channels):
+                    writer.add_images(f'train/targets_cls{j}', targets[:, j:j+1], n_iter)
+                    writer.add_images(f'train/predictions_cls{j}', predictions[:, j:j+1], n_iter)
 
     metrics = pd.DataFrame(metrics).mean(axis=0).to_dict()
     metrics = {k: {'value': v, 'threshold': None} for k, v in metrics.items()}
@@ -82,13 +87,17 @@ def _save_image_and_segmentation_maps(image, image_id, segmentation_map, target_
         pil_image.save(path)
         
     _scale_and_save(image, debug_dir / image_id)
-    _scale_and_save(segmentation_map, debug_dir / f'{image_id.stem}_segm.png')
-    _scale_and_save(target_map, debug_dir / f'{image_id.stem}_target.png')
 
-    weights_map = matplotlib.cm.viridis(weights_map.cpu().squeeze())
-    weights_map = (255 * weights_map).astype(np.uint8)
-    pil_image = Image.fromarray(weights_map).convert("RGB")
-    pil_image.save(debug_dir / f'{image_id.stem}_weights.png')
+    n_classes = cfg.model.module.out_channels
+    for i in range(n_classes):
+        _scale_and_save(segmentation_map[:, :, i], debug_dir / f'{image_id.stem}_segm_cls{i}.png')
+        _scale_and_save(target_map[:, :, i], debug_dir / f'{image_id.stem}_target_cls{i}.png')
+
+        wmap = weights_map[:, :, i].cpu().squeeze()
+        wmap = matplotlib.cm.viridis(wmap)
+        wmap = (255 * wmap).astype(np.uint8)
+        pil_image = Image.fromarray(wmap).convert("RGB")
+        pil_image.save(debug_dir / f'{image_id.stem}_weights_cls{i}.png')
 
 
 @torch.no_grad()
@@ -104,7 +113,9 @@ def validate(dataloader, model, device, epoch, cfg):
 
         # split channels to get input, target, and loss weights
         n_channels = input_and_target.shape[1]
-        images, targets, weights = input_and_target.split((n_channels - 2, 1, 1), dim=1)
+        x_channels = cfg.model.module.in_channels
+        y_channels = (n_channels - x_channels) // 2
+        images, targets, weights = input_and_target.split((x_channels, y_channels, y_channels), dim=1)
         logits = model(images)
         predictions = torch.sigmoid(logits)
 
@@ -136,7 +147,7 @@ def validate(dataloader, model, device, epoch, cfg):
                 segmentation_map = torch.zeros(out_hwc, dtype=torch.float32, device=validation_device)
                 target_map = torch.zeros(out_hwc, dtype=torch.float32, device=validation_device)
                 weights_map = torch.zeros(out_hwc, dtype=torch.float32, device=validation_device)
-                normalization_map = torch.zeros(out_hwc, dtype=torch.float32, device=validation_device)
+                normalization_map = torch.zeros(image_hw + (1,), dtype=torch.float32, device=validation_device)
 
             (y, x), (h, w) = start_yx, patch_hw
             image[y:y+h, x:x+w] = patch[:h, :w]
@@ -169,29 +180,25 @@ def validate(dataloader, model, device, epoch, cfg):
 
         ## threshold-free metrics
         weighted_bce_loss = F.binary_cross_entropy(segmentation_map, target_map, weights_map)
-        soft_dice, soft_jaccard = dice_jaccard(target_map, segmentation_map)
+        soft_segm_metrics = dice_jaccard(target_map, segmentation_map, prefix='soft_')
         
         ## threshold-dependent metrics
-        thrs = torch.linspace(0, 1, 21).tolist() + [2,]
-
         image_thr_metrics = []
+
+        groundtruth = dataloader.dataset.annot.loc[[image_id]]
+
+        thrs = torch.linspace(0, 1, 21).tolist() + [2,]
         progress_thrs = tqdm(thrs, desc='thr', leave=False)
         for thr in progress_thrs:
             binary_segmentation_map = segmentation_map >= thr
 
             # segmentation metrics
             progress_thrs.set_description(f'thr={thr:.2f} (segm)')
-            dice, jaccard = dice_jaccard(target_map, binary_segmentation_map)
-
-            segm_metrics = {
-                'segm/dice': dice.item(),
-                'segm/jaccard': jaccard.item()
-            }
+            segm_metrics = dice_jaccard(target_map, binary_segmentation_map)
         
             # counting metrics
             progress_thrs.set_description(f'thr={thr:.2f} (count)')
             localizations = segmentation_map_to_points(segmentation_map.cpu().numpy().squeeze(), thr=thr)
-            groundtruth = dataloader.dataset.annot.loc[[image_id]]
 
             tolerance = 1.25 * cfg.data.validation.target_params.radius  # min distance to match points
             groundtruth_and_predictions = match(groundtruth, localizations, tolerance)
@@ -203,20 +210,15 @@ def validate(dataloader, model, device, epoch, cfg):
                 **segm_metrics,
                 **count_pdet_metrics
             })
-
         
-        pr = pd.DataFrame(image_thr_metrics).sort_values('pdet/recall', ascending=False)
-        recalls = pr['pdet/recall'].values
-        precisions = pr['pdet/precision'].values
-        average_precision = - np.sum(np.diff(recalls) * precisions[:-1])  # sklearn's ap
-
+        average_precisions = detection_average_precision(image_thr_metrics)
+        
         # accumulate full image metrics
         metrics.append({
             'image_id': image_id,
             'segm/weighted_bce_loss': weighted_bce_loss.item(),
-            'segm/soft_dice': soft_dice.item(),
-            'segm/soft_jaccard': soft_jaccard.item(),
-            'pdet/average_precision': average_precision.item(),
+            **soft_segm_metrics,
+            **average_precisions,
         })
 
         thr_metrics.extend(image_thr_metrics)
@@ -232,31 +234,23 @@ def validate(dataloader, model, device, epoch, cfg):
     thr_metrics = pd.DataFrame(thr_metrics).set_index(['image_id', 'thr'])
     mean_thr_metrics = thr_metrics.pivot_table(index='thr', values=thr_metrics.columns, aggfunc='mean')
     
-    best_thr_metrics = mean_thr_metrics.aggregate({
-        'segm/dice': max,
-        'segm/jaccard': max,
-        'pdet/precision': max,
-        'pdet/recall': max,
-        'pdet/f1_score': max,
-        'count/err': lambda x: min(x, key=abs),
-        'count/mae': min,
-        'count/mse': min,
-        'count/mare': min,
-        **{f'count/game-{l}': min for l in range(6)}
-    }).to_dict()
+    # TODO factor out common code that follows in evaluate()s
+    def _get_agg_func(metric_name, idx=False):
+        if metric_name.startswith('count/err'):
+            if idx:
+                return lambda x: x.abs().idxmin()
+            return lambda x: min(x, key=abs)
+        
+        if metric_name.startswith('count/'):
+            return 'idxmin' if idx else min
+        
+        return 'idxmax' if idx else max
 
-    best_thrs = mean_thr_metrics.aggregate({
-        'segm/dice': 'idxmax',
-        'segm/jaccard': 'idxmax',
-        'pdet/precision': 'idxmax',
-        'pdet/recall': 'idxmax',
-        'pdet/f1_score': 'idxmax',
-        'count/err': lambda x: x.abs().idxmin(),
-        'count/mae': 'idxmin',
-        'count/mse': 'idxmin',
-        'count/mare': 'idxmin',
-        **{f'count/game-{l}': 'idxmin' for l in range(6)}
-    }).to_dict()
+    value_aggfuncs = {k: _get_agg_func(k, idx=False) for k in thr_metrics.columns}
+    thr_aggfuncs = {k: _get_agg_func(k, idx=True) for k in thr_metrics.columns}
+    
+    best_thr_metrics = mean_thr_metrics.aggregate(value_aggfuncs).to_dict()
+    best_thrs = mean_thr_metrics.aggregate(thr_aggfuncs).to_dict()
 
     best_thr_metrics = {k: {'value': v, 'threshold': best_thrs[k]} for k, v in best_thr_metrics.items()}
     metrics.update(best_thr_metrics)
@@ -319,7 +313,6 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
     for image_id, image, segmentation_map in progress:
         image_hw = image.shape[:2]
         image = (255 * image).astype(np.uint8)
-        segmentation_map = segmentation_map.squeeze()
 
         annot = dataloader.dataset.annot
         groundtruth = annot.loc[[image_id]] if image_id in annot.index else pd.DataFrame([], columns=['X','Y'], dtype=np.int)
@@ -329,8 +322,9 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
         if outdir and debug:  # debug
             outdir.mkdir(parents=True, exist_ok=True)
             io.imsave(outdir / image_id, image)
-            io.imsave(outdir / f'segm_{image_id}', (255 * segmentation_map).astype(np.uint8))
-            # io.imsave(outdir / f'hard_segm_{image_id}', (255 * (segmentation_map >= 0.5)).astype(np.uint8))
+            n_classes = cfg.model.module.out_channels
+            for i in range(n_classes):
+                io.imsave(outdir / f'segm_cls{i}_{image_id}', (255 * segmentation_map[:,:,i]).astype(np.uint8))
 
         image_metrics = []
         image_gt_and_preds = []
@@ -362,12 +356,16 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
             outdir.mkdir(parents=True, exist_ok=True)
 
             # pick a threshold and draw that prediction set
-            best_thr = pd.DataFrame(image_metrics).set_index('thr')['count/game-3'].idxmin()
+            best_thr = pd.DataFrame(image_metrics).set_index('thr')['count/game-3/macro'].idxmin()
             gp = pd.concat(image_gt_and_preds, ignore_index=True)
             gp = gp[gp.thr == best_thr]
 
-            image = draw_groundtruth_and_predictions(image, gp, radius=cfg.data.validation.target_params.radius, marker='circle')
-            io.imsave(outdir / f'annot_{image_id}', image)
+            n_classes = cfg.model.module.out_channels
+            radius = cfg.data.validation.target_params.radius
+            for i in range(n_classes):
+                gp_i = gp[gp['class'] == i]
+                image = draw_groundtruth_and_predictions(image, gp_i, radius=radius, marker='circle')
+                io.imsave(outdir / f'annot_{image_id}', image)
 
     all_metrics = pd.DataFrame(all_metrics)
     all_gp = pd.concat(all_gt_and_preds, ignore_index=True)
@@ -386,7 +384,8 @@ def predict_points(dataloader, model, device, threshold, cfg):
     @torch.no_grad()
     def process_fn(inputs):
         logits = model(inputs.to(device))
-        predictions = torch.sigmoid(logits).squeeze(axis=1).cpu().numpy()
+        predictions = torch.sigmoid(logits)
+        predictions = predictions.movedim(1, -1).cpu().numpy()
         return (predictions,)
 
     def collate_fn(image_info, image_patches):

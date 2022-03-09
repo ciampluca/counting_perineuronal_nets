@@ -218,8 +218,8 @@ class PatchedImageDataset(Dataset):
         if self.target_builder:
             # gather annotations
             selector = self.annot.X.between(sx, ex) & self.annot.Y.between(sy, ey)
-            locations = self.annot.loc[selector, ['Y', 'X']].values
-            patch_locations = locations - start_yx
+            patch_locations = self.annot.loc[selector, ['Y', 'X', 'class']].copy()
+            patch_locations[['Y', 'X']] -= start_yx
 
             # build target
             target = self.target_builder.build(patch_hw, patch_locations)

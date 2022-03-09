@@ -31,7 +31,9 @@ def train_one_epoch(dataloader, model, optimizer, device, writer, epoch, cfg):
         input_and_target = sample[0].to(device)
         # split channels to get input and target maps
         n_channels = input_and_target.shape[1]
-        images, gt_dmaps = input_and_target.split((n_channels - 1, 1), dim=1)
+        x_channels = cfg.model.module.in_channels
+        y_channels = n_channels - x_channels
+        images, gt_dmaps = input_and_target.split((x_channels, y_channels), dim=1)
 
         # computing pred dmaps
         pred_dmaps = model(images)
@@ -86,11 +88,12 @@ def _save_image_and_density_maps(image, image_id, pred_dmap, gt_dmap, cfg):
         draw.text((cfg.misc.text_pos, cfg.misc.text_pos), text=text, font=font, fill=191)
         return pil_density_map
 
-    pil_pred_dmap = _annotate_density_map(pred_dmap, 'Det')
-    pil_pred_dmap.save(debug_dir / f'{image_id.stem}_pred_dmap.png')
+    for i in range(pred_dmap.shape[2]):
+        pil_pred_dmap = _annotate_density_map(pred_dmap[:, :, i], 'Det')
+        pil_pred_dmap.save(debug_dir / f'{image_id.stem}_pred_dmap_cls{i}.png')
 
-    pil_gt_dmap = _annotate_density_map(gt_dmap, 'GT')
-    pil_gt_dmap.save(debug_dir / f'{image_id.stem}_gt_dmap.png')
+        pil_gt_dmap = _annotate_density_map(gt_dmap[:, :, i], 'GT')
+        pil_gt_dmap.save(debug_dir / f'{image_id.stem}_gt_dmap_cls{i}.png')
 
 
 @torch.no_grad()
@@ -107,8 +110,10 @@ def validate(dataloader, model, device, epoch, cfg):
 
         # split channels to get input and target
         n_channels = input_and_target.shape[1]
-        patches, gt_dmaps = input_and_target.split((n_channels - 1, 1), dim=1)
-            
+        x_channels = cfg.model.module.in_channels
+        y_channels = n_channels - x_channels
+        patches, gt_dmaps = input_and_target.split((x_channels, y_channels), dim=1)
+
         # pad to mitigate border errors
         pad = cfg.optim.border_pad
         padded_patches = F.pad(patches, pad)
@@ -176,7 +181,7 @@ def validate(dataloader, model, device, epoch, cfg):
         target_density_map = target_density_map.cpu().numpy().squeeze()
         predicted_density_map = predicted_density_map.cpu().numpy().squeeze()
         drange = predicted_density_map.max() - predicted_density_map.min()
-        val_ssim = ssim(target_density_map, predicted_density_map, data_range=drange)
+        val_ssim = ssim(target_density_map, predicted_density_map, data_range=drange, channel_axis=2)
 
         count_metrics = counting(target_density_map, predicted_density_map)
 
@@ -205,7 +210,6 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
     """ Make predictions on data. """
     model.eval()
     pad = cfg.optim.border_pad
-    density_map_builder = DensityTargetBuilder(**cfg.data.validation.target_params)
 
     @torch.no_grad()
     def process_fn(patches):
@@ -261,13 +265,14 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
     all_dmap_metrics = []
     all_gt_and_preds = []
     thrs = np.linspace(0, 1, 201).tolist() + [2]
+    density_map_builder = DensityTargetBuilder(**cfg.data.validation.target_params)
 
     processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn)
     n_images = dataloader.dataset.num_images()
     progress = tqdm(processed_images, total=n_images, desc='PRED', leave=False)
     for image_id, image_hw, image, density_map in progress:
+        n_classes = density_map.shape[2]
         image = (255 * image).astype(np.uint8)
-        density_map = density_map.squeeze()
 
         groundtruth = dataloader.dataset.annot.loc[[image_id]].copy()
         if 'AV' in groundtruth.columns:  # for the PNN dataset only
@@ -276,21 +281,22 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
         if outdir and debug:  # debug
             outdir.mkdir(parents=True, exist_ok=True)
             io.imsave(outdir / image_id, image)
-            normalized_dmap = normalize_map(density_map)
-            normalized_dmap = (255 * normalized_dmap).astype(np.uint8)
-            io.imsave(outdir / f'dmap_{image_id}', normalized_dmap)
-            del normalized_dmap
+            for i in range(n_classes):
+                normalized_dmap = normalize_map(density_map[:, :, i])
+                normalized_dmap = (255 * normalized_dmap).astype(np.uint8)
+                io.imsave(outdir / f'dmap_cls{i}_{image_id}', normalized_dmap)
+                del normalized_dmap
 
         # compute dmap metrics (no thresholding or peak finding)
-        gt_points = groundtruth[['Y', 'X']].values
-        gt_dmap = density_map_builder.build(image_hw, gt_points)
+        gt_dmap = density_map_builder.build(image_hw, groundtruth, n_classes=n_classes)
         # Eventually rescale target pixel values 
         gt_dmap /= cfg.data.validation.target_params.target_normalize_scale_factor
+    
         dmap_metrics = counting(gt_dmap, density_map)
         dmap_metrics['imgName'] = image_id
         all_dmap_metrics.append(dmap_metrics)
 
-        yx_metrics = counting_yx(gt_points, density_map)
+        yx_metrics = counting_yx(groundtruth, density_map)
         yx_metrics['imgName'] = image_id
         all_yx_metrics.append(yx_metrics)
 
@@ -325,12 +331,14 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
             outdir.mkdir(parents=True, exist_ok=True)
 
             # pick a threshold and draw that prediction set
-            best_thr = pd.DataFrame(image_metrics).set_index('thr')['count/game-3'].idxmin()
+            best_thr = pd.DataFrame(image_metrics).set_index('thr')['count/game-3/macro'].idxmin()
             gp = pd.concat(image_gt_and_preds, ignore_index=True)
             gp = gp[gp.thr == best_thr]
 
-            image = draw_groundtruth_and_predictions(image, gp, radius=cfg.data.validation.target_params.sigma, marker='circle')
-            io.imsave(outdir / f'annot_{image_id}', image)
+            radius = cfg.data.validation.target_params.sigma
+            for i, gp_i in gp.groupby('class'):
+                image = draw_groundtruth_and_predictions(image, gp_i, radius=radius, marker='circle')
+                io.imsave(outdir / f'annot_cls{i}_{image_id}', image)
 
     all_metrics = pd.DataFrame(all_metrics)
     all_yx_metrics = pd.DataFrame(all_yx_metrics)
@@ -353,9 +361,8 @@ def predict_points(dataloader, model, device, threshold, cfg):
 
     @torch.no_grad()
     def process_fn(patches):
-        patches_rgb = patches.expand(-1, 3, -1, -1)  # gray to RGB
         # pad to mitigate border errors
-        padded_patches = F.pad(patches_rgb, pad)
+        padded_patches = F.pad(patches, pad)
         # predict
         predicted_density_patches = model(padded_patches.to(device))
         # unpad
@@ -366,10 +373,17 @@ def predict_points(dataloader, model, device, threshold, cfg):
     def collate_fn(image_info, image_patches):
         image_id, image_hwc = image_info
         image_hw = image_hwc[:2]
-        predicted_density_map = torch.zeros(image_hw, dtype=torch.float32, device=device)
-        normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=device)
+        predicted_density_map = None
+        normalization_map = None
 
         for (patch_hw, start_yx), (predicted_density_patch,) in image_patches:
+            if predicted_density_map is None:
+                out_channels = predicted_density_patch.shape[-1]
+                out_hwc = image_hw + (out_channels,)
+
+                predicted_density_map = torch.zeros(out_hwc, dtype=torch.float32, device=device)
+                normalization_map = torch.zeros(out_hwc, dtype=torch.float32, device=device)
+
             (y, x), (h, w) = start_yx, patch_hw
             predicted_density_map[y:y+h, x:x+w] += predicted_density_patch[:h, :w]
             normalization_map[y:y+h, x:x+w] += 1.0

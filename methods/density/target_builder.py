@@ -1,11 +1,14 @@
+from methods.base_target_builder import BaseTargetBuilder
 import numpy as np
 
 from math import floor
 from scipy.signal import gaussian
 from skimage.filters import gaussian as gaussian_filter
 
+from methods.base_target_builder import BaseTargetBuilder
+
     
-class DensityTargetBuilder:
+class DensityTargetBuilder(BaseTargetBuilder):
     """ This builds the density map for counting. """
 
     def __init__(self, k_size=51, sigma=30, method='reflect', target_normalize_scale_factor=1.0, **kwargs):
@@ -22,7 +25,7 @@ class DensityTargetBuilder:
         self.method = method
         self.target_normalize_scale_factor=target_normalize_scale_factor
 
-    def build(self, shape, locations):
+    def build(self, shape, locations, n_classes=None):
         if self.method == 'move':
             method = self.build_nocv2
         elif self.method == 'move-cv2':
@@ -31,9 +34,22 @@ class DensityTargetBuilder:
             method = self.build_reflect
         elif self.method == 'normalize':
             method = self.build_normalize
-        
-        return method(shape, locations)
-    
+
+        if 'class' not in locations.columns:
+            locations['class'] = 0
+
+        if n_classes is None:
+            n_classes = locations['class'].max() + 1
+
+        density_maps = []
+        for i in range(n_classes):
+            points_i = locations[locations['class'] == i][['Y', 'X']].values
+            density_i = method(shape, points_i)
+            density_maps.append(density_i)
+
+        density_maps = np.stack(density_maps, axis=-1)
+        return density_maps
+
     def build_cv2(self, shape, locations):
         import cv2
         """ This builds the density map, putting a gaussian over each dots localizing an object. """
@@ -187,7 +203,6 @@ class DensityTargetBuilder:
         return density_map
 
     def pack(self, image, target, pad=None):
-        dmap = np.expand_dims(target, axis=-1)
-        dmap = np.pad(dmap, pad) if pad else dmap
+        target = np.pad(target, pad) if pad else target
         # stack in a unique RGB-like tensor, useful for applying data augmentation
-        return np.concatenate((image, dmap), axis=-1)
+        return np.concatenate((image, target), axis=-1)
