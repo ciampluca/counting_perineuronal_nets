@@ -2,9 +2,9 @@
 
 defaults:
   - /common: default
-  - /common/data: vgg-cells
+  - /common/data: adi-cells
   - /common/method: density
-  - /common/data/method-specific: vgg-cells_density
+  - /common/data/method-specific: adi-cells_density
   - /common/model: fcrn-a
   - /common/optim: default
 
@@ -13,7 +13,8 @@ optim:
     #     lr: 0.0001
     
     # lr_scheduler:
-    #     milestones: [ 80, 120, 150 ]
+    #     milestones: [ 150, 250, 300 ]
+
     optimizer:
         _target_: torch.optim.SGD
         lr: 0.01
@@ -26,22 +27,16 @@ optim:
         gamma: 0.1
 
     border_pad: 0      
-    batch_size: 8
+    batch_size: 4
     batch_accumulation: 1
 
     epochs: 150
 
 data:
     train: &common
-        as_gray: false
         target_params: 
             target_normalize_scale_factor: 100.0
             method: reflect
             sigma: 1
     validation:
         <<: *common
-
-model:
-    module:
-        in_channels: 3
-        out_channels: 1
