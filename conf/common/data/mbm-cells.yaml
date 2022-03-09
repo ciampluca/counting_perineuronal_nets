@@ -24,3 +24,4 @@ model:
 misc:
     font_size: 20
     text_pos: 15
+    bb_outline_width: 2
