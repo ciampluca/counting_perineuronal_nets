@@ -1,7 +1,7 @@
 # @package _global_
 
 defaults:
- - mbm-cells/density/common
+ - mbm-cells/density/csrnet/common
 
 data:
     train: &common
