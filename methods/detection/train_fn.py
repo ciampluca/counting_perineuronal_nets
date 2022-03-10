@@ -44,6 +44,8 @@ def _save_image_with_boxes(
     font_path = str(Path(hydra.utils.get_original_cwd()) / "font/LEMONMILK-RegularItalic.otf")
     font = ImageFont.truetype(font_path, cfg.misc.font_size)
 
+    text_pos = (cfg.misc.text_pos, cfg.misc.text_pos)
+
     class_labels = np.unique(np.hstack((det_labels, gt_labels)))
     for i in class_labels:
         class_pil_image = pil_image.copy()
@@ -56,9 +58,9 @@ def _save_image_with_boxes(
             draw.rectangle(box, outline='green', width=cfg.misc.bb_outline_width)
 
         # Add text to image
-        text = f"Det Num of Cells (Cls#{i}): {len(det_boxes)}, GT Num of Cells (Cls#{i}): {len(gt_boxes)}"
-        text_pos = cfg.misc.text_pos
-        draw.text((text_pos, text_pos), text=text, font=font, fill=(0, 191, 255))
+        text = f"Det N. Cells (Cls#{i}): {len(det_boxes)}, GT N. Cells (Cls#{i}): {len(gt_boxes)}"
+        
+        draw.text(text_pos, text=text, font=font, fill=(0, 191, 255))
         class_pil_image.save(debug_dir / f'cls{i}_{image_id}')
 
 
@@ -118,8 +120,33 @@ def train_one_epoch(dataloader, model, optimizer, device, writer, epoch, cfg):
     return metrics
 
 
+def _process_fn(batch, model, device, has_targets=True, return_image=True):
 
-def _collate_fn(image_info, image_patches, device, cfg):
+    if has_targets:
+        patches = [datum[0].to(device) for datum in batch]
+    else:
+        patches = [datum.to(device) for datum in batch]
+
+    predictions = model(patches)
+
+    if return_image:
+        # prepare data for validation
+        patches = torch.stack(patches)
+        patches = patches.movedim(1, -1)  # channel dim as last
+    
+    boxes = [p['boxes'].to(device) for p in predictions]
+    labels = [p['labels'].to(device) for p in predictions]
+    scores = [p['scores'].to(device) for p in predictions]
+
+    labels = [(p - 1) for p in labels]  # remove BG class
+
+    if return_image:
+        return patches, boxes, labels, scores
+    
+    return boxes, labels, scores
+
+
+def _collate_fn(image_info, image_patches, device, cfg, return_image=True):
     image_id, image_hw = image_info
     
     image = None
@@ -129,18 +156,28 @@ def _collate_fn(image_info, image_patches, device, cfg):
     scores = []
 
     # build full image with preds from patches
-    for (patch_hw, start_yx), (patch, patch_boxes, patch_labels, patch_scores) in image_patches:
+    for (patch_hw, start_yx), datum in image_patches:
 
-        if image is None:
-            in_channels = patch.shape[-1]
-            in_hwc = image_hw + (in_channels,)
+        if return_image:
+            patch = datum[0]
 
-            image = torch.empty(in_hwc, dtype=torch.float32, device=device)
+        patch_boxes, patch_labels, patch_scores = datum[-3:]
+
+        if normalization_map is None:
+            if return_image:
+                in_channels = patch.shape[-1]
+                in_hwc = image_hw + (in_channels,)
+                image = torch.empty(in_hwc, dtype=torch.float32, device=device)
+
             normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=device)
 
         (y, x), (h, w) = start_yx, patch_hw
-        image[y:y+h, x:x+w] = patch[:h, :w]
+
+        if return_image:
+            image[y:y+h, x:x+w] = patch[:h, :w]
+
         normalization_map[y:y+h, x:x+w] += 1.0
+
         if patch_boxes.nelement() != 0:
             patch_boxes += torch.as_tensor([x, y, x, y], device=device)
             boxes.append(patch_boxes)
@@ -183,7 +220,9 @@ def _collate_fn(image_info, image_patches, device, cfg):
     labels = torch.cat((labels[~in_overlap_zone], labels_in_overlap[keep]))
     scores = torch.cat((scores[~in_overlap_zone], scores_in_overlap[keep]))
 
-    image = image.cpu().numpy()
+    if return_image:
+        image = image.cpu().numpy()
+
     boxes = boxes.cpu().numpy()
     labels = labels.cpu().numpy()
     scores = scores.cpu().numpy()
@@ -191,7 +230,10 @@ def _collate_fn(image_info, image_patches, device, cfg):
     # cleaning
     del normalization_map
 
-    return image_id, image_hw, image, boxes, labels, scores
+    if return_image:
+        return image_id, image_hw, image, boxes, labels, scores
+    
+    return image_id, image_hw, boxes, labels, scores
 
 
 @torch.no_grad()
@@ -200,35 +242,13 @@ def validate(dataloader, model, device, epoch, cfg):
     model.eval()
     validation_device = cfg.optim.val_device
 
-    @torch.no_grad()
-    def process_fn(batch):
-        # splits input and target building them to be coco compliant
-        images, targets = build_coco_compliant_batch(batch)
-        images = [i.to(device) for i in images]
-
-        predictions = model(images)
-
-        # prepare data for validation
-        images = torch.stack(images)
-        images = images.movedim(1, -1).to(validation_device)  # channel dim as last
-        # targets_bbs = [t['boxes'].to(validation_device) for t in targets]
-        # targets_labels = [t['labels'].to(validation_device) for t in targets]
-        predictions_bbs = [p['boxes'].to(validation_device) for p in predictions]
-        predictions_labels = [p['labels'].to(validation_device) for p in predictions]
-        predictions_scores = [p['scores'].to(validation_device) for p in predictions]
-
-        predictions_labels = [(p - 1) for p in predictions_labels]  # remove BG class
-
-        processed_batch = (images, # targets_bbs, targets_labels,
-            predictions_bbs, predictions_labels, predictions_scores)
-        return processed_batch
-
+    process_fn = partial(_process_fn, model=model, device=validation_device, has_targets=True, return_image=True)
     collate_fn = partial(_collate_fn, device=validation_device, cfg=cfg)
+    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn, max_prefetch=1)
 
     metrics = []
     thr_metrics = []
 
-    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn)
     n_images = dataloader.dataset.num_images()
     progress = tqdm(processed_images, total=n_images, desc='EVAL (patches)', leave=False)
     for image_id, image_hw, image, boxes, labels, scores in progress:
@@ -330,19 +350,7 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
     """ Make predictions on data. """
     model.eval()
 
-    @torch.no_grad()
-    def process_fn(patches):
-        inputs = list(i.to(device) for i in patches)
-        predictions = model(inputs)
-        # prepare data
-        patches = patches.movedim(1, -1)  # channels as last dim
-        boxes = [p['boxes'].to(device) for p in predictions]
-        labels = [p['labels'].to(device) for p in predictions]
-        scores = [p['scores'].to(device) for p in predictions]
-
-        labels = [(p - 1) for p in labels]  # remove BG class
-        return patches, boxes, labels, scores
-
+    process_fn = partial(_process_fn, model=model, device=device, has_targets=False, return_image=True)
     collate_fn = partial(_collate_fn, device=device, cfg=cfg)
 
     all_metrics = []
@@ -422,80 +430,8 @@ def predict_points(dataloader, model, device, threshold, cfg):
     """ Predict and find points. """
     model.eval()
 
-    @torch.no_grad()
-    def process_fn(patches):
-        predictions = model([i.to(device) for i in patches])
-        boxes = [p['boxes'] for p in predictions]
-        labels = [p['labels'] for p in predictions]
-        scores = [p['scores'] for p in predictions]
-
-        labels = [(p - 1) for p in labels]  # remove BG class
-        return boxes, scores
-
-    # TODO merge with _collate_fn and do something like:
-    # collate_fn = partial(_collate_fn, device=device, cfg=cfg, **image=False**)
-
-    def collate_fn(image_info, image_patches):
-        image_id, image_hw = image_info
-        normalization_map = torch.zeros(image_hw, dtype=torch.float32, device=device)
-        boxes = []
-        labels = []
-        scores = []
-
-        # build full image with preds from patches
-        for (patch_hw, start_yx), (patch_boxes, patch_labels, patch_scores) in image_patches:
-            (y, x), (h, w) = start_yx, patch_hw
-            normalization_map[y:y+h, x:x+w] += 1.0
-            if patch_boxes.nelement() != 0:
-                patch_boxes += torch.as_tensor([x, y, x, y], device=device)
-                boxes.append(patch_boxes)
-                labels.append(patch_labels)
-                scores.append(patch_scores)
-
-        boxes = torch.cat(boxes) if len(boxes) else torch.empty(0, 4, dtype=torch.float32, device=device)
-        labels = torch.cat(labels) if len(labels) else torch.empty(0, dtype=torch.int64, device=device)
-        scores = torch.cat(scores) if len(scores) else torch.empty(0, dtype=torch.float32, device=device)
-
-        # progress.set_description('PRED (cleaning)')
-        # remove boxes with center outside the image     
-        image_wh = torch.tensor(image_hw[::-1], device=device)
-        boxes_center = (boxes[:, :2] + boxes[:, 2:]) / 2
-        boxes_center = boxes_center.round().long()
-        keep = (boxes_center < image_wh).all(axis=1)
-
-        boxes = boxes[keep]
-        labels = labels[keep]
-        scores = scores[keep]
-        boxes_center = boxes_center[keep]  # we need those later
-
-        # clip boxes to image limits
-        ih, iw = image_hw
-        l = torch.tensor([[0, 0, 0, 0]], device=device)
-        u = torch.tensor([[iw, ih, iw, ih]], device=device)
-        boxes = torch.max(l, torch.min(boxes, u))
-
-        # filter boxes in the overlapped areas using nms
-        xc, yc = boxes_center.T
-        in_overlap_zone = normalization_map[yc, xc] != 1.0
-
-        boxes_in_overlap = boxes[in_overlap_zone]
-        labels_in_overlap = labels[in_overlap_zone]
-        scores_in_overlap = scores[in_overlap_zone]
-        # keep = box_ops.nms(boxes_in_overlap, scores_in_overlap, iou_threshold=cfg.model.module.nms)  # TODO check equivalence of batched_nms() and nms()
-        keep = box_ops.batched_nms(boxes_in_overlap, scores_in_overlap, labels_in_overlap, iou_threshold=cfg.model.module.nms)
-
-        boxes = torch.cat((boxes[~in_overlap_zone], boxes_in_overlap[keep]))
-        labels = torch.cat((labels[~in_overlap_zone], labels_in_overlap[keep]))
-        scores = torch.cat((scores[~in_overlap_zone], scores_in_overlap[keep]))
-
-        boxes = boxes.cpu().numpy()
-        labels = labels.cpu().numpy()
-        scores = scores.cpu().numpy()
-
-        # cleaning
-        del normalization_map
-
-        return image_id, boxes, labels, scores
+    process_fn = partial(_process_fn, model=model, device=device, has_targets=False, return_image=False)
+    collate_fn = partial(_collate_fn, device=device, cfg=cfg, return_image=False)
 
     all_localizations = []
 
