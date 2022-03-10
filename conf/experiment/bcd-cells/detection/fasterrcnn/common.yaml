@@ -28,5 +28,7 @@ optim:
     batch_size: 8
     batch_accumulation: 1
 
+    val_batch_size: 4
+
 
 

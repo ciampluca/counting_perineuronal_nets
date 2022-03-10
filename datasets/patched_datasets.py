@@ -33,14 +33,14 @@ class PatchedMultiImageDataset(ConcatDataset):
         return s
 
     @staticmethod
-    def process_per_patch(dataloader, process_fn, collate_fn, max_prefetch=15000, progress=False):
+    def process_per_patch(dataloader, process_fn, collate_fn, max_prefetch=5, progress=False):
         """ Process images in batches of patches and reconstruct the entire images.
 
         Args:
             dataloader (torch.util.data.DataLoader): Loader yielding batches of patches.
             process_fn (callable): batch -> processed_batch.
             collate_fn (callable): (image_info, List[(patch_info, processed_sample)]) -> image_results.
-            max_prefetch (int, optional): Max batches to prefetch using threading. Defaults to 15000.
+            max_prefetch (int, optional): Max batches to prefetch using threading. Defaults to 5.
             progress (bool, optional): Whether to show a tqdm progress bar when iterating the dataloader. Defaults to False.
         """
         dataloader = tqdm(dataloader, dynamic_ncols=True, leave=False, disable=not progress)
