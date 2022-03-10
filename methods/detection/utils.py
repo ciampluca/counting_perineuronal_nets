@@ -16,7 +16,8 @@ def build_coco_compliant_batch(image_and_target_batch):
         boxes = [[x0, y0, x1, y1] for y0, x0, y1, x1 in bboxes] if n_boxes else [[]]
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
 
-        labels = torch.as_tensor(labels, dtype=torch.int64) if n_boxes else torch.ones((1, 0), dtype=torch.int64)
+        # +1 to add the BG class
+        labels = torch.as_tensor(labels + 1, dtype=torch.int64) if n_boxes else torch.ones((1, 0), dtype=torch.int64)
         
         return {
             'boxes': boxes,
