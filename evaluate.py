@@ -28,7 +28,7 @@ def main(args):
     test_dataset.target = None
     test_dataset = hydra.utils.instantiate(test_dataset)
 
-    test_batch_size = cfg.optim.batch_size
+    test_batch_size = cfg.optim.val_batch_size if args.batch_size is None else args.batch_size
     test_loader = DataLoader(test_dataset, batch_size=test_batch_size, shuffle=False, num_workers=cfg.optim.num_workers)
     log.info(f'[TEST] {test_dataset}')
 
@@ -54,10 +54,11 @@ if __name__ == "__main__":
     parser.add_argument('run', help='Path to run dir')
     parser.add_argument('-d', '--device', default='cuda', help='device to use for prediction')
     parser.add_argument('--best-on-metric', default='count/game-3/macro', help='select snapshot that optimizes this metric')
-    parser.add_argument('--no-save', action='store_false', dest='save', help='draw images with predictions')
-    parser.add_argument('--debug', action='store_true', default=False, help='draw images with predictions')
+    parser.add_argument('--no-save', action='store_false', dest='save', help='do not produce outputs')
+    parser.add_argument('--debug', nargs='?', type=int, default=0, const=5, help='draw so many images with predictions for debugging')
     parser.add_argument('--data-root', default=None, help='root of the test subset')
     parser.add_argument('--test-split', default='test', help='split to be used for evaluation')
+    parser.add_argument('--batch-size', type=int, default=None, help='batch size used for evaluation')
     parser.set_defaults(save=True)
 
     args = parser.parse_args()
