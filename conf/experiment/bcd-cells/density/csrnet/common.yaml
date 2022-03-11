@@ -13,10 +13,14 @@ optim:
         lr: 0.00001
     
     lr_scheduler:
-        milestones: [ 400, 450, 500 ]
+        milestones: [ 180, 230, 250 ]
+
+    loss:
+        _target_: torch.nn.MSELoss
+        reduction: sum
 
     border_pad: 0     
     batch_size: 12
     batch_accumulation: 1
 
-    epochs: 500
+    epochs: 250

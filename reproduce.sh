@@ -40,14 +40,14 @@ for EXP in ${EXPS[@]}; do
     then
         if  [[ $EXP == *fcrn-a* ]]
         then
-            python evaluate.py runs/experiment=$EXP --debug --test-split all --data-root data/bcd-cells/test --best-on-metric count/mae
+            python evaluate.py runs/experiment=$EXP --debug --test-split all --data-root data/bcd-cells/test --best-on-metric count/game-0/macro
         else
             python evaluate.py runs/experiment=$EXP --debug --test-split all --data-root data/bcd-cells/test
         fi
     else
         if  [[ $EXP == *fcrn-a* ]]
         then
-            python evaluate.py runs/experiment=$EXP --debug --best-on-metric count/mae
+            python evaluate.py runs/experiment=$EXP --debug --best-on-metric count/game-0/macro
         else
             python evaluate.py runs/experiment=$EXP --debug 
         fi

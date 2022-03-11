@@ -17,4 +17,4 @@ data:
 optim:
     loss:
         _target_: torch.nn.MSELoss
-        reduction: sum
+        reduction: mean
