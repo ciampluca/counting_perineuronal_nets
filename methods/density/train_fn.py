@@ -1,6 +1,8 @@
+from functools import partial
 from pathlib import Path
 
 import hydra
+from joblib import Parallel, delayed
 import numpy as np
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
@@ -97,84 +99,127 @@ def _save_image_and_density_maps(image, image_id, pred_dmap, gt_dmap, cfg):
 
 
 @torch.no_grad()
+def _process_fn(batch, model, device, cfg, has_target=True, return_input=True, return_target=True):
+    batch = batch.to(device)
+
+    if has_target:
+        # split channels to get input and target
+        n_channels = batch.shape[1]
+        x_channels = cfg.model.module.in_channels
+        y_channels = n_channels - x_channels
+        patches, gt_dmaps = batch.split((x_channels, y_channels), dim=1)
+    else:
+        patches = batch
+
+    # pad to mitigate border errors
+    pad = cfg.optim.border_pad
+    padded_patches = F.pad(patches, pad)
+
+    # compute predictions
+    predicted_density_patches = model(padded_patches)
+
+    # rescale target and predicted pixel values 
+    scale_factor = cfg.data.validation.target_params.target_normalize_scale_factor
+    predicted_density_patches /= scale_factor
+    if has_target:
+        gt_dmaps /= scale_factor
+    
+    # unpad
+    h, w = predicted_density_patches.shape[2:]
+    predicted_density_patches = predicted_density_patches[:, :, pad:(h-pad), pad:(w-pad)]
+
+    # prepare data
+    processed_batch = (predicted_density_patches,)
+    if return_target and has_target:
+        processed_batch = (gt_dmaps,) + processed_batch
+    if return_input:
+        processed_batch = (patches,) + processed_batch
+
+    processed_batch = [x.movedim(1, -1).to(device) for x in processed_batch]
+    return processed_batch
+
+
+@torch.no_grad()
+def _collate_fn(image_info, image_patches, device, has_input=True, has_target=True, return_numpy=False):
+    image_id, image_hw = image_info
+
+    # image = None
+    # target_density_map = None
+    predicted_density_map = None
+    normalization_map = None
+
+    # build full maps from patches
+    for (patch_hw, start_yx), datum in image_patches:
+
+        if has_input and has_target:
+            patch, target_density_patch, predicted_density_patch = datum
+        elif has_input:
+            patch, predicted_density_patch = datum
+        elif has_target:
+            target_density_patch, predicted_density_patch = datum
+        else:
+            predicted_density_patch, = datum
+        
+        if predicted_density_map is None:
+            out_channels = predicted_density_patch.shape[-1]
+            out_hwc = image_hw + (out_channels,)
+
+            if has_input:
+                in_channels = patch.shape[-1]
+                in_hwc = image_hw + (in_channels,)
+                image = torch.empty(in_hwc, dtype=torch.float32, device=device)
+
+            if has_target:
+                target_density_map = torch.zeros(out_hwc, dtype=torch.float32, device=device)
+
+            predicted_density_map = torch.zeros(out_hwc, dtype=torch.float32, device=device)
+            normalization_map = torch.zeros(out_hwc, dtype=torch.float32, device=device)
+
+        (y, x), (h, w) = start_yx, patch_hw
+        if has_input:
+            image[y:y+h, x:x+w] = patch[:h, :w]
+        if has_target:
+            target_density_map[y:y+h, x:x+w] += target_density_patch[:h, :w]
+        predicted_density_map[y:y+h, x:x+w] += predicted_density_patch[:h, :w]
+        normalization_map[y:y+h, x:x+w] += 1.0
+
+    if has_target:
+        target_density_map /= normalization_map
+    predicted_density_map /= normalization_map
+    del normalization_map
+
+    if return_numpy:
+        if has_input:
+            image = image.cpu().numpy()
+        if has_target:
+            target_density_map = target_density_map.cpu().numpy()
+        predicted_density_map = predicted_density_map.cpu().numpy()
+
+    result = (image_id, image_hw)
+    if has_input:
+        result += (image,)
+    if has_target:
+        result += (target_density_map,)
+    result += (predicted_density_map,)
+
+    return result
+
+
+@torch.no_grad()
 def validate(dataloader, model, device, epoch, cfg):
     """ Evaluate model on validation data. """
     model.eval()
     validation_device = cfg.optim.val_device
-
     criterion = hydra.utils.instantiate(cfg.optim.loss)
-
-    @torch.no_grad()
-    def process_fn(batch):
-        input_and_target = batch.to(device)
-
-        # split channels to get input and target
-        n_channels = input_and_target.shape[1]
-        x_channels = cfg.model.module.in_channels
-        y_channels = n_channels - x_channels
-        patches, gt_dmaps = input_and_target.split((x_channels, y_channels), dim=1)
-
-        # pad to mitigate border errors
-        pad = cfg.optim.border_pad
-        padded_patches = F.pad(patches, pad)
-
-        # Computing predictions
-        predicted_density_patches = model(padded_patches)
-        
-        # Eventually rescale target and predicted pixel values 
-        gt_dmaps /= cfg.data.validation.target_params.target_normalize_scale_factor
-        predicted_density_patches /= cfg.data.validation.target_params.target_normalize_scale_factor
-
-        # unpad
-        h, w = predicted_density_patches.shape[2:]
-        predicted_density_patches = predicted_density_patches[:, :, pad:(h-pad), pad:(w-pad)]
-
-        # prepare data for validation
-        processed_batch = (patches, gt_dmaps, predicted_density_patches)
-        processed_batch = [x.movedim(1, -1).to(validation_device) for x in processed_batch]
-        return processed_batch
-
-    def collate_fn(image_info, image_patches):
-        image_id, image_hw = image_info
-
-        image = None
-        target_density_map = None
-        predicted_density_map = None
-        normalization_map = None
-
-        # build full maps from patches
-        for (patch_hw, start_yx), (patch, target_density_patch, predicted_density_patch) in image_patches:
-
-            if predicted_density_map is None:
-                in_channels = patch.shape[-1]
-                out_channels = predicted_density_patch.shape[-1]
-
-                in_hwc = image_hw + (in_channels,)
-                out_hwc = image_hw + (out_channels,)
-
-                image = torch.empty(in_hwc, dtype=torch.float32, device=validation_device)
-                target_density_map = torch.zeros(out_hwc, dtype=torch.float32, device=validation_device)
-                predicted_density_map = torch.zeros(out_hwc, dtype=torch.float32, device=validation_device)
-                normalization_map = torch.zeros(out_hwc, dtype=torch.float32, device=validation_device)
-
-            (y, x), (h, w) = start_yx, patch_hw
-            image[y:y+h, x:x+w] = patch[:h, :w]
-            target_density_map[y:y+h, x:x+w] += target_density_patch[:h, :w]
-            predicted_density_map[y:y+h, x:x+w] += predicted_density_patch[:h, :w]
-            normalization_map[y:y+h, x:x+w] += 1.0
-
-        target_density_map /= normalization_map
-        predicted_density_map /= normalization_map
-        del normalization_map
-
-        return image_id, image, predicted_density_map, target_density_map
-
-    metrics = []
     
-    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn)
+    process_fn = partial(_process_fn, model=model, device=validation_device, cfg=cfg, has_target=True, return_input=True, return_target=True)
+    collate_fn = partial(_collate_fn, device=validation_device, has_input=True, has_target=True, return_numpy=False)
+    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn, max_prefetch=1)
+    
+    metrics = []
     n_images = dataloader.dataset.num_images()
     progress = tqdm(processed_images, total=n_images, desc='EVAL (patches)', leave=False)
-    for image_id, image, predicted_density_map, target_density_map in progress:
+    for image_id, image_hw, image, target_density_map, predicted_density_map in progress:
         # threshold-free metrics
         loss = criterion(predicted_density_map, target_density_map)
 
@@ -206,59 +251,13 @@ def validate(dataloader, model, device, epoch, cfg):
 
 
 @torch.no_grad()
-def predict(dataloader, model, device, cfg, outdir, debug=False):
+def predict(dataloader, model, device, cfg, outdir, debug=0):
     """ Make predictions on data. """
     model.eval()
-    pad = cfg.optim.border_pad
-
-    @torch.no_grad()
-    def process_fn(patches):
-        # pad to mitigate border errors
-        padded_patches = F.pad(patches, pad)
-        # predict
-        predicted_density_patches = model(padded_patches.to(device))
-        # Eventually rescale prediction pixel values 
-        predicted_density_patches /= cfg.data.validation.target_params.target_normalize_scale_factor
-        # unpad
-        h, w = predicted_density_patches.shape[2:]
-        predicted_density_patches = predicted_density_patches[:, :, pad:(h - pad), pad:(w - pad)]
-        # prepare
-        processed_patches = (patches, predicted_density_patches)
-        processed_patches = [x.movedim(1, -1) for x in processed_patches]
-        return processed_patches
-
-    def collate_fn(image_info, image_patches):
-        image_id, image_hw = image_info
-        
-        image = None
-        predicted_density_map = None
-        normalization_map = None
-
-        for (patch_hw, start_yx), (patch, predicted_density_patch) in image_patches:
-
-            if image is None:
-                in_channels = patch.shape[-1]
-                out_channels = predicted_density_patch.shape[-1]
-
-                in_hwc = image_hw + (in_channels,)
-                out_hwc = image_hw + (out_channels,)
-
-                image = torch.empty(in_hwc, dtype=torch.float32, device=device)
-                predicted_density_map = torch.zeros(out_hwc, dtype=torch.float32, device=device)
-                normalization_map = torch.zeros(out_hwc, dtype=torch.float32, device=device)
-
-            (y, x), (h, w) = start_yx, patch_hw
-            image[y:y+h, x:x+w] = patch[:h, :w]
-            predicted_density_map[y:y+h, x:x+w] += predicted_density_patch[:h, :w]
-            normalization_map[y:y+h, x:x+w] += 1.0
-
-        predicted_density_map /= normalization_map
-        del normalization_map
-
-        image = image.cpu().numpy()
-        predicted_density_map = predicted_density_map.cpu().numpy()
-
-        return image_id, image_hw, image, predicted_density_map
+    
+    process_fn = partial(_process_fn, model=model, device=device, cfg=cfg, has_target=False, return_input=True, return_target=False)
+    collate_fn = partial(_collate_fn, device=device, has_input=True, has_target=False, return_numpy=True)
+    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn, max_prefetch=1)
 
     all_metrics = []
     all_yx_metrics = []
@@ -267,10 +266,9 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
     thrs = np.linspace(0, 1, 201).tolist() + [2]
     density_map_builder = DensityTargetBuilder(**cfg.data.validation.target_params)
 
-    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn)
     n_images = dataloader.dataset.num_images()
     progress = tqdm(processed_images, total=n_images, desc='PRED', leave=False)
-    for image_id, image_hw, image, density_map in progress:
+    for n_i, (image_id, image_hw, image, density_map) in enumerate(progress):
         n_classes = density_map.shape[2]
         image = (255 * image).astype(np.uint8)
 
@@ -278,7 +276,7 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
         if 'AV' in groundtruth.columns:  # for the PNN dataset only
             groundtruth['agreement'] = groundtruth.loc[:, 'AV':'VT'].sum(axis=1)
 
-        if outdir and debug:  # debug
+        if outdir and n_i < debug:  # debug
             outdir.mkdir(parents=True, exist_ok=True)
             io.imsave(outdir / image_id, image)
             for i in range(n_classes):
@@ -289,7 +287,7 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
 
         # compute dmap metrics (no thresholding or peak finding)
         gt_dmap = density_map_builder.build(image_hw, groundtruth, n_classes=n_classes)
-        # Eventually rescale target pixel values 
+        # rescale target pixel values 
         gt_dmap /= cfg.data.validation.target_params.target_normalize_scale_factor
     
         dmap_metrics = counting(gt_dmap, density_map)
@@ -300,34 +298,33 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
         yx_metrics['imgName'] = image_id
         all_yx_metrics.append(yx_metrics)
 
-        image_metrics = []
-        image_gt_and_preds = []
-        thr_progress = tqdm(thrs, leave=False)
-        for thr in thr_progress:
-            thr_progress.set_description(f'thr={thr:.2f}')
+        min_distance = int(cfg.data.validation.target_params.sigma)
+        # TODO instead of using target.sigma better to use estimated object radius
+        tolerance = 1.25 * cfg.data.validation.target_params.sigma  # min distance to match points
 
-            min_distance = int(cfg.data.validation.target_params.sigma)
+        def _compute_thr_metrics(thr, density_map, min_distance, groundtruth, tolerance):
             localizations = density_map_to_points(density_map, min_distance, thr)
 
             # match groundtruths and predictions
-            # TODO instead of using target.sigma better to use estimated obecjt radius
-            tolerance = 1.25 * cfg.data.validation.target_params.sigma  # min distance to match points
             groundtruth_and_predictions = match(groundtruth, localizations, tolerance)
             groundtruth_and_predictions['imgName'] = groundtruth_and_predictions.imgName.fillna(image_id)
             groundtruth_and_predictions['thr'] = thr
-            image_gt_and_preds.append(groundtruth_and_predictions)
 
             # compute metrics
             metrics = detection_and_counting(groundtruth_and_predictions, image_hw=image_hw)
             metrics['thr'] = thr
             metrics['imgName'] = image_id
 
-            image_metrics.append(metrics)
+            return groundtruth_and_predictions, metrics
+
+        job_args = (density_map, min_distance, groundtruth, tolerance)
+        jobs = [delayed(_compute_thr_metrics)(thr, *job_args) for thr in thrs]
+        image_gt_and_preds, image_metrics = zip(*Parallel(n_jobs=-1)(jobs))
 
         all_metrics.extend(image_metrics)
         all_gt_and_preds.extend(image_gt_and_preds)
 
-        if outdir and debug:
+        if outdir and n_i < debug:
             outdir.mkdir(parents=True, exist_ok=True)
 
             # pick a threshold and draw that prediction set
@@ -357,55 +354,19 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
 def predict_points(dataloader, model, device, threshold, cfg):
     """ Predict and find points. """
     model.eval()
-    pad = cfg.optim.border_pad
-
-    @torch.no_grad()
-    def process_fn(patches):
-        # pad to mitigate border errors
-        padded_patches = F.pad(patches, pad)
-        # predict
-        predicted_density_patches = model(padded_patches.to(device))
-        # unpad
-        h, w = predicted_density_patches.shape[2:]
-        predicted_density_patches = predicted_density_patches[:, 0, pad:(h - pad), pad:(w - pad)]
-        return (predicted_density_patches,)
-
-    def collate_fn(image_info, image_patches):
-        image_id, image_hwc = image_info
-        image_hw = image_hwc[:2]
-        predicted_density_map = None
-        normalization_map = None
-
-        for (patch_hw, start_yx), (predicted_density_patch,) in image_patches:
-            if predicted_density_map is None:
-                out_channels = predicted_density_patch.shape[-1]
-                out_hwc = image_hw + (out_channels,)
-
-                predicted_density_map = torch.zeros(out_hwc, dtype=torch.float32, device=device)
-                normalization_map = torch.zeros(out_hwc, dtype=torch.float32, device=device)
-
-            (y, x), (h, w) = start_yx, patch_hw
-            predicted_density_map[y:y+h, x:x+w] += predicted_density_patch[:h, :w]
-            normalization_map[y:y+h, x:x+w] += 1.0
-
-        predicted_density_map /= normalization_map
-        del normalization_map
-
-        predicted_density_map = predicted_density_map.cpu().numpy()
-        return image_id, predicted_density_map
+    
+    process_fn = partial(_process_fn, model=model, device=device, cfg=cfg, has_target=False, return_input=False, return_target=False)
+    collate_fn = partial(_collate_fn, device=device, has_input=False, has_target=False, return_numpy=True)
+    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn, progress=True, max_prefetch=1)
 
     all_localizations = []
-
-    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn, progress=True)
+    min_distance = int(cfg.data.validation.target_params.sigma)
     n_images = dataloader.dataset.num_images()
     progress = tqdm(processed_images, total=n_images, desc='PRED', leave=False)
-    for image_id, density_map in progress:
-
-        min_distance = int(cfg.data.validation.target_params.sigma)
+    for image_id, image_hw, density_map in progress:
         localizations = density_map_to_points(density_map, min_distance, threshold)
         localizations['imgName'] = image_id
         localizations['thr'] = threshold
-
         all_localizations.append(localizations)
     
     all_localizations = pd.concat(all_localizations, ignore_index=True)

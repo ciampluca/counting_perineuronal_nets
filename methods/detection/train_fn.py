@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 
 import hydra
+from joblib import Parallel, delayed
 import numpy as np
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
@@ -120,16 +121,17 @@ def train_one_epoch(dataloader, model, optimizer, device, writer, epoch, cfg):
     return metrics
 
 
-def _process_fn(batch, model, device, has_targets=True, return_image=True):
+@torch.no_grad()
+def _process_fn(batch, model, device, has_target=True, return_input=True):
 
-    if has_targets:
+    if has_target:
         patches = [datum[0].to(device) for datum in batch]
     else:
         patches = [datum.to(device) for datum in batch]
 
     predictions = model(patches)
 
-    if return_image:
+    if return_input:
         # prepare data for validation
         patches = torch.stack(patches)
         patches = patches.movedim(1, -1)  # channel dim as last
@@ -140,13 +142,14 @@ def _process_fn(batch, model, device, has_targets=True, return_image=True):
 
     labels = [(p - 1) for p in labels]  # remove BG class
 
-    if return_image:
+    if return_input:
         return patches, boxes, labels, scores
     
     return boxes, labels, scores
 
 
-def _collate_fn(image_info, image_patches, device, cfg, return_image=True):
+@torch.no_grad()
+def _collate_fn(image_info, image_patches, device, cfg, return_input=True):
     image_id, image_hw = image_info
     
     image = None
@@ -158,13 +161,13 @@ def _collate_fn(image_info, image_patches, device, cfg, return_image=True):
     # build full image with preds from patches
     for (patch_hw, start_yx), datum in image_patches:
 
-        if return_image:
+        if return_input:
             patch = datum[0]
 
         patch_boxes, patch_labels, patch_scores = datum[-3:]
 
         if normalization_map is None:
-            if return_image:
+            if return_input:
                 in_channels = patch.shape[-1]
                 in_hwc = image_hw + (in_channels,)
                 image = torch.empty(in_hwc, dtype=torch.float32, device=device)
@@ -173,7 +176,7 @@ def _collate_fn(image_info, image_patches, device, cfg, return_image=True):
 
         (y, x), (h, w) = start_yx, patch_hw
 
-        if return_image:
+        if return_input:
             image[y:y+h, x:x+w] = patch[:h, :w]
 
         normalization_map[y:y+h, x:x+w] += 1.0
@@ -220,7 +223,7 @@ def _collate_fn(image_info, image_patches, device, cfg, return_image=True):
     labels = torch.cat((labels[~in_overlap_zone], labels_in_overlap[keep]))
     scores = torch.cat((scores[~in_overlap_zone], scores_in_overlap[keep]))
 
-    if return_image:
+    if return_input:
         image = image.cpu().numpy()
 
     boxes = boxes.cpu().numpy()
@@ -230,7 +233,7 @@ def _collate_fn(image_info, image_patches, device, cfg, return_image=True):
     # cleaning
     del normalization_map
 
-    if return_image:
+    if return_input:
         return image_id, image_hw, image, boxes, labels, scores
     
     return image_id, image_hw, boxes, labels, scores
@@ -242,7 +245,7 @@ def validate(dataloader, model, device, epoch, cfg):
     model.eval()
     validation_device = cfg.optim.val_device
 
-    process_fn = partial(_process_fn, model=model, device=validation_device, has_targets=True, return_image=True)
+    process_fn = partial(_process_fn, model=model, device=validation_device, has_target=True, return_input=True)
     collate_fn = partial(_collate_fn, device=validation_device, cfg=cfg)
     processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn, max_prefetch=1)
 
@@ -268,12 +271,17 @@ def validate(dataloader, model, device, epoch, cfg):
             _save_image_with_boxes(image, image_id, boxes, labels, gt_boxes, gt_labels, cfg)
 
         # threshold-dependent metrics
-        image_thr_metrics = []
-
-        thrs = torch.linspace(0, 1, 21).tolist() + [2, ]
-        progress_thrs = tqdm(thrs, desc='thr', leave=False)
-        for thr in progress_thrs:
-            progress_thrs.set_description(f'thr={thr:.2f} (det)')
+        def _compute_thr_metrics(
+            thr,
+            boxes,
+            labels,
+            scores,
+            groundtruth,
+            gt_boxes,
+            gt_labels,
+            out_hwc,
+            half_box
+        ):
 
             keep = scores >= thr
             thr_boxes = boxes[keep]
@@ -291,14 +299,21 @@ def validate(dataloader, model, device, epoch, cfg):
 
             tolerance = 1.25 * half_box  # min distance to match points
             groundtruth_and_predictions = match(groundtruth, localizations, tolerance)
-            count_pdet_metrics = detection_and_counting(groundtruth_and_predictions, image_hw=image_hw)
+            count_pdet_metrics = detection_and_counting(groundtruth_and_predictions, image_hw=out_hwc[:2])
 
-            image_thr_metrics.append({
+            result = {
                 'image_id': image_id,
                 'thr': thr,
                 **segm_metrics,
                 **count_pdet_metrics
-            })
+            }
+            # image_thr_metrics.append(result)
+            return result
+
+        thrs = torch.linspace(0, 1, 21).tolist() + [2, ]
+        job_args = (boxes, labels, scores, groundtruth, gt_boxes, gt_labels, out_hwc, half_box)
+        jobs = [delayed(_compute_thr_metrics)(thr, *job_args) for thr in thrs]
+        image_thr_metrics = Parallel(n_jobs=-1)(jobs)
 
         average_precisions = detection_average_precision(image_thr_metrics)
 
@@ -346,21 +361,21 @@ def validate(dataloader, model, device, epoch, cfg):
 
 
 @torch.no_grad()
-def predict(dataloader, model, device, cfg, outdir, debug=False):
+def predict(dataloader, model, device, cfg, outdir, debug=0):
     """ Make predictions on data. """
     model.eval()
 
-    process_fn = partial(_process_fn, model=model, device=device, has_targets=False, return_image=True)
+    process_fn = partial(_process_fn, model=model, device=device, has_target=False, return_input=True)
     collate_fn = partial(_collate_fn, device=device, cfg=cfg)
+    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn, max_prefetch=5)
 
     all_metrics = []
     all_gt_and_preds = []
     thrs = np.linspace(0, 1, 201).tolist() + [2]
 
-    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn)
     n_images = dataloader.dataset.num_images()
     progress = tqdm(processed_images, total=n_images, desc='PRED (patches)', leave=False)
-    for image_id, image_hw, image, boxes, labels, scores in progress:
+    for n_i, (image_id, image_hw, image, boxes, labels, scores) in enumerate(progress):
         image = (255 * image).astype(np.uint8)
 
         # TODO: check when there are no anns in the image
@@ -377,33 +392,31 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
         localizations['class'] = labels
         localizations['score'] = scores
 
-        image_metrics = []
-        image_gt_and_preds = []
-        thr_progress = tqdm(thrs, leave=False)
-        for thr in thr_progress:
-            thr_progress.set_description(f'thr={thr:.2f}')
+        tolerance = 1.25 * (cfg.data.validation.target_params.side / 2)  # min distance to match points
 
+        def _compute_thr_metrics(thr, localizations, groundtruth, tolerance, image_id, image_hw):
             thresholded_localizations = localizations[localizations.score >= thr].reset_index()
 
             # match groundtruths and predictions
-            tolerance = 1.25 * (cfg.data.validation.target_params.side / 2)  # min distance to match points
             groundtruth_and_predictions = match(groundtruth, thresholded_localizations, tolerance)
-
             groundtruth_and_predictions['imgName'] = groundtruth_and_predictions.imgName.fillna(image_id)
             groundtruth_and_predictions['thr'] = thr
-            image_gt_and_preds.append(groundtruth_and_predictions)
 
             # compute metrics
             metrics = detection_and_counting(groundtruth_and_predictions, image_hw=image_hw)
             metrics['thr'] = thr
             metrics['imgName'] = image_id
 
-            image_metrics.append(metrics)
+            return groundtruth_and_predictions, metrics
+
+        job_args = (localizations, groundtruth, tolerance, image_id, image_hw)
+        jobs = [delayed(_compute_thr_metrics)(thr, *job_args) for thr in thrs]
+        image_gt_and_preds, image_metrics = zip(*Parallel(n_jobs=-1)(jobs))
 
         all_metrics.extend(image_metrics)
         all_gt_and_preds.extend(image_gt_and_preds)
 
-        if outdir and debug:
+        if outdir and n_i < debug:
             outdir.mkdir(parents=True, exist_ok=True)
 
             # pick a threshold and draw that prediction set
@@ -430,8 +443,8 @@ def predict_points(dataloader, model, device, threshold, cfg):
     """ Predict and find points. """
     model.eval()
 
-    process_fn = partial(_process_fn, model=model, device=device, has_targets=False, return_image=False)
-    collate_fn = partial(_collate_fn, device=device, cfg=cfg, return_image=False)
+    process_fn = partial(_process_fn, model=model, device=device, has_target=False, return_input=False)
+    collate_fn = partial(_collate_fn, device=device, cfg=cfg, return_input=False)
 
     all_localizations = []
 
