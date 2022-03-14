@@ -333,7 +333,8 @@ def predict(dataloader, model, device, cfg, outdir, debug=0):
             gp = gp[gp.thr == best_thr]
 
             radius = cfg.data.validation.target_params.sigma
-            for i, gp_i in gp.groupby('class'):
+            for i in range(n_classes):
+                gp_i = gp[gp['class'] == i]
                 image = draw_groundtruth_and_predictions(image, gp_i, radius=radius, marker='circle')
                 io.imsave(outdir / f'annot_cls{i}_{image_id}', image)
 

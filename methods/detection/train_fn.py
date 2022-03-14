@@ -424,8 +424,10 @@ def predict(dataloader, model, device, cfg, outdir, debug=0):
             gp = pd.concat(image_gt_and_preds, ignore_index=True)
             gp = gp[gp.thr == best_thr]
 
+            n_classes = cfg.model.module.out_channels
             radius = cfg.data.validation.target_params.side // 2
-            for i, gp_i in gp.groupby('class'):
+            for i in range(n_classes):
+                gp_i = gp[gp['class'] == i]
                 image = draw_groundtruth_and_predictions(image, gp_i, radius=radius, marker='square')
                 io.imsave(outdir / f'annot_cls{i}_{image_id}', image)
 
