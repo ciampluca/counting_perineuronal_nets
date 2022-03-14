@@ -95,7 +95,7 @@ def _detection_and_counting_single_class(groundtruth_and_predictions, detection=
         false_negatives = (inA & ~inB).sum()
 
         precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 1.
-        recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negative) > 0 else 1.
+        recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 1.
         f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.
 
         metrics['pdet/precision'] = precision
