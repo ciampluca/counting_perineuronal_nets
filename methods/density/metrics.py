@@ -2,8 +2,16 @@ import numpy as np
 from skimage.metrics import structural_similarity
 
 
-def ssim(*args, **kwargs):
-    return structural_similarity(*args, **kwargs)
+def ssim(y_true, y_pred, **kwargs):
+    n_classes = y_true.shape[2]
+    micro_ssim = structural_similarity(y_true, y_pred, channel_axis=2, **kwargs)
+    class_ssim = [structural_similarity(y_true[:, :, i], y_pred[:, :, i], **kwargs) for i in range(n_classes)]
+    macro_ssim = np.mean(class_ssim)
+    return {
+        'density/ssim/micro': micro_ssim,
+        'density/ssim/macro': macro_ssim,
+        **{f'density/ssim/cls{i}': v for i, v in enumerate(class_ssim)}
+    }
 
 
 def game(gt_dmap, pred_dmap, L):

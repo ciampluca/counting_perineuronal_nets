@@ -226,7 +226,7 @@ def validate(dataloader, model, device, epoch, cfg):
         target_density_map = target_density_map.cpu().numpy().squeeze()
         predicted_density_map = predicted_density_map.cpu().numpy().squeeze()
         drange = predicted_density_map.max() - predicted_density_map.min()
-        val_ssim = ssim(target_density_map, predicted_density_map, data_range=drange, channel_axis=2)
+        val_ssim = ssim(target_density_map, predicted_density_map, data_range=drange)
 
         count_metrics = counting(target_density_map, predicted_density_map)
 
@@ -234,7 +234,7 @@ def validate(dataloader, model, device, epoch, cfg):
         metrics.append({
             'image_id': image_id,
             'density/mse_loss': loss.item(),
-            'density/ssim': val_ssim,
+            **val_ssim,
             **count_metrics,
         })
 
