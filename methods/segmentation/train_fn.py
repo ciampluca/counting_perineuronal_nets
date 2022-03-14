@@ -207,6 +207,7 @@ def _collate_fn(image_info, image_patches, device, has_input=False, has_target=F
     result = (image_id, image_hw) + result
     return result
 
+
 @torch.no_grad()
 def validate(dataloader, model, device, epoch, cfg):
     """ Evaluate model on validation data. """
@@ -222,7 +223,7 @@ def validate(dataloader, model, device, epoch, cfg):
     thr_metrics = []
 
     progress = tqdm(processed_images, total=n_images, desc='EVAL (patches)', leave=False)
-    for image_id, image_hw, image, segmentation_map, target_map, weights_map in progress:
+    for image_id, image_hw, image, target_map, weights_map, segmentation_map in progress:
         # compute metrics
         progress.set_description('EVAL (metrics)')
 
