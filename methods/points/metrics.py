@@ -59,7 +59,10 @@ def detection_and_counting(
         A metric_name -> metric_value dictionary.
     """
     if n_classes is None:
-        n_classes = groundtruth_and_predictions['class'].max() + 1
+        if 'class' not in groundtruth_and_predictions.columns: 
+            groundtruth_and_predictions['class'] = 0
+
+        n_classes = groundtruth_and_predictions['class'].max() + 1            
 
     micro_metrics = _detection_and_counting_single_class(groundtruth_and_predictions, detection=detection, counting=counting, image_hw=image_hw)
     micro_metrics = {f'{k}/micro': v for k, v in micro_metrics.items()}
@@ -91,9 +94,9 @@ def _detection_and_counting_single_class(groundtruth_and_predictions, detection=
         false_positives = (~inA & inB).sum()
         false_negatives = (inA & ~inB).sum()
 
-        precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0.
-        recall = true_positives / (true_positives + false_negatives)
-        f1_score = 2 * true_positives / (2 * true_positives + false_negatives + false_positives)
+        precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 1.
+        recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negative) > 0 else 1.
+        f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.
 
         metrics['pdet/precision'] = precision
         metrics['pdet/recall'] = recall
