@@ -321,7 +321,7 @@ def predict(dataloader, model, device, cfg, outdir, debug=0):
     thrs = np.linspace(0, 1, 201).tolist() + [2]
 
     progress = tqdm(processed_images, total=n_images, desc='PRED', leave=False)
-    for n_i, (image_id, image_hw, image, segmentation_map) in progress:
+    for n_i, (image_id, image_hw, image, segmentation_map) in enumerate(progress):
         image_hw = image_hw[:2]
         image = (255 * image).astype(np.uint8)
 
