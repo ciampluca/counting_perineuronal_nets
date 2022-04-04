@@ -4,6 +4,8 @@ method: detection
 
 data:
     train:
+        target_params: 
+            mask: false
         transforms:
             _target_: methods.detection.transforms.Compose
             _args_:

@@ -75,7 +75,7 @@ def train_one_epoch(dataloader, model, optimizer, device, writer, epoch, cfg):
     progress = tqdm(dataloader, desc='TRAIN', leave=False)
     for i, sample in enumerate(progress):
         # splits input and target building them to be coco compliant
-        images, targets = build_coco_compliant_batch(sample[0])
+        images, targets = build_coco_compliant_batch(sample[0], mask=cfg.data.train.target_params.mask)
         images = [i.to(device) for i in images]
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
@@ -83,7 +83,7 @@ def train_one_epoch(dataloader, model, optimizer, device, writer, epoch, cfg):
         # (i.e., images with only background and no object), creating a fake object that represent the background
         # class and does not affect training
         # https://discuss.pytorch.org/t/torchvision-faster-rcnn-empty-training-images/46935/12
-        targets = check_empty_images(targets)
+        targets = check_empty_images(targets, mask=cfg.data.train.target_params.mask)
 
         loss_dict = model(images, targets)
 

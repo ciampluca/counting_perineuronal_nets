@@ -6,23 +6,33 @@ import torchvision.transforms.functional as F
 
 class BaseRandomFlip(object):
     """ Base class for random flipping aumgmentation. """
-    def __init__(self, p, orient):
+    def __init__(self, p, orient, mask=False):
         self.p = p
         self.orient = orient  # 'h' or 'v'
+        self.mask = mask
     
     def __call__(self, datum):
         if random.random() < self.p:
             if isinstance(datum, tuple):
-                image, boxes, labels = datum
+                if self.mask:
+                    image, boxes, labels, mask_segmentations = datum
+                else:
+                    image, boxes, labels = datum
 
                 if self.orient == 'h':
                     image = image[:, ::-1, :]
+                    if self.mask:
+                        mask_segmentations = mask_segmentations[:, ::-1, :]
                 else:
                     image = image[::-1, :, :]
+                    if self.mask:
+                        mask_segmentations = mask_segmentations[::-1, :, :]
                 
                 # .copy() is needed to tackle 'RuntimeError: some of the strides of a given numpy array are negative.'
                 # see https://discuss.pytorch.org/t/torch-from-numpy-not-support-negative-strides/3663
                 image = image.copy()
+                if self.mask:
+                    mask_segmentations = mask_segmentations.copy()
 
                 if boxes.size != 0:
                     image_center = np.array(image.shape[:2])[::-1] / 2
@@ -37,8 +47,10 @@ class BaseRandomFlip(object):
 
                     boxes[:, min_idx] -= box_size
                     boxes[:, max_idx] += box_size
-                
-                datum = (image, boxes, labels)
+                if self.mask:
+                    datum = (image, boxes, labels, mask_segmentations)
+                else:
+                    datum = (image, boxes, labels)
 
             else:
                 if self.orient == 'h':
@@ -70,8 +82,8 @@ class RandomHorizontalFlip(BaseRandomFlip):
         Tranformed bounding box co-ordinates of the format `n x 4` where n is
         number of bounding boxes and 4 represents `y1,x1,y2,x2` of the box
     """
-    def __init__(self, p=0.5):
-        super().__init__(p=p, orient='h')
+    def __init__(self, p=0.5, mask=False):
+        super().__init__(p=p, orient='h', mask=mask)
 
 
 class RandomVerticalFlip(BaseRandomFlip):
@@ -94,8 +106,8 @@ class RandomVerticalFlip(BaseRandomFlip):
         number of bounding boxes and 4 represents `y1,x1,y2,x2` of the box
     """
 
-    def __init__(self, p=0.5):
-        super().__init__(p=p, orient='v')
+    def __init__(self, p=0.5, mask=False):
+        super().__init__(p=p, orient='v', mask=mask)
 
 
 class ToTensor(object):

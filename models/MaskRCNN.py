@@ -17,7 +17,7 @@ MODEL_URLS = {
 class MaskRCNNWrapper(MaskRCNNTorch):
     def __init__(self,
         in_channels=3,
-        num_classes=1,
+        out_channels=1,
         backbone='resnet50',
         backbone_pretrained=False,
         model_pretrained=False,
@@ -79,11 +79,11 @@ class MaskRCNNWrapper(MaskRCNNTorch):
         # get number of input features for the classifier
         in_features = self.roi_heads.box_predictor.cls_score.in_features
         # replace the pre-trained head with a new one that has num_classes which is user-defined
-        num_classes += 1    # num classes + background
-        self.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
+        out_channels += 1    # num classes + background
+        self.roi_heads.box_predictor = FastRCNNPredictor(in_features, out_channels)
         
         # get the number of input features for the mask classifier
         in_features_mask = self.roi_heads.mask_predictor.conv5_mask.in_channels
         hidden_layer = 256
         # replace the mask predictor with a new one that has num_classes which is user-defined
-        self.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask, hidden_layer, num_classes)
+        self.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask, hidden_layer, out_channels)

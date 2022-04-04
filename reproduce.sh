@@ -9,7 +9,7 @@ set -e
 EXPS=(
     # VGG CELLS
     vgg-cells/segmentation/unet_{16,32,50}_run-{0..14}
-    vgg-cells/detection/fasterrcnn_{16,32,50}_run-{0..14}
+    vgg-cells/detection/fasterrcnn/fasterrcnn_{16,32,50}_run-{0..14}
     vgg-cells/density/csrnet/csrnet_{16,32,50}_run-{0..14}
     vgg-cells/density/fcrn-a/fcrn-a_{16,32,50}_run-{0..9}
     # MBM CELLS

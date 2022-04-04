@@ -1,0 +1,47 @@
+# @package _global_
+
+defaults:
+  - /common: default
+  - /common/data: vgg-cells
+  - /common/method: detection
+  - /common/data/method-specific: vgg-cells_detection
+  - /common/model: maskrcnn
+  - /common/optim: default
+
+model:
+    module:
+        max_dets_per_image: 350
+        nms: 0.6
+
+optim:
+    optimizer:
+        _target_: torch.optim.SGD
+        lr: 0.005
+        momentum: 0.9
+        weight_decay: 0.0005
+
+    lr_scheduler:
+        milestones: [100, 150]
+
+    epochs: 150
+
+    batch_size: 8
+    batch_accumulation: 1
+
+    num_workers: 0
+
+data:
+    train: &common
+        target_params: 
+            mask: true
+        transforms:
+            _target_: methods.detection.transforms.Compose
+            _args_:
+                - - _target_: methods.detection.transforms.RandomHorizontalFlip
+                    mask: true
+                  - _target_: methods.detection.transforms.RandomVerticalFlip
+                    mask: true
+                  - _target_: methods.detection.transforms.ToTensor
+    validation:
+        <<: *common
+
