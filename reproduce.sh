@@ -10,21 +10,25 @@ EXPS=(
     # VGG CELLS
     vgg-cells/segmentation/unet_{16,32,50}_run-{0..14}
     vgg-cells/detection/fasterrcnn/fasterrcnn_{16,32,50}_run-{0..14}
+    vgg-cells/detection/maskrcnn/maskrcnn_{16,32,50}_run-{0..9}
     vgg-cells/density/csrnet/csrnet_{16,32,50}_run-{0..14}
     vgg-cells/density/fcrn-a/fcrn-a_{16,32,50}_run-{0..9}
     # MBM CELLS
     mbm-cells/segmentation/unet_{5,10,15}_run-{0..14}
-    mbm-cells/detection/fasterrcnn_{5,10,15}_run-{0..14}
+    mbm-cells/detection/fasterrcnn/fasterrcnn_{5,10,15}_run-{0..14}
+    mbm-cells/detection/maskrcnn/maskrcnn_{5,10,15}_run-{0..9}
     mbm-cells/density/csrnet/csrnet_{5,10,15}_run-{0..14}
     mbm-cells/density/fcrn-a/fcrn-a_{5,10,15}_run-{0..9}
     # ADI CELLS
     adi-cells/segmentation/unet_{10,25,50}_run-{0..14}
-    adi-cells/detection/fasterrcnn_{10,25,50}_run-{0..14}
+    adi-cells/detection/fasterrcnn/fasterrcnn_{10,25,50}_run-{0..14}
+    adi-cells/detection/maskrcnn/maskrcnn_{10,25,50}_run-{0..9}
     adi-cells/density/csrnet/csrnet_{10,25,50}_run-{0..14}
     adi-cells/density/fcrn-a/fcrn-a_{10,25,50}_run-{0..9}
     # BCD CELLS
     bcd-cells/segmentation/unet/unet_radius-16_run-{0..9}
     bcd-cells/detection/fasterrcnn/fasterrcnn_side-32_nms-0.6_run-{0..9}
+    bcd-cells/detection/maskrcnn/maskrcnn_side-32_nms-0.6_run-{0..9}
     bcd-cells/density/csrnet/csrnet_sigma-16_run-{0..9}
     bcd-cells/density/fcrn-a/fcrn-a_run-{0..9}
     # PNN

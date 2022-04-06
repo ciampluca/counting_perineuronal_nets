@@ -18,7 +18,7 @@ from ..points.metrics import detection_and_counting, detection_average_precision
 from ..points.match import match
 from ..points.utils import draw_groundtruth_and_predictions
 from .metrics import dice_jaccard
-from .utils import check_empty_images, build_coco_compliant_batch, reduce_dict
+from .utils import build_coco_compliant_batch, reduce_dict
 
 tqdm = partial(tqdm, dynamic_ncols=True)
 
@@ -78,12 +78,6 @@ def train_one_epoch(dataloader, model, optimizer, device, writer, epoch, cfg):
         images, targets = build_coco_compliant_batch(sample[0], mask=cfg.data.train.target_params.mask)
         images = [i.to(device) for i in images]
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-
-        # In case of empty images (i.e, without bbs), we handle them as negative images
-        # (i.e., images with only background and no object), creating a fake object that represent the background
-        # class and does not affect training
-        # https://discuss.pytorch.org/t/torchvision-faster-rcnn-empty-training-images/46935/12
-        targets = check_empty_images(targets, mask=cfg.data.train.target_params.mask)
 
         loss_dict = model(images, targets)
 

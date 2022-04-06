@@ -18,13 +18,19 @@ def build_coco_compliant_batch(image_and_target_batch, mask=False):
         n_boxes = len(bboxes)
         shape = (n_boxes,) if n_boxes else (1, 0)
 
-        boxes = [[x0, y0, x1, y1] for y0, x0, y1, x1 in bboxes] if n_boxes else [[]]
+        # In case of empty images (i.e, without bbs), we handle them as negative images
+        # (i.e., images with only background and no object), creating a fake object that represent the background
+        # class and does not affect training
+        # https://discuss.pytorch.org/t/torchvision-faster-rcnn-empty-training-images/46935/12
+        boxes = [[x0, y0, x1, y1] for y0, x0, y1, x1 in bboxes] if n_boxes else [[0, 1, 2, 3]]
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
 
         # +1 to add the BG class
-        labels = torch.as_tensor(labels + 1, dtype=torch.int64) if n_boxes else torch.ones((1, 0), dtype=torch.int64)
+        labels = torch.as_tensor(labels + 1, dtype=torch.int64) if n_boxes else torch.zeros((1), dtype=torch.int64)
         
         if mask:
+            if mask_segmentations.shape[-1] == 0:
+                mask_segmentations = np.zeros((*mask_segmentations.shape[:2], 1), dtype=np.int64)
             masks = torch.as_tensor(np.swapaxes(mask_segmentations, 0, 2), dtype=torch.uint8)
             return {
                 'boxes': boxes,
@@ -44,24 +50,6 @@ def build_coco_compliant_batch(image_and_target_batch, mask=False):
     else:
         targets = [_get_coco_target(b, l, mask=mask) for b, l in zip(bboxes, labels)]
     return images, targets
-
-
-def check_empty_images(targets, mask=False):
-    if targets[0]['boxes'].is_cuda:
-        device = targets[0]['boxes'].get_device()
-    else:
-        device = torch.device("cpu")
-
-    for target in targets:
-        if target['boxes'].nelement() == 0:
-            target['boxes'] = torch.as_tensor([[0, 1, 2, 3]], dtype=torch.float32, device=device)
-            target['labels'] = torch.zeros((1,), dtype=torch.int64, device=device)
-            target['iscrowd'] = torch.zeros((1,), dtype=torch.int64, device=device)
-        if mask:
-            # TODO how to handle?
-            pass
-
-    return targets
 
 
 def reduce_dict(input_dict, average=True):

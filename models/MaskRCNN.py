@@ -3,7 +3,7 @@ from torch.hub import load_state_dict_from_url
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNN as MaskRCNNTorch
-from torchvision.models.detection.backbone_utils import resnet_fpn_backbone, _validate_trainable_layers
+from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
 from torchvision.models.detection.rpn import AnchorGenerator
 from torchvision.models.detection._utils import overwrite_eps
 
@@ -15,6 +15,7 @@ MODEL_URLS = {
 
 
 class MaskRCNNWrapper(MaskRCNNTorch):
+    
     def __init__(self,
         in_channels=3,
         out_channels=1,
@@ -27,7 +28,6 @@ class MaskRCNNWrapper(MaskRCNNTorch):
         cache_folder='./model_zoo',
         skip_weights_loading=False,
         progress=True,
-        trainable_backbone_layers=None
     ):
         
         assert backbone in ("resnet50"), f"Backbone not supported: {backbone}"
@@ -55,10 +55,9 @@ class MaskRCNNWrapper(MaskRCNNTorch):
             sampling_ratio = 2
         )
         
-         # defining the backbone (there's no need to download the backbone if model_pretrained is set)
-        trainable_backbone_layers = _validate_trainable_layers(model_pretrained or backbone_pretrained, trainable_backbone_layers, 5, 3)
+        # defining the backbone (there's no need to download the backbone if model_pretrained is set)
         backbone_pretrained = backbone_pretrained and not model_pretrained
-        backbone_module = resnet_fpn_backbone(backbone, backbone_pretrained, trainable_layers=trainable_backbone_layers)       
+        backbone_module = resnet_fpn_backbone(backbone, backbone_pretrained)       
         
         super().__init__(
             backbone_module,

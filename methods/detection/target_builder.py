@@ -32,14 +32,14 @@ class DetectionTargetBuilder(BaseTargetBuilder):
         bbs = np.clip(bbs, 0, hwhw)
         
         if self.mask:
-            mask_shape = (len(points_yx), *shape)
+            mask_shape = (*shape, len(points_yx))
             mask_segmentation = np.zeros(mask_shape, dtype=np.int64)
             radius = self.side / 2
             for i, center in enumerate(points_yx):
                 rr, cc = disk(center, radius, shape=shape)
-                mask_segmentation[i, rr, cc] = 1
+                mask_segmentation[rr, cc, i] = 1
 
-            return bbs, labels, np.swapaxes(mask_segmentation, 0, 2)
+            return bbs, labels, mask_segmentation
         
         return bbs, labels
     

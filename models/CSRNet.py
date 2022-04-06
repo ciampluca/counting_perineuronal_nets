@@ -1,3 +1,4 @@
+import os
 from _collections import OrderedDict
 import math
 
@@ -18,7 +19,9 @@ class CSRNet(nn.Module):
         self,
         in_channels=3,
         out_channels=1,
-        skip_weights_loading=False
+        skip_weights_loading=False,
+        cache_folder='./model_zoo',
+        progress=True,
     ):
         super(CSRNet, self).__init__()
 
@@ -31,7 +34,8 @@ class CSRNet(nn.Module):
         self.output_layer = nn.Conv2d(64, out_channels, kernel_size=1)
 
         if not skip_weights_loading:
-            mod = models.vgg16(pretrained=True)
+            os.environ['TORCH_HOME'] = cache_folder
+            mod = models.vgg16(pretrained=True, progress=progress)
             self._initialize_weights()
             fsd = OrderedDict()
             # 10 convolutions *(weight, bias) = 20 parameters
