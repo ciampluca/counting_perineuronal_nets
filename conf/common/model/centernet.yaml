@@ -1,0 +1,10 @@
+# @package model
+
+defaults:
+  - common
+
+name: CenterNet
+module:
+    _target_: models.CenterNet
+    backbone: resnet50   
+    cache_folder: ${cache_folder}

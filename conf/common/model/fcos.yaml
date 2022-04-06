@@ -1,0 +1,16 @@
+# @package model
+
+defaults:
+  - common
+
+name: FCOS
+module:
+    _target_: models.FCOS
+    backbone: resnet50    # resnet50 or resnet101
+    backbone_pretrained: false   # on ImageNet
+    model_pretrained: true   # on COCO; if true, no need to load the pretrained backbone
+    max_dets_per_image: 200
+    nms: 0.3
+    det_thresh: 0.05
+    center_sampling_radius: 1.5
+    cache_folder: ${cache_folder}

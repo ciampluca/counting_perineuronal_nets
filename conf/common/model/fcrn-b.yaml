@@ -3,6 +3,6 @@
 defaults:
   - common
 
-name: FCRN_A
+name: FCRN_B
 module:
-  _target_: models.FCRN_A
+  _target_: models.FCRN_B
