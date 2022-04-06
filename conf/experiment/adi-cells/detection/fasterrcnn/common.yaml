@@ -2,15 +2,15 @@
 
 defaults:
   - /common: default
-  - /common/data: bcd-cells
+  - /common/data: adi-cells
   - /common/method: detection
-  - /common/data/method-specific: bcd-cells_detection
+  - /common/data/method-specific: adi-cells_detection
   - /common/model: fasterrcnn
   - /common/optim: default
 
 model:
     module:
-        max_dets_per_image: 350
+        max_dets_per_image: 250
         nms: 0.6
 
 optim:
@@ -27,8 +27,5 @@ optim:
 
     batch_size: 4
     batch_accumulation: 2
-
-    val_batch_size: 4
-
 
 

@@ -25,5 +25,5 @@ optim:
 
     epochs: 150
 
-    batch_size: 8
-    batch_accumulation: 1
+    batch_size: 4
+    batch_accumulation: 2

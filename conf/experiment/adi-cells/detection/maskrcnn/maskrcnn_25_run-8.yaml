@@ -1,0 +1,13 @@
+# @package _global_
+
+defaults:
+ - adi-cells/detection/maskrcnn/common
+
+data:
+    train: &common
+        split_seed: 97
+        num_samples:
+          - 25  # num of train images
+          - 25  # num of validation images
+    validation:
+        <<: *common   # reinsert 'train' block content

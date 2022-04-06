@@ -2,10 +2,10 @@
 
 defaults:
   - /common: default
-  - /common/data: bcd-cells
+  - /common/data: vgg-cells
   - /common/method: detection
-  - /common/data/method-specific: bcd-cells_detection
-  - /common/model: fasterrcnn
+  - /common/data/method-specific: vgg-cells_detection
+  - /common/model: fcos
   - /common/optim: default
 
 model:
@@ -27,8 +27,3 @@ optim:
 
     batch_size: 4
     batch_accumulation: 2
-
-    val_batch_size: 4
-
-
-

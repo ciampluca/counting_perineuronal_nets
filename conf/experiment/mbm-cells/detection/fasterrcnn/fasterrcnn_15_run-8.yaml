@@ -1,0 +1,13 @@
+# @package _global_
+
+defaults:
+ - mbm-cells/detection/fasterrcnn/common
+
+data:
+    train: &common
+        split_seed: 97
+        num_samples:
+          - 15  # num of train images
+          - 15  # num of validation images
+    validation:
+        <<: *common   # reinsert 'train' block content

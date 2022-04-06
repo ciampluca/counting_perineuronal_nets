@@ -2,15 +2,15 @@
 
 defaults:
   - /common: default
-  - /common/data: vgg-cells
+  - /common/data: adi-cells
   - /common/method: detection
-  - /common/data/method-specific: vgg-cells_detection
+  - /common/data/method-specific: adi-cells_detection
   - /common/model: maskrcnn
   - /common/optim: default
 
 model:
     module:
-        max_dets_per_image: 350
+        max_dets_per_image: 250
         nms: 0.6
 
 optim:
