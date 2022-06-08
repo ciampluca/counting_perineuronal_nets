@@ -1,0 +1,24 @@
+# @package _global_
+
+defaults:
+  - /common: default
+  - /common/data: pv-cells
+  - /common/method: detection
+  - /common/data/method-specific: pv-cells_detection
+  - /common/model: fasterrcnn
+  - /common/optim: default
+
+optim:
+    optimizer:
+        _target_: torch.optim.SGD
+        lr: 0.005
+        momentum: 0.9
+        weight_decay: 0.0005
+
+    lr_scheduler:
+        milestones: [50, 75, 100]
+
+    epochs: 100
+
+    batch_size: 12
+    batch_accumulation: 4

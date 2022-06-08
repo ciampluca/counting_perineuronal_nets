@@ -1,13 +1,15 @@
 # @package _global_
 
 defaults:
- - perineuronal-nets/detection/common
+ - pv-cells/detection/common
 
 data:
     train:
         patch_size: 640
+        root: /home/modro/workspace/ciampi_data/datasets/cell_counting/perineuronal-nets
     validation:
         patch_size: 640
+        root: /home/modro/workspace/ciampi_data/datasets/cell_counting/perineuronal-nets
 
 optim:
     batch_size: 1

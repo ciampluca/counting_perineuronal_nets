@@ -256,6 +256,8 @@ def validate(dataloader, model, device, epoch, cfg):
 
         groundtruth = dataloader.dataset.annot.loc[[image_id]]
         gt_points = groundtruth[['X', 'Y']].values
+        if not 'class' in groundtruth:
+                groundtruth['class'] = 0
         gt_labels = groundtruth['class'].values
 
         half_box = cfg.data.validation.target_params.side / 2

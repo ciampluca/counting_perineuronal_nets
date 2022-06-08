@@ -3,7 +3,7 @@
 data:
     train: &common
         _target_: datasets.PerineuronalNetsDataset
-        root: ${hydra:runtime.cwd}/data/perineuronal-nets
+        root: ${hydra:runtime.cwd}/data/pv-cells
         split: train-half1
         patch_size: ${patch_size}
         overlap: 0
