@@ -25,6 +25,7 @@ def game(gt_dmap, pred_dmap, L):
     Returns:
         Value of the GAME-L metric.
     """
+    # TODO add support for multiclass
     val = 0.0
     image_h, image_w = gt_dmap.shape[:2]
     patch_h, patch_w = int(np.ceil(image_h / 2**L)), int(np.ceil(image_w / 2**L))

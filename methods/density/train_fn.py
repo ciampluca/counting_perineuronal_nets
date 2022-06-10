@@ -223,8 +223,8 @@ def validate(dataloader, model, device, epoch, cfg):
         # threshold-free metrics
         loss = criterion(predicted_density_map, target_density_map)
 
-        target_density_map = target_density_map.cpu().numpy().squeeze()
-        predicted_density_map = predicted_density_map.cpu().numpy().squeeze()
+        target_density_map = target_density_map.cpu().numpy()
+        predicted_density_map = predicted_density_map.cpu().numpy()
         drange = predicted_density_map.max() - predicted_density_map.min()
         val_ssim = ssim(target_density_map, predicted_density_map, data_range=drange)
 

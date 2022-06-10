@@ -35,12 +35,6 @@ class DensityTargetBuilder(BaseTargetBuilder):
         elif self.method == 'normalize':
             method = self.build_normalize
 
-        if 'class' not in locations.columns:
-            locations['class'] = 0
-
-        if n_classes is None:
-            n_classes = locations['class'].max() + 1
-
         density_maps = []
         for i in range(n_classes):
             points_i = locations[locations['class'] == i][['Y', 'X']].values
@@ -204,5 +198,5 @@ class DensityTargetBuilder(BaseTargetBuilder):
 
     def pack(self, image, target, pad=None):
         target = np.pad(target, pad) if pad else target
-        # stack in a unique RGB-like tensor, useful for applying data augmentation
+        # stack in a unique tensor, useful for applying data augmentation
         return np.concatenate((image, target), axis=-1)

@@ -2,9 +2,9 @@
 
 defaults:
   - /common: default
-  - /common/data: perineuronal-nets
+  - /common/data: pv-cells
   - /common/method: segmentation
-  - /common/data/method-specific: perineuronal-nets_segmentation
+  - /common/data/method-specific: pv-cells_segmentation
   - /common/model: unet
   - /common/optim: default
 

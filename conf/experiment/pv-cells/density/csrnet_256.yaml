@@ -1,13 +1,13 @@
 # @package _global_
 
 defaults:
- - perineuronal-nets/density/common
+ - pv-cells/density/common
 
 data:
     train:
-        patch_size: 320
+        patch_size: 256
     validation:
-        patch_size: 320
+        patch_size: 256
 
 misc:
     font_size: 8

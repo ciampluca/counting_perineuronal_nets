@@ -73,18 +73,23 @@ class CellsDataset(PatchedMultiImageDataset):
         self.target_cache_paths = self._get_cache_paths()
 
         # load pandas dataframe containing dot annotations
-        self.annot = pd.read_csv(Path(self.root / 'annotations.csv'))
-        self.annot = self.annot.set_index('imgName')
+        all_annot = pd.read_csv(Path(self.root / 'annotations.csv'))
+        all_annot = all_annot.set_index('imgName')
+        if not 'class' in all_annot.columns:
+            all_annot['class'] = 0
+        num_classes = all_annot['class'].nunique()
 
         data_params = dict(
             split='all',
             patch_size=None,
-            annotations=self.annot,
+            annotations=all_annot,
             target_builder=self.target_builder,
             transforms=self.transforms,
             as_gray=as_gray,
+            num_classes=num_classes,
         )
         datasets = [PatchedImageDataset(p, target_cache=c, **data_params) for p, c in zip(self.image_paths, self.target_cache_paths)]
+        
         super().__init__(datasets)
 
     def __len__(self):

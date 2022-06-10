@@ -2,9 +2,9 @@
 
 defaults:
   - /common: default
-  - /common/data: perineuronal-nets
+  - /common/data: pv-cells
   - /common/method: density
-  - /common/data/method-specific: perineuronal-nets_density
+  - /common/data/method-specific: pv-cells_density
   - /common/model: csrnet
   - /common/optim: default
 
@@ -12,12 +12,10 @@ optim:
     optimizer:
         lr: 0.00001
 
-    border_pad: 160      # must be divisible by 32
-
     lr_scheduler:
-      milestones: [ 50, 75, 100 ]
+        milestones: [50, 75, 100]
 
-    epochs: 100
+    border_pad: 160      # must be divisible by 32
 
     batch_size: 1
     batch_accumulation: 8

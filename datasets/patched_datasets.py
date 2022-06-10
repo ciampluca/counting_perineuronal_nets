@@ -99,7 +99,8 @@ class PatchedImageDataset(Dataset):
         target_builder=None,
         target_cache=None,
         transforms=None,
-        max_cache_mem=None
+        max_cache_mem=None,
+        num_classes=None
     ):
         """ Dataset constructor.
 
@@ -129,6 +130,7 @@ class PatchedImageDataset(Dataset):
         self.transforms = transforms
         self.as_gray = as_gray
         self.split = split
+        self.num_classes = num_classes
 
         # hdf5 dataset
         if self.path.suffix.lower() in ('.h5', '.hdf5'):
@@ -161,7 +163,7 @@ class PatchedImageDataset(Dataset):
         # keep only annotations of this image
         self.image_id = self.path.name if image_id is None else image_id
         self.annot = annotations.loc[[self.image_id]] \
-            if annotations is not None and self.image_id in annotations.index else pd.DataFrame(columns=['Y', 'X'])
+            if annotations is not None and self.image_id in annotations.index else pd.DataFrame(columns=['Y', 'X', 'class'])
 
         # keep also annotations in the selected split (in split's coordinates)
         in_split = ((self.annot[['Y', 'X']] >= self.origin_yx) & (self.annot[['Y', 'X']] < self.limits_yx)).all(axis=1)
@@ -218,13 +220,11 @@ class PatchedImageDataset(Dataset):
         if self.target_builder:
             # gather annotations
             selector = self.annot.X.between(sx, ex) & self.annot.Y.between(sy, ey)
-            if not 'class' in self.annot.columns:
-                self.annot['class'] = 0
             patch_locations = self.annot.loc[selector, ['Y', 'X', 'class']].copy()
             patch_locations[['Y', 'X']] -= start_yx
 
             # build target
-            target = self.target_builder.build(patch_hw, patch_locations)
+            target = self.target_builder.build(patch_hw, patch_locations, self.num_classes)
 
         # pad patch (in case of patches in last col/rows)
         py, px = - patch_hw % self.patch_hw

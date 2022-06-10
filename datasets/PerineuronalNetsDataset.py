@@ -53,6 +53,9 @@ class PerineuronalNetsDataset(PatchedMultiImageDataset):
 
         annot_path = self.root / split_dir / 'annotations.csv'
         all_annot = pd.read_csv(annot_path, index_col=0)
+        if not 'class' in all_annot.columns:
+            all_annot['class'] = 0
+        num_classes = all_annot['class'].nunique()
 
         image_files = sorted((self.root / split_dir / 'fullFramesH5').glob('*.h5'))
         assert len(image_files) > 0, "No images found"
@@ -82,6 +85,7 @@ class PerineuronalNetsDataset(PatchedMultiImageDataset):
             target_builder=target_builder,
             transforms=transforms,
             max_cache_mem=max_cache_mem,
+            num_classes=num_classes,
         )
         image_ids = [i.with_suffix('.tif').name for i in image_files]
         datasets = [

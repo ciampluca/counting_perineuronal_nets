@@ -47,13 +47,7 @@ class SegmentationTargetBuilder(BaseTargetBuilder):
         self.lambda_sep = lambda_sep
         self.width_sep = width_sep
 
-    def build(self, shape, locations, n_classes=None):
-        if 'class' not in locations.columns:
-            locations['class'] = 0
-        
-        if n_classes is None:
-            n_classes = locations['class'].max() + 1
-        
+    def build(self, shape, locations, n_classes=None):        
         segmentations = []
         weights = []
         for i in range(n_classes):
