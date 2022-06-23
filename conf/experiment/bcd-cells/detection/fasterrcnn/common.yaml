@@ -1,0 +1,34 @@
+# @package _global_
+
+defaults:
+  - /common: default
+  - /common/data: bcd-cells
+  - /common/method: detection
+  - /common/data/method-specific: bcd-cells_detection
+  - /common/model: fasterrcnn
+  - /common/optim: default
+
+model:
+    module:
+        max_dets_per_image: 350
+        nms: 0.6
+
+optim:
+    optimizer:
+        _target_: torch.optim.SGD
+        lr: 0.005
+        momentum: 0.9
+        weight_decay: 0.0005
+
+    lr_scheduler:
+        milestones: [100, 150]
+
+    epochs: 150
+
+    batch_size: 4
+    batch_accumulation: 2
+
+    val_batch_size: 4
+
+
+

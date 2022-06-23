@@ -1,0 +1,13 @@
+# @package _global_
+
+defaults:
+ - bcd-cells/detection/fasterrcnn/common
+
+seed: 17
+
+data:
+    train: &common
+        target_params:
+            side: 32  
+    validation:
+        <<: *common   # reinsert 'train' block content

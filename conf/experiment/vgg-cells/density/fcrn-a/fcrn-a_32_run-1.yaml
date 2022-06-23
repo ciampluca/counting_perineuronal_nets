@@ -1,0 +1,13 @@
+# @package _global_
+
+defaults:
+ - vgg-cells/density/fcrn-a/common
+
+data:
+    train: &common
+        split_seed: 77
+        num_samples:
+            - 32   # num of train images
+            - 32  # num of validation images
+    validation:
+        <<: *common

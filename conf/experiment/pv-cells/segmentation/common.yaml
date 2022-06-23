@@ -1,0 +1,23 @@
+# @package _global_
+
+defaults:
+  - /common: default
+  - /common/data: pv-cells
+  - /common/method: segmentation
+  - /common/data/method-specific: pv-cells_segmentation
+  - /common/model: unet
+  - /common/optim: default
+
+optim:
+  lr_scheduler:
+    milestones:
+    - 50
+    - 75
+    - 100
+
+  epochs: 100
+
+  batch_size: 1
+  batch_accumulation: 8
+
+  num_workers: 8

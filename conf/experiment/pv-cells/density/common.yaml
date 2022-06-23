@@ -1,0 +1,24 @@
+# @package _global_
+
+defaults:
+  - /common: default
+  - /common/data: pv-cells
+  - /common/method: density
+  - /common/data/method-specific: pv-cells_density
+  - /common/model: csrnet
+  - /common/optim: default
+
+optim:
+    optimizer:
+        lr: 0.00001
+
+    lr_scheduler:
+        milestones: [50, 75, 100]
+
+    border_pad: 160      # must be divisible by 32
+
+    batch_size: 1
+    batch_accumulation: 8
+
+    num_workers: 8
+

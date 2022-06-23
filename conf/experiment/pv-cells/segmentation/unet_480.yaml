@@ -1,0 +1,10 @@
+# @package _global_
+
+defaults:
+ - pv-cells/segmentation/common
+
+data:
+  train:
+    patch_size: 480
+  validation:
+    patch_size: 480

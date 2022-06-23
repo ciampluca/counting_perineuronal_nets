@@ -1,5 +1,8 @@
 import warnings
 
+import numpy as np
+import pandas as pd
+
 
 def game(true_yx, pred_yx, image_hw, L):
     """
@@ -29,7 +32,13 @@ def game(true_yx, pred_yx, image_hw, L):
     return val
 
 
-def detection_and_counting(groundtruth_and_predictions, detection=True, counting=True, image_hw=None):
+def detection_and_counting(
+    groundtruth_and_predictions,
+    detection=True,
+    counting=True,
+    image_hw=None,
+    n_classes=None,
+):
     """
     Compute counting and/or detection metrics from a pandas DataFrame of
     matched groundtruth and prediction points.
@@ -44,10 +53,37 @@ def detection_and_counting(groundtruth_and_predictions, detection=True, counting
         - detection: whether to compute and report detection metrics
         - counting: whether to compute and report counting metrics
         - image_hw: 2-tuple with image size for GAME computation (counting)
+        - n_classes: number of classes; if None, it is estimated from data
 
     Returns:
         A metric_name -> metric_value dictionary.
     """
+    if n_classes is None:
+        if 'class' not in groundtruth_and_predictions.columns: 
+            groundtruth_and_predictions['class'] = 0
+
+        n_classes = groundtruth_and_predictions['class'].max() + 1            
+
+    micro_metrics = _detection_and_counting_single_class(groundtruth_and_predictions, detection=detection, counting=counting, image_hw=image_hw)
+    micro_metrics = {f'{k}/micro': v for k, v in micro_metrics.items()}
+
+    class_metrics = []
+    for i in range(n_classes):
+        gp = groundtruth_and_predictions[groundtruth_and_predictions['class'] == i]
+        metrics_i = _detection_and_counting_single_class(gp, detection=detection, counting=counting, image_hw=image_hw)
+        class_metrics.append(metrics_i)
+
+    macro_metrics = {f'{k}/macro': np.mean([class_metrics[i][k] for i in range(n_classes)]) for k in class_metrics[0].keys()}
+    class_metrics = {f'{k}/cls{i}': v for i, metrics_i in enumerate(class_metrics) for k, v in metrics_i.items()}
+
+    metrics = {}
+    metrics.update(class_metrics)
+    metrics.update(micro_metrics)
+    metrics.update(macro_metrics)
+    return metrics
+
+
+def _detection_and_counting_single_class(groundtruth_and_predictions, detection=True, counting=True, image_hw=None):
     metrics = {}
 
     inA = ~groundtruth_and_predictions.X.isna()
@@ -58,9 +94,9 @@ def detection_and_counting(groundtruth_and_predictions, detection=True, counting
         false_positives = (~inA & inB).sum()
         false_negatives = (inA & ~inB).sum()
 
-        precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0.
-        recall = true_positives / (true_positives + false_negatives)
-        f1_score = 2 * true_positives / (2 * true_positives + false_negatives + false_positives)
+        precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 1.
+        recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 1.
+        f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.
 
         metrics['pdet/precision'] = precision
         metrics['pdet/recall'] = recall
@@ -88,3 +124,37 @@ def detection_and_counting(groundtruth_and_predictions, detection=True, counting
             warnings.warn("GAME metric not computed. Provide 'image_hw' to compute also this metric.")
     
     return metrics
+
+
+def _ap_single_class(pr, suffix):
+    pr = pr.sort_values(f'pdet/recall/{suffix}')
+    recalls = pr[f'pdet/recall/{suffix}'].values
+    precisions = pr[f'pdet/precision/{suffix}'].values
+    ap = - np.sum(np.diff(recalls) * precisions[:-1])  # sklearn's ap
+    return ap
+
+
+def detection_average_precision(threshold_metrics):
+    """ Compute micro and macro averaged precisions.
+
+    Args:
+        threshold_metrics (pd.DataFrame): dataframe containing the columns 'thr', 'pdet/recall/<...>',
+        and 'pdet/precision/<...>' metrics.
+    """
+    if not isinstance(threshold_metrics, pd.DataFrame):
+        threshold_metrics = pd.DataFrame(threshold_metrics) 
+
+    micro_average_precision = _ap_single_class(threshold_metrics, 'micro')
+
+    classes = [int(c[len('pdet/recall/cls'):]) for c in threshold_metrics.columns if c.startswith('pdet/recall/cls')]
+    classes_average_precision = [_ap_single_class(threshold_metrics, f'cls{i}') for i in classes]
+
+    macro_average_precision = np.mean(classes_average_precision)
+
+    return {
+        'pdet/average_precision/micro': micro_average_precision.item(),
+        'pdet/average_precision/macro': macro_average_precision.item(),
+        **{f'pdet/average_precision/cls{i}': v.item() for i, v in enumerate(classes_average_precision)}
+    }
+
+

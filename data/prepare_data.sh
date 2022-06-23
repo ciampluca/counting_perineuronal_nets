@@ -54,9 +54,9 @@ if [[ ! -d "${BCD_DIR}" ]]; then
     unzip bcd-cells.zip -d "${BCD_DIR}"  && rm bcd-cells.zip
 
     echo "Preparing: BCD"
-    python prepare_data.py --data-name 'BCD' --data-path "${BCD_DIR}/BCData/images/train"
-    python prepare_data.py --data-name 'BCD' --data-path "${BCD_DIR}/BCData/images/validation"
-    python prepare_data.py --data-name 'BCD' --data-path "${BCD_DIR}/BCData/images/test"
+    python prepare_data.py --data-name 'BCD' --data-path "${BCD_DIR}/BCData/images/train" --multi-class
+    python prepare_data.py --data-name 'BCD' --data-path "${BCD_DIR}/BCData/images/validation" --multi-class
+    python prepare_data.py --data-name 'BCD' --data-path "${BCD_DIR}/BCData/images/test" --multi-class
     rm -rf "${BCD_DIR}"/BCData
 fi
 

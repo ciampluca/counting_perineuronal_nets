@@ -1,0 +1,13 @@
+# @package _global_
+
+defaults:
+ - mbm-cells/density/fcrn-a/common
+
+data:
+    train: &common
+        split_seed: 95
+        num_samples:
+            - 10   # num of train images
+            - 10  # num of validation images
+    validation:
+        <<: *common

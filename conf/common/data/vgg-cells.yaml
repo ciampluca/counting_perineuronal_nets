@@ -12,7 +12,6 @@ data:
         max_num_train_val_sample: 100
         num_test_samples: 100
         as_gray: true
-        cache_targets: true
 
     validation:
         split: validation
@@ -20,5 +19,10 @@ data:
 
 model:
     module:
-        in_channels: 3
+        in_channels: 1
         out_channels: 1
+
+misc:
+    font_size: 8
+    text_pos: 15
+    bb_outline_width: 1

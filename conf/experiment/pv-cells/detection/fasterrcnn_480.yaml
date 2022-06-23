@@ -1,0 +1,16 @@
+# @package _global_
+
+defaults:
+ - pv-cells/detection/common
+
+data:
+    train:
+        patch_size: 480
+    validation:
+        patch_size: 480
+
+misc:
+    font_size: 18
+    text_pos: 14
+    bb_outline_width: 2
+

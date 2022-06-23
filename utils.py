@@ -28,28 +28,6 @@ def seed_worker(worker_id):
 
 class CheckpointManager:
 
-    COMMON_MODES={
-        'segm/weighted_bce_loss': 'min',
-        'segm/soft_dice': 'min',
-        'segm/soft_jaccard': 'max',
-        'pdet/average_precision': 'max',
-        'segm/dice': 'max',
-        'segm/jaccard': 'max',
-        'pdet/precision': 'max',
-        'pdet/recall': 'max',
-        'pdet/f1_score': 'max',
-        'count/err': 'ignore',
-        'count/mae': 'min',
-        'count/mse': 'min',
-        'count/mare': 'min',
-        'count/game-0': 'min',
-        'count/game-1': 'min',
-        'count/game-2': 'min',
-        'count/game-3': 'min',
-        'count/game-4': 'min',
-        'count/game-5': 'min',
-    }
-
     def __init__(
         self,
         ckpt_dir,
@@ -60,7 +38,7 @@ class CheckpointManager:
         self.ckpt_dir = Path(ckpt_dir)
         self.ckpt_format = ckpt_format if ckpt_format else self._default_ckpt_format
         self.current_best = collections.defaultdict(lambda: None, current_best)
-        self.metric_modes = metric_modes if metric_modes else self.COMMON_MODES
+        self.metric_modes = metric_modes if metric_modes else self._default_mertic_mode
     
     def save(self, ckpt, metrics, epoch):
         
@@ -70,7 +48,7 @@ class CheckpointManager:
             value = metric_info.get('value', None)
             threshold = metric_info.get('threshold', None)
 
-            mode = self.metric_modes.get(metric, 'ignore')
+            mode = self.metric_modes(metric)
             if mode == 'ignore':
                 continue
             
@@ -83,7 +61,8 @@ class CheckpointManager:
                 # create a link indicating a best ckpt
                 best_metric_ckpt_name = self.ckpt_format(metric, value, threshold, epoch)
                 best_metric_ckpt_path = self.ckpt_dir / best_metric_ckpt_name
-                best_metric_ckpt_path.unlink(missing_ok=True)
+                if best_metric_ckpt_path.exists():
+                    best_metric_ckpt_path.unlink()
                 best_metric_ckpt_path.symlink_to(ckpt_path.name)
 
                 # update current best
@@ -96,6 +75,28 @@ class CheckpointManager:
     def _default_ckpt_format(metric_name, metric_value, metric_thr, epoch):
         metric_name = metric_name.replace('/', '-')
         return f'best_model_metric_{metric_name}.pth'
+    
+    @staticmethod
+    def _default_mertic_mode(metric_name):
+        if 'macro' not in metric_name:
+            return 'ignore'
+
+        if 'count/err' in metric_name:
+            return 'ignore'
+        
+        if 'loss' in metric_name:
+            return 'min'
+        
+        if metric_name.startswith('count'):
+            return 'min'
+        
+        if metric_name.startswith('pdet'):
+            return 'max'
+        
+        if metric_name.startswith('segm'):
+            return 'max'
+        
+        return 'ignore'
 
     def house_keeping(self):
         maybe_ckpts = self.ckpt_dir.glob('ckpt_e*.pth')

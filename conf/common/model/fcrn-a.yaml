@@ -1,0 +1,8 @@
+# @package model
+
+defaults:
+  - common
+
+name: FCRN_A
+module:
+  _target_: models.FCRN_A

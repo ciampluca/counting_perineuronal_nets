@@ -4,6 +4,8 @@ method: detection
 
 data:
     train:
+        target_params: 
+            mask: false
         transforms:
             _target_: methods.detection.transforms.Compose
             _args_:
@@ -13,8 +15,3 @@ data:
     validation:
         transforms:
             _target_: methods.detection.transforms.ToTensor
-
-misc:
-    font_size: 100  # for writing over val images
-    text_pos: 75
-    bb_outline_width: 3

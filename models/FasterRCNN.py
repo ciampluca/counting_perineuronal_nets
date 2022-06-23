@@ -3,6 +3,7 @@ from torch.hub import load_state_dict_from_url
 from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
 from torchvision.models.detection.faster_rcnn import FasterRCNN as FasterRCNNTorch, FastRCNNPredictor
 from torchvision.models.detection.rpn import AnchorGenerator
+from torchvision.models.detection._utils import overwrite_eps
 
 
 MODEL_URLS = {
@@ -14,6 +15,7 @@ MODEL_URLS = {
 
 
 class FasterRCNNWrapper(FasterRCNNTorch):
+    
     def __init__(self,
         in_channels=3,
         out_channels=1,
@@ -30,20 +32,17 @@ class FasterRCNNWrapper(FasterRCNNTorch):
     
         assert backbone in ("resnet50", "resnet101"), f"Backbone not supported: {backbone}"
 
-        # replace the classifier with a new one, that has out_channels (num_classes) which is user-defined
-        out_channels += 1    # num classes + background
-
         if skip_weights_loading:
             model_pretrained = False
             backbone_pretrained = False
 
-        # anchor generator: these are default values, but maybe we have to change them
+        # anchor generator: these are default values, but in this way we can eventually change them
         anchor_sizes = ((32,), (64,), (128,), (256,), (512,))
         aspect_ratios = ((0.5, 1.0, 2.0),) * len(anchor_sizes)
         rpn_anchor_generator = AnchorGenerator(anchor_sizes, aspect_ratios)
 
-        # these are default values, but maybe we can change them
-        roi_pooler = torchvision.ops.MultiScaleRoIAlign(
+        # box roi pooler: these are default values, but in this way we can eventually change them
+        box_roi_pooler = torchvision.ops.MultiScaleRoIAlign(
             featmap_names=['0', '1', '2', '3'],
             output_size=7,
             sampling_ratio=2
@@ -60,14 +59,17 @@ class FasterRCNNWrapper(FasterRCNNTorch):
             box_nms_thresh=nms,
             box_score_thresh=det_thresh,
             rpn_anchor_generator=rpn_anchor_generator,
-            box_roi_pool=roi_pooler
+            box_roi_pool=box_roi_pooler
         )
 
         if model_pretrained:
             state_dict = load_state_dict_from_url(MODEL_URLS[backbone], progress=progress, model_dir=cache_folder)
             self.load_state_dict(state_dict)
+            overwrite_eps(self, 0.0)
 
         # get number of input features for the classifier
         in_features = self.roi_heads.box_predictor.cls_score.in_features
+        # replace the classifier with a new one, that has out_channels (num_classes) which is user-defined
+        out_channels += 1    # num classes + background
         # replace the pre-trained head with a new one
         self.roi_heads.box_predictor = FastRCNNPredictor(in_features, out_channels)

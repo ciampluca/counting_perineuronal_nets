@@ -4,7 +4,66 @@ import numpy as np
 import torchvision.transforms.functional as F
 
 
-class RandomHorizontalFlip(object):
+class BaseRandomFlip(object):
+    """ Base class for random flipping aumgmentation. """
+    def __init__(self, p, orient, mask=False):
+        self.p = p
+        self.orient = orient  # 'h' or 'v'
+        self.mask = mask
+    
+    def __call__(self, datum):
+        if random.random() < self.p:
+            if isinstance(datum, tuple):
+                if self.mask:
+                    image, boxes, labels, mask_segmentations = datum
+                else:
+                    image, boxes, labels = datum
+
+                if self.orient == 'h':
+                    image = image[:, ::-1, :]
+                    if self.mask:
+                        mask_segmentations = mask_segmentations[:, ::-1, :]
+                else:
+                    image = image[::-1, :, :]
+                    if self.mask:
+                        mask_segmentations = mask_segmentations[::-1, :, :]
+                
+                # .copy() is needed to tackle 'RuntimeError: some of the strides of a given numpy array are negative.'
+                # see https://discuss.pytorch.org/t/torch-from-numpy-not-support-negative-strides/3663
+                image = image.copy()
+                if self.mask:
+                    mask_segmentations = mask_segmentations.copy()
+
+                if boxes.size != 0:
+                    image_center = np.array(image.shape[:2])[::-1] / 2
+                    image_center = np.hstack((image_center, image_center))
+
+                    min_idx = 1 if self.orient == 'h' else 0
+                    max_idx = 3 if self.orient == 'h' else 2
+
+                    boxes[:, [min_idx, max_idx]] += 2 * (image_center[[min_idx, max_idx]] - boxes[:, [min_idx, max_idx]])
+
+                    box_size = np.abs(boxes[:, min_idx] - boxes[:, max_idx])
+
+                    boxes[:, min_idx] -= box_size
+                    boxes[:, max_idx] += box_size
+                if self.mask:
+                    datum = (image, boxes, labels, mask_segmentations)
+                else:
+                    datum = (image, boxes, labels)
+
+            else:
+                if self.orient == 'h':
+                    datum = datum[:, ::-1, :]
+                else:
+                    datum = datum[::-1, :, :]
+
+                datum = datum.copy()
+
+        return datum
+
+
+class RandomHorizontalFlip(BaseRandomFlip):
     """Randomly horizontally flips the Image with the probability *p*
 
     Parameters
@@ -23,37 +82,11 @@ class RandomHorizontalFlip(object):
         Tranformed bounding box co-ordinates of the format `n x 4` where n is
         number of bounding boxes and 4 represents `y1,x1,y2,x2` of the box
     """
-
-    def __init__(self, p=0.5):
-        self.p = p
-
-    def __call__(self, datum):
-        if isinstance(datum, tuple):
-            image, boxes = datum
-        else:
-            image = datum
-            boxes = None
-
-        if random.random() < self.p:
-            # .copy() is needed to tackle 'RuntimeError: some of the strides of a given numpy array are negative.'
-            # see https://discuss.pytorch.org/t/torch-from-numpy-not-support-negative-strides/3663
-            image = image[:, ::-1, :].copy()
-
-            if boxes is not None:
-                if boxes.size != 0:
-                    image_center = np.array(image.shape[:2])[::-1] / 2
-                    image_center = np.hstack((image_center, image_center))
-                    boxes[:, [1, 3]] += 2 * (image_center[[1, 3]] - boxes[:, [1, 3]])
-
-                    box_w = abs(boxes[:, 1] - boxes[:, 3])
-
-                    boxes[:, 1] -= box_w
-                    boxes[:, 3] += box_w
-
-        return (image, boxes) if boxes is not None else image
+    def __init__(self, p=0.5, mask=False):
+        super().__init__(p=p, orient='h', mask=mask)
 
 
-class RandomVerticalFlip(object):
+class RandomVerticalFlip(BaseRandomFlip):
     """Randomly vertically flips the Image with the probability *p*
 
     Parameters
@@ -73,47 +106,21 @@ class RandomVerticalFlip(object):
         number of bounding boxes and 4 represents `y1,x1,y2,x2` of the box
     """
 
-    def __init__(self, p=0.5):
-        self.p = p
-
-    def __call__(self, datum):
-        if isinstance(datum, tuple):
-            image, boxes = datum
-        else:
-            image = datum
-            boxes = None
-
-        if random.random() < self.p:
-            # .copy() is needed to tackle 'RuntimeError: some of the strides of a given numpy array are negative.'
-            # see https://discuss.pytorch.org/t/torch-from-numpy-not-support-negative-strides/3663
-            image = image[::-1, :, :].copy()
-
-            if boxes is not None:
-                if boxes.size != 0:
-                    image_center = np.array(image.shape[:2])[::-1] / 2
-                    image_center = np.hstack((image_center, image_center))
-                    boxes[:, [0, 2]] += 2 * (image_center[[0, 2]] - boxes[:, [0, 2]])
-
-                    box_h = abs(boxes[:, 0] - boxes[:, 2])
-
-                    boxes[:, 0] -= box_h
-                    boxes[:, 2] += box_h
-
-        return (image, boxes) if boxes is not None else image
+    def __init__(self, p=0.5, mask=False):
+        super().__init__(p=p, orient='v', mask=mask)
 
 
 class ToTensor(object):
 
     def __call__(self, datum):
         if isinstance(datum, tuple):
-            image, boxes = datum
+            image, *targets = datum
+            image = F.to_tensor(image)
+            datum = (image,) + tuple(targets)
         else:
-            image = datum
-            boxes = None
-
-        image = F.to_tensor(image)
-
-        return (image, boxes) if boxes is not None else image
+            datum = F.to_tensor(datum)
+            
+        return datum
 
 
 class Compose(object):

@@ -48,7 +48,7 @@ def main(args):
     model = model.to(device)
     print(f'[DEVICE] {device}')
 
-    metric_name = 'count/game-3'
+    metric_name = 'count/game-3/macro'
     ckpt_path = run_path / 'best.pth'
     if not ckpt_path.exists():
         ckpt_path = run_path / 'best_models' / f"best_model_metric_{metric_name.replace('/', '-')}.pth"
@@ -121,7 +121,7 @@ if __name__ == "__main__":
     parser.add_argument('-b', '--batch-size', type=int, default=1, help="Batch size (number of patches processed in parallel by the model)")
     parser.add_argument('-r', '--rescore', type=str, default=None, help="Pretrain run directory of rescoring model")
     parser.add_argument('-t', '--threshold', type=float, default=None, help="Threshold (good values may vary depending on the model)")
-    parser.add_argument('-o', '--output', default='localizations.csv', help="Output file")    
+    parser.add_argument('-o', '--output', default='localizations.csv', help="Output file")
 
     args = parser.parse_args()
     main(args)

@@ -13,3 +13,8 @@ data:
     validation:
         transforms:
             _target_: torchvision.transforms.ToTensor
+
+optim:
+    loss:
+        _target_: torch.nn.MSELoss
+        reduction: mean

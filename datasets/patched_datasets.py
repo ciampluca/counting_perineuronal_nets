@@ -2,6 +2,7 @@ import itertools
 from pathlib import Path
 
 import h5py
+import joblib
 import numpy as np
 import pandas as pd
 from prefetch_generator import BackgroundGenerator
@@ -32,14 +33,14 @@ class PatchedMultiImageDataset(ConcatDataset):
         return s
 
     @staticmethod
-    def process_per_patch(dataloader, process_fn, collate_fn, max_prefetch=15000, progress=False):
+    def process_per_patch(dataloader, process_fn, collate_fn, max_prefetch=5, progress=False):
         """ Process images in batches of patches and reconstruct the entire images.
 
         Args:
             dataloader (torch.util.data.DataLoader): Loader yielding batches of patches.
             process_fn (callable): batch -> processed_batch.
             collate_fn (callable): (image_info, List[(patch_info, processed_sample)]) -> image_results.
-            max_prefetch (int, optional): Max batches to prefetch using threading. Defaults to 15000.
+            max_prefetch (int, optional): Max batches to prefetch using threading. Defaults to 5.
             progress (bool, optional): Whether to show a tqdm progress bar when iterating the dataloader. Defaults to False.
         """
         dataloader = tqdm(dataloader, dynamic_ncols=True, leave=False, disable=not progress)
@@ -96,9 +97,10 @@ class PatchedImageDataset(Dataset):
         annotations=None,
         image_id=None,
         target_builder=None,
-        cache_targets=False,
+        target_cache=None,
         transforms=None,
-        max_cache_mem=None
+        max_cache_mem=None,
+        num_classes=None
     ):
         """ Dataset constructor.
 
@@ -112,21 +114,23 @@ class PatchedImageDataset(Dataset):
             annotations (pd.DataFrame, optional): Dataframe containing points annotations; must be provided if target_builder != None. Defaults to None.
             image_id (str, optional): the ID of this image in the annotations; if None, the image name is used. Defaults to None.
             target_builder (obj, optional): A *TargetBuilder for building and returning also training targets. Defaults to None.
-            cache_targets (bool, optional): Whether to cache built targets; is incompatible with random_offset != 0. Defaults to False.
+            target_cache (Path, optional): if not None, path to directory of cached targets; is incompatible with random_offset != 0. Defaults to None.
             transforms (callable, optional): A callable for applying transformations on patches. Defaults to None.
             max_cache_mem (int, optional): Cache size in bytes (only for HDF5). Defaults to None.
         """
         assert split in ('left', 'right', 'all'), "split must be one of ('left', 'right', 'all')"
         assert target_builder is None or annotations is not None, 'annotations must be != None if a target_builder is specified'
-        assert not(cache_targets and (random_offset != 0)), 'cannot enable cache_targets when random_offset != 0'
+        assert not(target_cache and (random_offset != 0)), 'cannot enable target_cache when random_offset != 0'
 
         self.path = Path(path)
+        self.as_gray = as_gray
         self.random_offset = random_offset
         self.target_builder = target_builder
-        self.cache_targets = cache_targets
+        self.target_cache = target_cache
         self.transforms = transforms
         self.as_gray = as_gray
         self.split = split
+        self.num_classes = num_classes
 
         # hdf5 dataset
         if self.path.suffix.lower() in ('.h5', '.hdf5'):
@@ -159,7 +163,7 @@ class PatchedImageDataset(Dataset):
         # keep only annotations of this image
         self.image_id = self.path.name if image_id is None else image_id
         self.annot = annotations.loc[[self.image_id]] \
-            if annotations is not None and self.image_id in annotations.index else pd.DataFrame(columns=['Y', 'X'])
+            if annotations is not None and self.image_id in annotations.index else pd.DataFrame(columns=['Y', 'X', 'class'])
 
         # keep also annotations in the selected split (in split's coordinates)
         in_split = ((self.annot[['Y', 'X']] >= self.origin_yx) & (self.annot[['Y', 'X']] < self.limits_yx)).all(axis=1)
@@ -169,20 +173,22 @@ class PatchedImageDataset(Dataset):
         # the number of patches in a row and a column
         self.num_patches = np.ceil(1 + ((self.region_hw - self.patch_hw) / self.stride_hw)).astype(np.int64)
 
-        # dict to keep the target cache
-        self._target_cache = {}
-        
     def __len__(self):
         # total number of patches
         return self.num_patches.prod().item()
     
     def __getitem__(self, index):
-        if self.cache_targets and (index in self._target_cache):
-            datum, patch_info = self._target_cache[index]
+
+        if self.target_cache:
+            cache_path = self.target_cache / f'{self.split}_{index}.npz'
+            if cache_path.exists():
+                datum, patch_info = joblib.load(cache_path)
+            else:
+                cache_path.parent.mkdir(exist_ok=True, parents=True)
+                datum, patch_info = self._get_datum(index)
+                joblib.dump((datum, patch_info), cache_path)
         else:
             datum, patch_info = self._get_datum(index)
-            if self.cache_targets:
-                self._target_cache[index] = (datum, patch_info)
 
         if self.transforms:
             datum = self.transforms(datum)
@@ -214,11 +220,11 @@ class PatchedImageDataset(Dataset):
         if self.target_builder:
             # gather annotations
             selector = self.annot.X.between(sx, ex) & self.annot.Y.between(sy, ey)
-            locations = self.annot.loc[selector, ['Y', 'X']].values
-            patch_locations = locations - start_yx
+            patch_locations = self.annot.loc[selector, ['Y', 'X', 'class']].copy()
+            patch_locations[['Y', 'X']] -= start_yx
 
             # build target
-            target = self.target_builder.build(patch_hw, patch_locations)
+            target = self.target_builder.build(patch_hw, patch_locations, self.num_classes)
 
         # pad patch (in case of patches in last col/rows)
         py, px = - patch_hw % self.patch_hw
@@ -244,7 +250,7 @@ class RandomAccessMultiImageDataset(ConcatDataset):
     
     def __init__(self, datasets):
         assert all(isinstance(d, RandomAccessImageDataset) for d in datasets), 'All datasets must be RandomAccessImageDataset.'
-        super().__init__(datasets)   
+        super().__init__(datasets)
     
     def num_images(self):
         return len(self.datasets)
@@ -292,7 +298,7 @@ class RandomAccessImageDataset(Dataset):
         else:  # image format
             self.data = io.imread(path, as_gray=self.as_gray).astype(np.float32)
             self.data *= 255. if self.as_gray else 1.  # gray values are stored between 0 and 1 by skimage's imread
-            
+        
         self.patch_hw = np.array((patch_size, patch_size), dtype=int)
         self.half_hw = self.patch_hw // 2
     
@@ -323,22 +329,3 @@ class RandomAccessImageDataset(Dataset):
             patch = self.transforms(patch)
         
         return patch
-
-
-
-# Testing code
-if __name__ == "__main__":
-    import torch
-    from torchvision.utils import make_grid, save_image
-    from torchvision.transforms import ToTensor
-
-    data_path = 'data/perineuronal-nets/test/'
-    image_name = '061_A1_s08_C1_crop.tif'
-    path = data_path + 'fullFrames/' + image_name
-    locations = pd.read_csv(data_path + 'annotations.csv', index_col=0).loc[image_name, ['Y', 'X']].values
-    dset = RandomAccessImageDataset(path, locations, transforms=ToTensor())
-
-    samples = torch.stack([dset[i] for i in range(64)])
-
-    img = make_grid(samples, padding=2, normalize=True)
-    save_image(img, 'pnn_samples.png')

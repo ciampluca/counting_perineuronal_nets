@@ -1,3 +1,4 @@
+import os
 from _collections import OrderedDict
 import math
 
@@ -11,13 +12,16 @@ class CSRNet(nn.Module):
     """
     Congested Scene Recognition Network (CSRNet)
     Ref. Y. Li et al. 'CSRNet: Dilated Convolutional Neural Networks for Understanding the Highly Congested Scenes'
+    Code based on: https://github.com/CommissarMa/CSRNet-pytorch
     """
 
     def __init__(
         self,
         in_channels=3,
         out_channels=1,
-        skip_weights_loading=False
+        skip_weights_loading=False,
+        cache_folder='./model_zoo',
+        progress=True,
     ):
         super(CSRNet, self).__init__()
 
@@ -30,7 +34,8 @@ class CSRNet(nn.Module):
         self.output_layer = nn.Conv2d(64, out_channels, kernel_size=1)
 
         if not skip_weights_loading:
-            mod = models.vgg16(pretrained=True)
+            os.environ['TORCH_HOME'] = cache_folder
+            mod = models.vgg16(pretrained=True, progress=progress)
             self._initialize_weights()
             fsd = OrderedDict()
             # 10 convolutions *(weight, bias) = 20 parameters
@@ -62,7 +67,7 @@ class CSRNet(nn.Module):
             device = x.get_device()
             torch.cuda.synchronize()
             x = x.cpu()
-        x = nn.functional.interpolate(x, scale_factor=8, mode="bilinear")
+        x = nn.functional.interpolate(x, scale_factor=8, mode="bilinear", align_corners=False)
         x = x.to(device)
 
         if need_resize:
@@ -99,19 +104,3 @@ class CSRNet(nn.Module):
                 in_channels = v
 
         return nn.Sequential(*layers)
-
-
-
-# Testing code
-if __name__ == "__main__":
-    in_channels = 3
-    batch_size = 2
-    shape = (256, 256)
-    torch.hub.set_dir('../model_zoo/')
-    
-    model = CSRNet(skip_weights_loading=True, in_channels=in_channels)
-    input_img = torch.rand(batch_size, in_channels, shape[0], shape[1])
-    density = model(input_img)
-
-    print(density.shape)
-    # print(density)

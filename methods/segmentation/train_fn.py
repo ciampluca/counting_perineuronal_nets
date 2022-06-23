@@ -1,5 +1,7 @@
+from functools import partial
 from pathlib import Path
 
+from joblib import Parallel, delayed
 import numpy as np
 import pandas as pd
 from PIL import Image
@@ -8,7 +10,7 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from ..points.metrics import detection_and_counting
+from ..points.metrics import detection_and_counting, detection_average_precision
 from ..points.match import match
 from ..points.utils import draw_groundtruth_and_predictions
 from .metrics import dice_jaccard
@@ -28,19 +30,23 @@ def train_one_epoch(dataloader, model, optimizer, device, writer, epoch, cfg):
         input_and_target = input_and_target.to(device)
         # split channels to get input, target, and loss weights
         n_channels = input_and_target.shape[1]
-        images, targets, weights = input_and_target.split((n_channels - 2, 1, 1), dim=1)
+        x_channels = cfg.model.module.in_channels
+        y_channels = (n_channels - x_channels) // 2
+        images, targets, weights = input_and_target.split((x_channels, y_channels, y_channels), dim=1)
 
         logits = model(images)
         loss = F.binary_cross_entropy_with_logits(logits, targets, weights)
         predictions = torch.sigmoid(logits)
-        soft_dice, soft_jaccard = dice_jaccard(targets, predictions)
+
+        # NCHW -> NHWC
+        coefs = dice_jaccard(targets.movedim(1, -1), predictions.movedim(1, -1))
 
         loss.backward()
 
         batch_metrics = {
             'loss': loss.item(),
-            'soft_dice': soft_dice.item(),
-            'soft_jaccard': soft_jaccard.item()
+            'soft_dice': coefs['segm/dice/macro'],
+            'soft_jaccard': coefs['segm/jaccard/macro'],
         }
 
         metrics.append(batch_metrics)
@@ -60,8 +66,9 @@ def train_one_epoch(dataloader, model, optimizer, device, writer, epoch, cfg):
 
             if cfg.optim.debug and (i + 1) % cfg.optim.debug_freq == 0:
                 writer.add_images('train/inputs', images, n_iter)
-                writer.add_images('train/targets', targets, n_iter)
-                writer.add_images('train/predictions', predictions, n_iter)
+                for j in range(y_channels):
+                    writer.add_images(f'train/targets_cls{j}', targets[:, j:j+1], n_iter)
+                    writer.add_images(f'train/predictions_cls{j}', predictions[:, j:j+1], n_iter)
 
     metrics = pd.DataFrame(metrics).mean(axis=0).to_dict()
     metrics = {k: {'value': v, 'threshold': None} for k, v in metrics.items()}
@@ -82,13 +89,123 @@ def _save_image_and_segmentation_maps(image, image_id, segmentation_map, target_
         pil_image.save(path)
         
     _scale_and_save(image, debug_dir / image_id)
-    _scale_and_save(segmentation_map, debug_dir / f'{image_id.stem}_segm.png')
-    _scale_and_save(target_map, debug_dir / f'{image_id.stem}_target.png')
 
-    weights_map = matplotlib.cm.viridis(weights_map.cpu().squeeze())
-    weights_map = (255 * weights_map).astype(np.uint8)
-    pil_image = Image.fromarray(weights_map).convert("RGB")
-    pil_image.save(debug_dir / f'{image_id.stem}_weights.png')
+    n_classes = cfg.model.module.out_channels
+    for i in range(n_classes):
+        _scale_and_save(segmentation_map[:, :, i], debug_dir / f'{image_id.stem}_segm_cls{i}.png')
+        _scale_and_save(target_map[:, :, i], debug_dir / f'{image_id.stem}_target_cls{i}.png')
+
+        wmap = weights_map[:, :, i].cpu().squeeze()
+        wmap = matplotlib.cm.viridis(wmap)
+        wmap = (255 * wmap).astype(np.uint8)
+        pil_image = Image.fromarray(wmap).convert("RGB")
+        pil_image.save(debug_dir / f'{image_id.stem}_weights_cls{i}.png')
+
+
+@torch.no_grad()
+def _process_fn(batch, model, device, cfg, has_target=False, return_input=False, return_target=False, return_numpy=False):
+    batch = batch.to(device)
+
+    if has_target:
+        # split channels to get input, target, and loss weights
+        n_channels = batch.shape[1]
+        x_channels = cfg.model.module.in_channels
+        y_channels = (n_channels - x_channels) // 2
+        inputs, targets, weights = batch.split((x_channels, y_channels, y_channels), dim=1)
+    else:
+        inputs = batch
+
+    logits = model(inputs)
+    predictions = torch.sigmoid(logits)
+
+    processed_batch = (predictions,)
+    if return_target and has_target:
+        processed_batch = (targets, weights) + processed_batch
+    if return_input:
+        processed_batch = (inputs,) + processed_batch
+    
+    # move channel dimension
+    processed_batch = [x.movedim(1, -1) for x in processed_batch]
+
+    if return_numpy:
+        processed_batch = [x.cpu().numpy() for x in processed_batch]
+        
+    return processed_batch
+
+
+@torch.no_grad()
+def _collate_fn(image_info, image_patches, device, has_input=False, has_target=False):
+    image_id, image_hw = image_info
+
+    segmentation_map = None
+    normalization_map = None
+
+    # build full map from patches
+    for (patch_hw, start_yx), datum in image_patches:
+
+        if has_input and has_target:
+            patch, target, weights, prediction = datum
+        elif has_input:
+            patch, prediction = datum
+        elif has_target:
+            target, weights, prediction = datum
+        else:
+            prediction = datum
+
+        if segmentation_map is None:
+
+            if isinstance(prediction, torch.Tensor):
+                _zeros = partial(torch.zeros, dtype=torch.float32, device=device)
+            else:
+                _zeros = partial(np.zeros, dtype=np.float32)
+
+            if has_input:
+                in_channels = patch.shape[-1]
+                in_hwc = image_hw + (in_channels,)
+                image = _zeros(in_hwc)
+            
+            out_channels = prediction.shape[-1]
+            out_hwc = image_hw + (out_channels,)
+
+            if has_target:
+                target_map = _zeros(out_hwc)
+                weights_map = _zeros(out_hwc)
+
+            segmentation_map = _zeros(out_hwc)
+            normalization_map = _zeros(image_hw + (1,))
+        
+        (y, x), (h, w) = start_yx, patch_hw
+
+        if has_input:
+            image[y:y+h, x:x+w] = patch[:h, :w]
+
+        if has_target:
+            target_map[y:y+h, x:x+w] += target[:h, :w]
+            weights_map[y:y+h, x:x+w] += weights[:h, :w]
+
+        segmentation_map[y:y+h, x:x+w] += prediction[:h, :w]
+        normalization_map[y:y+h, x:x+w] += 1.0
+    
+    if has_input:
+        image /= normalization_map
+    
+    if has_target:
+        target_map /= normalization_map
+        weights_map /= normalization_map
+
+    segmentation_map /= normalization_map
+    # segmentation_map = torch.clamp(segmentation_map, 0, 1)  # XXX to fix, sporadically something goes off limits
+
+    del normalization_map
+
+    result = (segmentation_map,)
+    if has_target:
+        result = (target_map, weights_map) + result
+    if has_input:
+        result = (image,) + result
+    
+    result = (image_id, image_hw) + result
+    return result
 
 
 @torch.no_grad()
@@ -97,70 +214,16 @@ def validate(dataloader, model, device, epoch, cfg):
     model.eval()
     validation_device = cfg.optim.val_device
     n_images = dataloader.dataset.num_images()
-
-    @torch.no_grad()
-    def process_fn(batch):
-        input_and_target = batch.to(device)
-
-        # split channels to get input, target, and loss weights
-        n_channels = input_and_target.shape[1]
-        images, targets, weights = input_and_target.split((n_channels - 2, 1, 1), dim=1)
-        logits = model(images)
-        predictions = torch.sigmoid(logits)
-
-        processed_batch = (images, targets, weights, predictions)
-        # move channel dimension, move to validation device
-        processed_batch = [x.movedim(1, -1).to(validation_device) for x in processed_batch]
-        return processed_batch
-
-    def collate_fn(image_info, image_patches):
-        image_id, image_hw = image_info
-
-        image = None
-        segmentation_map = None
-        target_map = None
-        weights_map = None
-        normalization_map = None
-
-        # build full map from patches
-        for (patch_hw, start_yx), (patch, target, weights, prediction) in image_patches:
-
-            if segmentation_map is None:
-                in_channels = patch.shape[-1]
-                out_channels = prediction.shape[-1]
-
-                in_hwc = image_hw + (in_channels,)
-                out_hwc = image_hw + (out_channels,)
-
-                image = torch.empty(in_hwc, dtype=torch.float32, device=validation_device)
-                segmentation_map = torch.zeros(out_hwc, dtype=torch.float32, device=validation_device)
-                target_map = torch.zeros(out_hwc, dtype=torch.float32, device=validation_device)
-                weights_map = torch.zeros(out_hwc, dtype=torch.float32, device=validation_device)
-                normalization_map = torch.zeros(out_hwc, dtype=torch.float32, device=validation_device)
-
-            (y, x), (h, w) = start_yx, patch_hw
-            image[y:y+h, x:x+w] = patch[:h, :w]
-            segmentation_map[y:y+h, x:x+w] += prediction[:h, :w]
-            target_map[y:y+h, x:x+w] += target[:h, :w]
-            weights_map[y:y+h, x:x+w] += weights[:h, :w]
-            normalization_map[y:y+h, x:x+w] += 1.0
-            
-        image /= normalization_map
-        segmentation_map /= normalization_map
-        segmentation_map = torch.clamp(segmentation_map, 0, 1)  # XXX to fix, sporadically something goes off limits
-
-        target_map /= normalization_map
-        weights_map /= normalization_map
-        del normalization_map
-
-        return image_id, image_hw, image, segmentation_map, target_map, weights_map
+    
+    process_fn = partial(_process_fn, model=model, device=validation_device, cfg=cfg, has_target=True, return_input=True, return_target=True, return_numpy=False)
+    collate_fn = partial(_collate_fn, device=device, has_input=True, has_target=True)
+    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn, max_prefetch=1)
 
     metrics = []
     thr_metrics = []
 
-    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn)
     progress = tqdm(processed_images, total=n_images, desc='EVAL (patches)', leave=False)
-    for image_id, image_hw, image, segmentation_map, target_map, weights_map in progress:
+    for image_id, image_hw, image, target_map, weights_map, segmentation_map in progress:
         # compute metrics
         progress.set_description('EVAL (metrics)')
 
@@ -169,54 +232,41 @@ def validate(dataloader, model, device, epoch, cfg):
 
         ## threshold-free metrics
         weighted_bce_loss = F.binary_cross_entropy(segmentation_map, target_map, weights_map)
-        soft_dice, soft_jaccard = dice_jaccard(target_map, segmentation_map)
+        soft_segm_metrics = dice_jaccard(target_map, segmentation_map, prefix='soft_')
         
         ## threshold-dependent metrics
-        thrs = torch.linspace(0, 1, 21).tolist() + [2,]
-
         image_thr_metrics = []
-        progress_thrs = tqdm(thrs, desc='thr', leave=False)
-        for thr in progress_thrs:
+
+        groundtruth = dataloader.dataset.annot.loc[[image_id]]
+        tolerance = 1.25 * cfg.data.validation.target_params.radius  # min distance to match points
+
+        def _compute_thr_metrics(thr, segmentation_map, target_map, groundtruth, tolerance, image_hw):
             binary_segmentation_map = segmentation_map >= thr
-
-            # segmentation metrics
-            progress_thrs.set_description(f'thr={thr:.2f} (segm)')
-            dice, jaccard = dice_jaccard(target_map, binary_segmentation_map)
-
-            segm_metrics = {
-                'segm/dice': dice.item(),
-                'segm/jaccard': jaccard.item()
-            }
-        
-            # counting metrics
-            progress_thrs.set_description(f'thr={thr:.2f} (count)')
-            localizations = segmentation_map_to_points(segmentation_map.cpu().numpy().squeeze(), thr=thr)
-            groundtruth = dataloader.dataset.annot.loc[[image_id]]
-
-            tolerance = 1.25 * cfg.data.validation.target_params.radius  # min distance to match points
+            segm_metrics = dice_jaccard(target_map, binary_segmentation_map)
+            localizations = segmentation_map_to_points(segmentation_map, thr=thr)
             groundtruth_and_predictions = match(groundtruth, localizations, tolerance)
             count_pdet_metrics = detection_and_counting(groundtruth_and_predictions, image_hw=image_hw)
-
-            image_thr_metrics.append({
+            
+            return {
                 'image_id': image_id,
                 'thr': thr,
                 **segm_metrics,
                 **count_pdet_metrics
-            })
-
+            }
         
-        pr = pd.DataFrame(image_thr_metrics).sort_values('pdet/recall', ascending=False)
-        recalls = pr['pdet/recall'].values
-        precisions = pr['pdet/precision'].values
-        average_precision = - np.sum(np.diff(recalls) * precisions[:-1])  # sklearn's ap
-
+        thrs = torch.linspace(0, 1, 21).tolist() + [2, ]
+        job_args = (segmentation_map.cpu().numpy(), target_map.cpu().numpy(), groundtruth, tolerance, image_hw)
+        jobs = [delayed(_compute_thr_metrics)(thr, *job_args) for thr in thrs]
+        image_thr_metrics = Parallel(n_jobs=-1)(jobs)
+        
+        average_precisions = detection_average_precision(image_thr_metrics)
+        
         # accumulate full image metrics
         metrics.append({
             'image_id': image_id,
             'segm/weighted_bce_loss': weighted_bce_loss.item(),
-            'segm/soft_dice': soft_dice.item(),
-            'segm/soft_jaccard': soft_jaccard.item(),
-            'pdet/average_precision': average_precision.item(),
+            **soft_segm_metrics,
+            **average_precisions,
         })
 
         thr_metrics.extend(image_thr_metrics)
@@ -232,31 +282,23 @@ def validate(dataloader, model, device, epoch, cfg):
     thr_metrics = pd.DataFrame(thr_metrics).set_index(['image_id', 'thr'])
     mean_thr_metrics = thr_metrics.pivot_table(index='thr', values=thr_metrics.columns, aggfunc='mean')
     
-    best_thr_metrics = mean_thr_metrics.aggregate({
-        'segm/dice': max,
-        'segm/jaccard': max,
-        'pdet/precision': max,
-        'pdet/recall': max,
-        'pdet/f1_score': max,
-        'count/err': lambda x: min(x, key=abs),
-        'count/mae': min,
-        'count/mse': min,
-        'count/mare': min,
-        **{f'count/game-{l}': min for l in range(6)}
-    }).to_dict()
+    # TODO factor out common code that follows in evaluate()s
+    def _get_agg_func(metric_name, idx=False):
+        if metric_name.startswith('count/err'):
+            if idx:
+                return lambda x: x.abs().idxmin()
+            return lambda x: min(x, key=abs)
+        
+        if metric_name.startswith('count/'):
+            return 'idxmin' if idx else min
+        
+        return 'idxmax' if idx else max
 
-    best_thrs = mean_thr_metrics.aggregate({
-        'segm/dice': 'idxmax',
-        'segm/jaccard': 'idxmax',
-        'pdet/precision': 'idxmax',
-        'pdet/recall': 'idxmax',
-        'pdet/f1_score': 'idxmax',
-        'count/err': lambda x: x.abs().idxmin(),
-        'count/mae': 'idxmin',
-        'count/mse': 'idxmin',
-        'count/mare': 'idxmin',
-        **{f'count/game-{l}': 'idxmin' for l in range(6)}
-    }).to_dict()
+    value_aggfuncs = {k: _get_agg_func(k, idx=False) for k in thr_metrics.columns}
+    thr_aggfuncs = {k: _get_agg_func(k, idx=True) for k in thr_metrics.columns}
+    
+    best_thr_metrics = mean_thr_metrics.aggregate(value_aggfuncs).to_dict()
+    best_thrs = mean_thr_metrics.aggregate(thr_aggfuncs).to_dict()
 
     best_thr_metrics = {k: {'value': v, 'threshold': best_thrs[k]} for k, v in best_thr_metrics.items()}
     metrics.update(best_thr_metrics)
@@ -265,109 +307,78 @@ def validate(dataloader, model, device, epoch, cfg):
 
 
 @torch.no_grad()
-def predict(dataloader, model, device, cfg, outdir, debug=False):
+def predict(dataloader, model, device, cfg, outdir, debug=0):
     """ Make predictions on data. """
     model.eval()
-
-    @torch.no_grad()
-    def process_fn(inputs):
-        logits = model(inputs.to(device))
-        predictions = torch.sigmoid(logits)
-
-        # channels as last dim
-        predictions = predictions.cpu().movedim(1, -1).numpy()
-        inputs = inputs.movedim(1, -1).numpy()
-        return inputs, predictions
-
-    def collate_fn(image_info, image_patches):
-        image_id, image_hw = image_info
-        
-        full_input = None
-        full_output = None
-        normalization_map = None
-
-        for (patch_hw, start_yx), (patch, processed_patch) in image_patches:
-
-            if full_input is None:
-                in_channels = patch.shape[-1]
-                out_channels = processed_patch.shape[-1]
-
-                in_hwc = image_hw + (in_channels,)
-                out_hwc = image_hw + (out_channels,)
-
-                full_input = np.empty(in_hwc, dtype=np.float32)
-                full_output = np.zeros(out_hwc, dtype=np.float32)
-                normalization_map = np.zeros(out_hwc, dtype=np.float32)
-
-            (y, x), (h, w) = start_yx, patch_hw
-            full_input[y:y+h, x:x+w] = patch[:h, :w]
-            full_output[y:y+h, x:x+w] += processed_patch[:h, :w]
-            normalization_map[y:y+h, x:x+w] += 1.0
-
-        full_output /= normalization_map
-        del normalization_map
-
-        return image_id, full_input, full_output
-
-    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn)
     n_images = dataloader.dataset.num_images()
-    progress = tqdm(processed_images, total=n_images, desc='PRED', leave=False)
+    
+    process_fn = partial(_process_fn, model=model, device=device, cfg=cfg, has_target=False, return_input=True, return_target=False, return_numpy=True)
+    collate_fn = partial(_collate_fn, device=device, has_input=True, has_target=False)
+    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn, max_prefetch=15000)
 
     all_metrics = []
     all_gt_and_preds = []
     thrs = np.linspace(0, 1, 201).tolist() + [2]
-    for image_id, image, segmentation_map in progress:
-        image_hw = image.shape[:2]
+
+    progress = tqdm(processed_images, total=n_images, desc='PRED', leave=False)
+    for n_i, (image_id, image_hw, image, segmentation_map) in enumerate(progress):
+        image_hw = image_hw[:2]
         image = (255 * image).astype(np.uint8)
-        segmentation_map = segmentation_map.squeeze()
 
         annot = dataloader.dataset.annot
         groundtruth = annot.loc[[image_id]] if image_id in annot.index else pd.DataFrame([], columns=['X','Y'], dtype=np.int)
         if 'AV' in groundtruth.columns:  # for the PNN dataset only
             groundtruth['agreement'] = groundtruth.loc[:, 'AV':'VT'].sum(axis=1)
 
-        if outdir and debug:  # debug
+        if outdir and n_i < debug:  # debug
             outdir.mkdir(parents=True, exist_ok=True)
             io.imsave(outdir / image_id, image)
-            io.imsave(outdir / f'segm_{image_id}', (255 * segmentation_map).astype(np.uint8))
-            # io.imsave(outdir / f'hard_segm_{image_id}', (255 * (segmentation_map >= 0.5)).astype(np.uint8))
+            n_classes = cfg.model.module.out_channels
+            for i in range(n_classes):
+                io.imsave(outdir / f'segm_cls{i}_{image_id}', (255 * segmentation_map[:,:,i]).astype(np.uint8))
 
         image_metrics = []
         image_gt_and_preds = []
-        thr_progress = tqdm(thrs, leave=False)
-        for thr in thr_progress:
-            thr_progress.set_description(f'thr={thr:.2f}')
-
+        tolerance = 1.25 * cfg.data.validation.target_params.radius  # min distance to match points
+        
+        def _compute_thr_metrics(thr, segmentation_map, groundtruth, image_id, image_hw):
             # find connected components and centroids
             localizations = segmentation_map_to_points(segmentation_map, thr=thr)
 
             # match groundtruths and predictions
-            tolerance = 1.25 * cfg.data.validation.target_params.radius  # min distance to match points
             groundtruth_and_predictions = match(groundtruth, localizations, tolerance)
             groundtruth_and_predictions['imgName'] = groundtruth_and_predictions.imgName.fillna(image_id)
             groundtruth_and_predictions['thr'] = thr
-            image_gt_and_preds.append(groundtruth_and_predictions)
 
             # compute metrics
             metrics = detection_and_counting(groundtruth_and_predictions, image_hw=image_hw)
             metrics['thr'] = thr
             metrics['imgName'] = image_id
 
-            image_metrics.append(metrics)
+            return groundtruth_and_predictions, metrics
+
+        job_args = (segmentation_map, groundtruth, image_id, image_hw)
+        jobs = [delayed(_compute_thr_metrics)(thr, *job_args) for thr in thrs]
+        all_gp_and_metrics = Parallel(n_jobs=-1)(jobs)
+        image_gt_and_preds, image_metrics = zip(*all_gp_and_metrics)
 
         all_metrics.extend(image_metrics)
         all_gt_and_preds.extend(image_gt_and_preds)
 
-        if outdir and debug:
+        if outdir and n_i < debug:
             outdir.mkdir(parents=True, exist_ok=True)
 
             # pick a threshold and draw that prediction set
-            best_thr = pd.DataFrame(image_metrics).set_index('thr')['count/game-3'].idxmin()
+            best_thr = pd.DataFrame(image_metrics).set_index('thr')['count/game-3/macro'].idxmin()
             gp = pd.concat(image_gt_and_preds, ignore_index=True)
             gp = gp[gp.thr == best_thr]
 
-            image = draw_groundtruth_and_predictions(image, gp, radius=cfg.data.validation.target_params.radius, marker='circle')
-            io.imsave(outdir / f'annot_{image_id}', image)
+            n_classes = cfg.model.module.out_channels
+            radius = cfg.data.validation.target_params.radius
+            for i in range(n_classes):
+                gp_i = gp[gp['class'] == i]
+                image = draw_groundtruth_and_predictions(image, gp_i, radius=radius, marker='circle')
+                io.imsave(outdir / f'annot_{image_id}', image)
 
     all_metrics = pd.DataFrame(all_metrics)
     all_gp = pd.concat(all_gt_and_preds, ignore_index=True)
@@ -382,41 +393,16 @@ def predict(dataloader, model, device, cfg, outdir, debug=False):
 def predict_points(dataloader, model, device, threshold, cfg):
     """ Predict and find points. """
     model.eval()
-
-    @torch.no_grad()
-    def process_fn(inputs):
-        logits = model(inputs.to(device))
-        predictions = torch.sigmoid(logits).squeeze(axis=1).cpu().numpy()
-        return (predictions,)
-
-    def collate_fn(image_info, image_patches):
-        image_id, image_hw = image_info
-        segmentation_map = None
-        normalization_map = None
-
-        for (patch_hw, start_yx), (processed_patch,) in image_patches:
-
-            if segmentation_map is None:
-                out_channels = processed_patch.shape[-1]
-                out_hwc = image_hw + (out_channels,)
-                segmentation_map = np.zeros(out_hwc, dtype=np.float32)
-                normalization_map = np.zeros(out_hwc, dtype=np.float32)
-
-            (y, x), (h, w) = start_yx, patch_hw
-            segmentation_map[y:y+h, x:x+w] += processed_patch[:h, :w]
-            normalization_map[y:y+h, x:x+w] += 1.0
-
-        segmentation_map /= normalization_map
-        del normalization_map
-
-        return image_id, segmentation_map
+    n_images = dataloader.dataset.num_images()
+    
+    process_fn = partial(_process_fn, model=model, device=device, cfg=cfg, has_target=False, return_input=False, return_target=False, return_numpy=True)
+    collate_fn = partial(_collate_fn, device=device, has_input=False, has_target=False)
+    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn, progress=True, max_prefetch=1)
 
     all_localizations = []
     
-    processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn, progress=True)
-    n_images = dataloader.dataset.num_images()
     progress = tqdm(processed_images, total=n_images, desc='PRED', leave=False)
-    for image_id, segmentation_map in progress:
+    for image_id, image_hw, segmentation_map in progress:
         # from skimage.transform import rescale
         # io.imsave('debug_' + image_id, rescale(segmentation_map, scale=0.15, anti_aliasing=True))
         # find connected components and centroids

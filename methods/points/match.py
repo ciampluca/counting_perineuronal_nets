@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 
@@ -45,6 +46,28 @@ def match(groundtruth, predictions, threshold):
         columns. Non-matched predictions are added as additional rows
         with NaNs in X, Y columns.
     """
+
+    if 'class' not in groundtruth:
+        groundtruth['class'] = 0
+
+    if 'class' not in predictions:
+        predictions['class'] = 0
+    
+    n_classes = max(groundtruth['class'].max(), predictions['class'].max()) + 1
+
+    results = []
+    for i in range(n_classes):
+        g = groundtruth[groundtruth['class'] == i].reset_index()
+        p = predictions[predictions['class'] == i].reset_index()
+        gp = _match_single_class(g, p, threshold)
+        gp['class'] = i
+        results.append(gp)
+
+    results = pd.concat(results, ignore_index=True)
+    return results
+
+
+def _match_single_class(groundtruth, predictions, threshold):
     groundtruth_and_predictions = groundtruth.copy().reset_index()
     groundtruth_and_predictions['Xp'] = np.nan
     groundtruth_and_predictions['Yp'] = np.nan
@@ -80,5 +103,5 @@ def match(groundtruth, predictions, threshold):
         non_matched_predictions = predictions[~predictions.index.isin(pred_idx)]
     
     non_matched_predictions = non_matched_predictions.rename({'X':'Xp', 'Y':'Yp'}, axis=1)
-    groundtruth_and_predictions = groundtruth_and_predictions.append(non_matched_predictions, ignore_index=True)
+    groundtruth_and_predictions = pd.concat([groundtruth_and_predictions, non_matched_predictions], ignore_index=True)
     return groundtruth_and_predictions

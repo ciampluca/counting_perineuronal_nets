@@ -1,11 +1,12 @@
 # @package data
 
 train: &common
-    target_: density
+    target: density
     target_params:
         k_size: 81  # size (in px) of the kernel of the gaussian localizing a biological structure
         sigma: 15  # sigma of the gaussian
         method: reflect     # method for gt den map generation; can be move, move-cv2, reflect, normalize
+        target_normalize_scale_factor: 1.0  # rescaling value for target pixels
 
 validation:
     <<: *common   # reinsert 'train' block content

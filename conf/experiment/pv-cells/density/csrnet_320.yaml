@@ -1,0 +1,15 @@
+# @package _global_
+
+defaults:
+ - pv-cells/density/common
+
+data:
+    train:
+        patch_size: 320
+    validation:
+        patch_size: 320
+
+misc:
+    font_size: 8
+    text_pos: 15
+    bb_outline_width: 1

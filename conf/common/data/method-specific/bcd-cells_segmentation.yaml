@@ -1,7 +1,7 @@
 # @package data
 
 train: &common
-    target_: segmentation
+    target: segmentation
     target_params:
         radius: 15          # radius (in px) of the dot placed on a cell in the segmentation map
         radius_ignore: 18   # radius (in px) of the 'ignore' zone surrounding the cell

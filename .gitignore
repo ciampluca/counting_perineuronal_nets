@@ -128,8 +128,7 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-
-/.idea/
+/data/
 /tmp/
 /trash/
 /.vscode/
@@ -137,11 +136,14 @@ dmypy.json
 /model_zoo/
 /runs*/
 /figures/
+datasets/trash/
 *.zip
-*.png 
+*.png
+*.pkl
 *.jpg
 *.jpeg
 *.bmp
 *.tif
 *.tiff
 *.h5
+.*

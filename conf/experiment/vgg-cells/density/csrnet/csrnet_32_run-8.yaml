@@ -1,0 +1,15 @@
+# @package _global_
+
+defaults:
+ - vgg-cells/density/csrnet/common
+
+data:
+    train: &common
+        split_seed: 97
+        num_samples:
+            - 32   # num of train images
+            - 32  # num of validation images
+        target_params:
+            method: reflect
+    validation:
+        <<: *common

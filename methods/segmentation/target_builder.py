@@ -1,26 +1,12 @@
-import logging
 import numpy as np
 
-from skimage.draw import disk, line_aa
+from skimage.draw import disk, polygon2mask, polygon_perimeter
 from scipy.ndimage import distance_transform_edt
 from scipy.spatial import Voronoi
-from scipy.spatial.qhull import QhullError
 
-
-class DuplicateFilter(object):
-    def __init__(self):
-        self.msgs = set()
-
-    def filter(self, record):
-        rv = record.msg not in self.msgs
-        self.msgs.add(record.msg)
-        return rv
-
-log = logging.getLogger(__name__)
-log.addFilter(DuplicateFilter())
-
+from methods.base_target_builder import BaseTargetBuilder
     
-class SegmentationTargetBuilder:
+class SegmentationTargetBuilder(BaseTargetBuilder):
     """ This builds the segmantation and loss weights maps, as described
         in the 'Methods' section of the paper:
 
@@ -61,9 +47,20 @@ class SegmentationTargetBuilder:
         self.lambda_sep = lambda_sep
         self.width_sep = width_sep
 
-    def build(self, shape, points_yx):
-        if len(points_yx) < 3:  # fallback to simple case
-            return self.build_cliques(shape, points_yx)
+    def build(self, shape, locations, n_classes=None):        
+        segmentations = []
+        weights = []
+        for i in range(n_classes):
+            points_i = locations[locations['class'] == i][['Y', 'X']].values
+            segmentation_i, weights_i = self._build_single_class(shape, points_i)
+            segmentations.append(segmentation_i)
+            weights.append(weights_i)
+        
+        segmentations = np.stack(segmentations, axis=-1)
+        weights = np.stack(weights, axis=-1)
+        return segmentations, weights
+
+    def _build_single_class(self, shape, points_yx):
 
         radius = self.radius
         radius_ign = self.radius_ignore
@@ -72,42 +69,56 @@ class SegmentationTargetBuilder:
         s_sep = self.sigma_sep
         lambda_sep = self.lambda_sep
 
-        min_yx, max_yx = np.array((0, 0)), np.array(shape) - 1
         segmentation = np.zeros(shape, dtype=np.float32)
-        
+
         if len(points_yx) == 0:  # empty patch
             weights = np.full_like(segmentation, v_bal, dtype=np.float32)
             return segmentation, weights
-        
+
         weights_balance = np.zeros(shape, dtype=np.float32)
         weights_separation = np.zeros(shape, dtype=np.float32)
 
-        # build segmentation map
-        for center in points_yx:  # ignore region
-            rr, cc = disk(center, radius_ign, shape=shape)
-            segmentation[rr, cc] = -1
-        
         dmap1 = np.full(shape, np.inf, dtype=np.float32)
         dmap2 = np.full(shape, np.inf, dtype=np.float32)
-        for center in points_yx:  # fg regions (overwrites ignore regions)
-            rr, cc = disk(center, radius, shape=shape)
-            segmentation[rr, cc] = 1
-            
-            # build also distance maps needed for w_sep
-            distance_map = np.ones(shape, dtype=np.float32)
-            distance_map[rr, cc] = 0
-            distance_map = distance_transform_edt(distance_map)
+        
+        # add fake/outside points to make Voronoi partitioning possible (even when n_points < 4)
+        t, l, b, r = 0, 0, shape[0] - 1, shape[1] - 1
+        guard_points_yx = np.array([[t - 2*radius_ign, l - 2*radius_ign],
+                                    [b + 2*radius_ign, l - 2*radius_ign],
+                                    [b + 2*radius_ign, r + 2*radius_ign],
+                                    [t - 2*radius_ign, r + 2*radius_ign]], dtype=np.float32)
+        points_yx = np.vstack((points_yx, guard_points_yx))
 
-            # keep smallest and second smallest per pixel
-            dmap1, dmap2 = np.sort(np.stack((dmap1, dmap2, distance_map)), axis=0)[:2]
+        vor = Voronoi(points_yx)
+        centers = vor.points
+        regions, vertices = self._voronoi_finite_polygons_2d(vor)
 
-        # draw ridge as background
-        for start, end in self._find_ridges(points_yx, max_yx):
-            r0, c0 = np.clip(start, min_yx, max_yx).astype(int)
-            r1, c1 = np.clip(end  , min_yx, max_yx).astype(int)
-            rr, cc, _ = line_aa(r0, c0, r1, c1)
-            segmentation[rr, cc] = 0  # set to bg to create separation
-                
+        for seed_yx, region in zip(centers, regions):
+            region_vertices = np.array([vertices[v] for v in region])
+            region_mask = polygon2mask(shape, region_vertices)
+        
+            # ignore region
+            rr, cc = disk(seed_yx, radius_ign, shape=shape)
+            segmentation[rr, cc] = np.where(region_mask[rr, cc], -1, segmentation[rr, cc])
+
+            # foreground region
+            rr, cc = disk(seed_yx, radius, shape=shape)
+            segmentation[rr, cc] = np.where(region_mask[rr, cc], 1, segmentation[rr, cc])
+
+            if region_mask[rr, cc].size:  # if there are some fg pixels to change
+                # build distance maps needed for w_sep
+                distance_map = np.ones(shape, dtype=np.float32)
+                distance_map[rr, cc] = np.where(region_mask[rr, cc], 0, distance_map[rr, cc])
+                distance_map = distance_transform_edt(distance_map)
+
+                # keep smallest and second smallest per pixel
+                dmap1, dmap2 = np.sort(np.stack((dmap1, dmap2, distance_map)), axis=0)[:2]
+        
+            # background ridges
+            r, c = region_vertices.T
+            rr, cc = polygon_perimeter(r, c, shape=shape)
+            segmentation[rr, cc] = 0
+
         # build w_bal
         is_fg, is_bg, is_ign = segmentation > 0, segmentation == 0, segmentation < 0       
         d1 = distance_transform_edt(is_bg)  # find distance of bg points to nearest fg point
@@ -128,91 +139,85 @@ class SegmentationTargetBuilder:
         return segmentation, weights
 
     def pack(self, image, target, pad=None):
-        segmentation, weights = target
+        segmentations, weights = target
 
-        segmentation = np.expand_dims(segmentation, axis=-1)
-        segmentation = np.pad(segmentation, pad) if pad else segmentation
-
-        weights = np.expand_dims(weights, axis=-1)
+        segmentations = np.pad(segmentations, pad) if pad else segmentations
         weights = np.pad(weights, pad) if pad else weights  # 0 in loss weight = don't care
 
         # stack in a unique RGB-like tensor, useful for applying data augmentation
-        return np.concatenate((image, segmentation, weights), axis=-1)
+        return np.concatenate((image, segmentations, weights), axis=-1)
 
-    @classmethod
-    def _find_ridges(cls, points, limits):
-        """ This finds and yields all the segments that separate overlapping points. """
-        n_points = len(points)
-
-        if n_points == 1:
-            yield from []  # no ridges
-        
-        elif n_points == 2:  # ridge is perpendicular bisector
-            a, b = points
-            if not np.allclose(a, b):  # discard duplicate points
-                yield cls._find_ridge_between_two(a, b, limits)
-            
-        else:  # ridge is found using voronoi partitioning
-            try:
-                vor = Voronoi(points)
-                center = vor.points.mean(axis=0)
-
-                for pointidx, simplex in zip(vor.ridge_points, vor.ridge_vertices):
-                    simplex = np.asarray(simplex)
-                    if np.all(simplex >= 0):
-                        yield vor.vertices[simplex]
-                    else:
-                        i = simplex[simplex >= 0][0]  # finite end Voronoi vertex
-
-                        t = vor.points[pointidx[1]] - vor.points[pointidx[0]]  # tangent
-                        t /= np.linalg.norm(t)
-                        n = np.array([-t[1], t[0]])  # normal
-
-                        midpoint = vor.points[pointidx].mean(axis=0)
-                        direction = np.sign(np.dot(midpoint - center, n)) * n
-
-                        start_point = vor.vertices[i]
-                        if np.any(start_point < 0) or np.any(start_point >= limits):
-                            log.warning(f'Ignoring Voronoi vertex outside image limits.')
-                            continue
-
-                        # check intersection with patch limits:
-                        # start_point + t * direction == (0, 0) or (shape - 1)
-                        with np.errstate(divide='ignore'):  # division by zero are ok (result is +-inf)
-                            t0 = - start_point / direction
-                            t1 = (limits - start_point) / direction
-                        t = np.hstack((t0, t1))
-                        t = np.min(t[t >= 0])
-                        far_point = start_point + t * direction
-
-                        yield start_point, far_point
-
-            except QhullError as e:
-                # 3+ points that do not span the plane => collinear, we separate them in pairs
-                sorted_points = points[np.lexsort(points.T)]
-                for a, b in zip(sorted_points[:-1], sorted_points[1:]):
-                    if not np.allclose(a, b):  # discard duplicate points
-                        yield cls._find_ridge_between_two(a, b, limits)
-
-    
     @staticmethod
-    def _find_ridge_between_two(a, b, limits):
-        """ helper function for _find_ridges() when only 2 points overlap """
-        middle = (a + b) / 2
-        ab_dir = b - a
-        ridge_dir = np.array((-ab_dir[1], ab_dir[0]))
+    def _voronoi_finite_polygons_2d(vor, radius=None):
+        """
+        Reconstruct infinite voronoi regions in a 2D diagram to finite regions.
+        Thanks to: https://gist.github.com/pv/8036995
 
-        # check intersections with patch limits:
-        # middle +- t * ridge_dir == (0, 0) or limits
-        with np.errstate(divide='ignore'):
-            t0 = middle / ridge_dir
-            t1 = (middle - limits) / ridge_dir
-        t = np.hstack((t0, t1))
-        
-        h_min = np.max(t[t < 0])
-        h_max = np.min(t[t >= 0])
-        
-        start = middle + h_min * ridge_dir
-        end = middle + h_max * ridge_dir
+        Args:
+            vor (Voronoi): Input diagram
+            radius (float, optional): Distance to 'points at infinity'.
 
-        return start, end
+        Returns:
+        regions (list of tuples):
+            Indices of vertices in each revised Voronoi regions.
+        vertices (list of tuples):
+            Coordinates for revised Voronoi vertices. Same as coordinates of input
+            vertices, with 'points at infinity' appended to the end.
+        """
+
+        if vor.points.shape[1] != 2:
+            raise ValueError("Requires 2D input")
+
+        new_regions = []
+        new_vertices = vor.vertices.tolist()
+
+        center = vor.points.mean(axis=0)
+        if radius is None:
+            radius = vor.points.ptp().max()*2
+
+        # Construct a map containing all ridges for a given point
+        all_ridges = {}
+        for (p1, p2), (v1, v2) in zip(vor.ridge_points, vor.ridge_vertices):
+            all_ridges.setdefault(p1, []).append((p2, v1, v2))
+            all_ridges.setdefault(p2, []).append((p1, v1, v2))
+
+        # Reconstruct infinite regions
+        for p1, region in enumerate(vor.point_region):
+            vertices = vor.regions[region]
+
+            if all(v >= 0 for v in vertices):  # finite region
+                new_regions.append(vertices)
+                continue
+
+            # reconstruct a non-finite region
+            ridges = all_ridges[p1]
+            new_region = [v for v in vertices if v >= 0]
+
+            for p2, v1, v2 in ridges:
+                if v2 < 0:
+                    v1, v2 = v2, v1
+                if v1 >= 0:  # finite ridge: already in the region
+                    continue
+
+                # Compute the missing endpoint of an infinite ridge
+                t = vor.points[p2] - vor.points[p1] # tangent
+                t /= np.linalg.norm(t)
+                n = np.array([-t[1], t[0]])  # normal
+
+                midpoint = vor.points[[p1, p2]].mean(axis=0)
+                direction = np.sign(np.dot(midpoint - center, n)) * n
+                far_point = vor.vertices[v2] + direction * radius
+
+                new_region.append(len(new_vertices))
+                new_vertices.append(far_point.tolist())
+
+            # sort region counterclockwise
+            vs = np.asarray([new_vertices[v] for v in new_region])
+            c = vs.mean(axis=0)
+            angles = np.arctan2(vs[:,1] - c[1], vs[:,0] - c[0])
+            new_region = np.array(new_region)[np.argsort(angles)]
+
+            # finish
+            new_regions.append(new_region.tolist())
+
+        return new_regions, np.asarray(new_vertices)

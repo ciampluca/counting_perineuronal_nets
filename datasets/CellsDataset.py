@@ -1,15 +1,18 @@
 import collections
+import itertools
+import logging
 from pathlib import Path
 import random
 
-import numpy as np
 import pandas as pd
-from skimage import io
 
 from datasets.patched_datasets import PatchedImageDataset, PatchedMultiImageDataset
 from methods.segmentation.target_builder import SegmentationTargetBuilder
 from methods.detection.target_builder import DetectionTargetBuilder
 from methods.density.target_builder import DensityTargetBuilder
+from methods.countmap.target_builder import CountmapTargetBuilder
+
+log = logging.getLogger(__name__)
 
 
 class CellsDataset(PatchedMultiImageDataset):
@@ -20,20 +23,17 @@ class CellsDataset(PatchedMultiImageDataset):
             self,
             root='data/vgg-cells',
             split='all',
-            max_num_train_val_sample=30,   
+            max_num_train_val_sample=30,
             num_test_samples=10,
             split_seed=None,
             num_samples=None,
-            target_=None,
+            target=None,
             target_params={},
-            cache_targets=False,
+            target_cache=None,
             transforms=None,
             as_gray=False,
     ):
-
-        target = target_  # XXX TOREMOVE for hydra bug
-
-        assert target in (None, 'segmentation', 'detection', 'density'), f'Unsupported target type: {target}'
+        assert target in (None, 'segmentation', 'detection', 'density', 'countmap'), f'Unsupported target type: {target}'
         assert split in (
         'all', 'train', 'validation', 'test'), "Split must be one of ('train', 'validation', 'test', 'all')"
         assert split == 'all' or ((split_seed is not None) and (
@@ -55,6 +55,7 @@ class CellsDataset(PatchedMultiImageDataset):
 
         self.target = target
         self.target_params = target_params
+        self.target_cache = (self.root / 'cache') if target_cache is None else target_cache
 
         if target == 'segmentation':
             target_builder = SegmentationTargetBuilder
@@ -62,26 +63,33 @@ class CellsDataset(PatchedMultiImageDataset):
             target_builder = DetectionTargetBuilder
         elif target == 'density':
             target_builder = DensityTargetBuilder
+        elif target == 'countmap':
+            target_builder = CountmapTargetBuilder
 
         self.target_builder = target_builder(**target_params) if target else None
 
         # get list of images in the given split
         self.image_paths = self._get_images_in_split()
+        self.target_cache_paths = self._get_cache_paths()
 
         # load pandas dataframe containing dot annotations
-        self.annot = pd.read_csv(Path(self.root / 'annotations.csv'))
-        self.annot = self.annot.set_index('imgName')
+        all_annot = pd.read_csv(Path(self.root / 'annotations.csv'))
+        all_annot = all_annot.set_index('imgName')
+        if not 'class' in all_annot.columns:
+            all_annot['class'] = 0
+        num_classes = all_annot['class'].nunique()
 
         data_params = dict(
             split='all',
             patch_size=None,
-            annotations=self.annot,
+            annotations=all_annot,
             target_builder=self.target_builder,
             transforms=self.transforms,
-            cache_targets=cache_targets,
             as_gray=as_gray,
+            num_classes=num_classes,
         )
-        datasets = [PatchedImageDataset(p, **data_params) for p in self.image_paths]
+        datasets = [PatchedImageDataset(p, target_cache=c, **data_params) for p, c in zip(self.image_paths, self.target_cache_paths)]
+        
         super().__init__(datasets)
 
     def __len__(self):
@@ -97,132 +105,36 @@ class CellsDataset(PatchedMultiImageDataset):
         # reproducible shuffle
         random.Random(self.split_seed).shuffle(image_paths)
 
-        n_train_samples, n_val_samples = self.num_samples
+        n_train, n_val = self.num_samples
         if self.split == 'train':
-            return image_paths[:n_train_samples]
+            return image_paths[:n_train]
         elif self.split == 'validation':
-            return image_paths[n_train_samples:n_train_samples + n_val_samples]
+            return image_paths[n_train:n_train + n_val]
         else:  # elif self.split == 'test':
-            return image_paths[n_train_samples + n_val_samples:n_train_samples + n_val_samples + self.num_test_samples]
+            if n_train >= 0 and n_val >= 0:
+                start, end = n_train + n_val, n_train + n_val + self.num_test_samples
+            elif n_train >= 0 and n_val < 0:
+                start, end = n_train, n_train + self.num_test_samples
+            elif n_train < 0 and n_val >= 0:
+                start, end = n_val, n_val + self.num_test_samples
+            else:  # n_train_samples < 0 and n_val_samples < 0:
+                start, end = None, self.num_test_samples
 
+        return image_paths[start:end]
 
+    def _get_cache_paths(self):
+        if not self.target or not self.target_cache:
+            return itertools.repeat(None, len(self.image_paths))
 
-# Testing Code
-if __name__ == "__main__":
-    from methods.density.utils import normalize_map
-    from methods.points.utils import draw_points
-    from skimage import io
-    from tqdm import trange
-    from methods.detection.transforms import RandomVerticalFlip, RandomHorizontalFlip, Compose, ToTensor
-    import torchvision.transforms
-    import os
+        def stringify(builder):
+            tokens = [k[0] + ('-' if isinstance(v, str) else '') + str(v) for k, v in builder.__dict__.items()]
+            return '_'.join(tokens)
 
-    # Check data loading for detection
-    ######################################
-    # Side --> MBM=20, VGG=12, BCD=30, ADIPOCYTE=12
-    data_path="data/mbm-cells"
-    side = 20
-    target_params = {
-        'side': side,
-    }
-    as_gray = False
-    transforms = Compose([
-        RandomHorizontalFlip(),
-        RandomVerticalFlip(),
-        ToTensor(),
-    ])
-    dataset = CellsDataset(target_='detection', target_params=target_params, transforms=transforms, root=data_path, as_gray=as_gray)
-    print(dataset)
+        cache_root = Path(self.target_cache)
+        cache_name = f'{self.target}_{stringify(self.target_builder)}'
+        cache_dir = cache_root / cache_name
 
-    for i in trange(0, 40, 2):
-        datum, patch_hw, start_yx, image_hw, image_id = dataset[i]
-        image, boxes = datum
-        image = image.cpu().detach().permute(1, 2, 0).numpy()
+        log.info(f'Using cache: {cache_dir}')
 
-        image = (255 * image).astype(np.uint8)
-        centers = (boxes[:, :2] + boxes[:, 2:]) / 2
-        image = draw_points(image, centers, radius=int(side/2))
-        io.imsave(os.path.dirname(__file__) + '/trash/debug/annot_' + image_id, image)
-        
-        # break
-
-    # Check data loading for segmentation
-    ######################################
-    # Radius --> MBM=12, VGG=5, BCD=15, ADIPOCYTE=5
-    # Radius_Ignore --> MBM=15, VGG=6, BCD=18, ADIPOCYTE=6
-    # Sigma_Bal --> MBM=5, VGG=3, BCD=7, ADIPOCYTE=3
-    # Sep_Width --> MBM=1, VGG=1, BCD=2, ADIPOCYTE=1
-    # Sigma_Sep --> MBM=4, VGG=3, BCD=8, ADIPOCYTE=3
-    data_path="data/mbm-cells"
-    radius = 12
-    radius_ignore = 15
-    sigma_bal = 5
-    sep_width = 1
-    sigma_sep = 4
-    target_params = {
-                        'radius': radius,         # radius (in px) of the dot placed on a cell in the segmentation map
-                        'radius_ignore': radius_ignore,  # radius (in px) of the 'ignore' zone surrounding the cell
-                        'v_bal': 0.1,         # weight of the loss of bg pixels
-                        'sigma_bal': sigma_bal,       # gaussian stddev (in px) to blur loss weights of bg pixels near fg pixels
-                        'sep_width': sep_width,       # width (in px) of bg ridge separating two overlapping foreground cells
-                        'sigma_sep': sigma_sep,       # gaussian stddev (in px) to blur loss weights of bg pixels near bg ridge pixels
-                        'lambda_sep': 50  
-                    }
-    as_gray = False
-    transforms = torchvision.transforms.Compose([
-        torchvision.transforms.ToTensor(),
-        torchvision.transforms.RandomHorizontalFlip(),
-        torchvision.transforms.RandomVerticalFlip(),
-    ])
-    dataset = CellsDataset(target_='segmentation', root=data_path, target_params=target_params, transforms=transforms, as_gray=as_gray)
-    print(dataset)
-
-    for i in trange(0, 40, 2):
-        datum, patch_hw, start_yx, image_hw, image_id = dataset[i]
-        n_channels = datum.shape[0]
-        image, segmentation_map, weights_map = datum.split((n_channels - 2, 1, 1), dim=0)
-        image, segmentation_map, weights_map = image.cpu().detach().permute(1, 2, 0).numpy(), segmentation_map.cpu().detach().permute(1, 2, 0).numpy(), weights_map.cpu().detach().permute(1, 2, 0).numpy()
-
-        image = (255 * image).astype(np.uint8)
-        io.imsave(os.path.dirname(__file__) + '/trash/debug/image_segm_' + image_id, image)
-        segmentation_map = (255 * normalize_map(segmentation_map)).astype(np.uint8)
-        weights_map = (255 * normalize_map(weights_map)).astype(np.uint8)
-        io.imsave(os.path.dirname(__file__) + '/trash/debug/segm_' + image_id, segmentation_map)
-        io.imsave(os.path.dirname(__file__) + '/trash/debug/segm_weights_' + image_id, weights_map)
-
-        # break
-    
-    # Check data loading for density
-    ######################################
-    # Sigma --> MBM=10, VGG=5, BCD=15, ADIPOCYTE=5, BCD=15
-    # K_Size --> MBM=51, VGG=41, BCD=, ADIPOCYTE=41, BCD=81
-    data_path="data/mbm-cells"
-    sigma = 10
-    k_size = 51
-    target_params = {
-        'k_size': k_size,
-        'sigma': sigma,
-        'method': 'reflect',
-    }
-    as_gray = False
-    transforms = torchvision.transforms.Compose([
-        torchvision.transforms.ToTensor(),
-        torchvision.transforms.RandomHorizontalFlip(),
-        torchvision.transforms.RandomVerticalFlip(),
-    ])
-    dataset = CellsDataset(target_='density', target_params=target_params, transforms=transforms, root=data_path, as_gray=as_gray)
-    print(dataset)
-    
-    for i in trange(0, 40, 1):
-        datum, patch_hw, start_yx, image_hw, image_id = dataset[i]
-        n_channels = datum.shape[0]
-        image, dmap = datum.split((n_channels - 1, 1), dim=0)
-        image, dmap = image.cpu().detach().permute(1, 2, 0).numpy(), dmap.cpu().detach().permute(1, 2, 0).numpy()
-
-        image = (255 * image).astype(np.uint8)
-        io.imsave(os.path.dirname(__file__) + '/trash/debug/image_den_' + image_id, image)
-        dmap = (255 * normalize_map(dmap.squeeze())).astype(np.uint8)
-        io.imsave(os.path.dirname(__file__) + '/trash/debug/den_' + image_id, dmap)
-    
-        # break
-
+        cache_paths = [cache_dir / p.stem for p in self.image_paths]
+        return cache_paths

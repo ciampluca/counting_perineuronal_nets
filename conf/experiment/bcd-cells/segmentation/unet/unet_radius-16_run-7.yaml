@@ -1,0 +1,19 @@
+# @package _global_
+
+defaults:
+ - bcd-cells/segmentation/unet/common
+
+seed: 17
+
+data:
+    train: &common
+        target_params:
+            radius: 16         
+            radius_ignore: 20   
+            v_bal: 0.1         
+            sigma_bal: 7      
+            sep_width: 2       
+            sigma_sep: 8      
+            lambda_sep: 50     
+    validation:
+        <<: *common
