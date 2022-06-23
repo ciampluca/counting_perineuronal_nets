@@ -447,14 +447,13 @@ def predict_points(dataloader, model, device, threshold, cfg):
     processed_images = dataloader.dataset.process_per_patch(dataloader, process_fn, collate_fn, progress=True)
     n_images = dataloader.dataset.num_images()
     progress = tqdm(processed_images, total=n_images, desc='PRED (patches)', leave=False)
-    for image_id, boxes, labels, scores in progress:
-
+    for image_id, image_hw, boxes, labels, scores in progress:
         localizations = (boxes[:, :2] + boxes[:, 2:]) / 2
         localizations = pd.DataFrame(localizations, columns=['X', 'Y'])
         localizations['class'] = labels
         localizations['score'] = scores
 
-        localizations = localizations[localizations.score >= threshold].reset_index()
+        localizations = localizations[localizations.score >= threshold].reset_index(drop=True)
         localizations['imgName'] = image_id
         localizations['thr'] = threshold
 
