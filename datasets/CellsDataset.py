@@ -10,7 +10,6 @@ from datasets.patched_datasets import PatchedImageDataset, PatchedMultiImageData
 from methods.segmentation.target_builder import SegmentationTargetBuilder
 from methods.detection.target_builder import DetectionTargetBuilder
 from methods.density.target_builder import DensityTargetBuilder
-from methods.countmap.target_builder import CountmapTargetBuilder
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +32,7 @@ class CellsDataset(PatchedMultiImageDataset):
             transforms=None,
             as_gray=False,
     ):
-        assert target in (None, 'segmentation', 'detection', 'density', 'countmap'), f'Unsupported target type: {target}'
+        assert target in (None, 'segmentation', 'detection', 'density'), f'Unsupported target type: {target}'
         assert split in (
         'all', 'train', 'validation', 'test'), "Split must be one of ('train', 'validation', 'test', 'all')"
         assert split == 'all' or ((split_seed is not None) and (
@@ -63,8 +62,6 @@ class CellsDataset(PatchedMultiImageDataset):
             target_builder = DetectionTargetBuilder
         elif target == 'density':
             target_builder = DensityTargetBuilder
-        elif target == 'countmap':
-            target_builder = CountmapTargetBuilder
 
         self.target_builder = target_builder(**target_params) if target else None
 
