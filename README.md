@@ -108,4 +108,4 @@ Metrics and predictions will be saved in the run folder under `test_predictions/
 
 - Check the [`reproduce.sh`](./reproduce.sh) script for launching all training and evaluation phases defined in the paper.
 
-- Check the [`show.ipynb`](./`show.ipynb`) notebook for producing figures and tables presented in the paper.
+- Check the [`show.ipynb`](./show.ipynb) notebook for producing figures and tables presented in the paper.
