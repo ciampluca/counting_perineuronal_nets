@@ -3,7 +3,12 @@
 <img src="pnn-banner.gif" width="100%">
 
 PyTorch code for training and evaluating cell counting and localization methodologies.
-We provide pretrained models for **counting perineuronal nets** in fluorescence microscopy images.
+We provide pretrained models for counting **perineuronal nets (PNN)** and **parvalbumin cells (PV)** in fluorescence microscopy images.
+
+## Papers
+  - Ciampi, Luca, et al. "[Learning to count biological structures with raters’ uncertainty.](https://www.sciencedirect.com/science/article/abs/pii/S1361841522001475)" Medical Image Analysis 80 (2022): 102500.
+  - Lupori, Leonardo, et al. "[A Comprehensive Atlas of Perineuronal Net Distribution and Colocalization with Parvalbumin in the Adult Mouse Brain.](https://www.biorxiv.org/content/biorxiv/early/2023/01/25/2023.01.24.525313.full.pdf)" bioRxiv (2023): 2023-01.
+
 
 ## Getting Started
 
@@ -14,29 +19,32 @@ You'll need:
 
 We provide a [`Dockerfile`](Dockerfile) to build the environment.
 
+## Trained models
+
+We provide Localization and Scoring models for PNNs and PVs structures:
+
+|              	| Latest (v0.5) 	| v0.3 	|
+|--------------	|:-------------:	|:----:	|
+| PNN Localization 	| [FRCNN-640](https://github.com/ciampluca/counting_perineuronal_nets/releases/download/v0.5/pnn_v2_fasterrcnn_640.zip) | [FRCNN-640](https://github.com/ciampluca/counting_perineuronal_nets/releases/download/v0.3/pnn_fasterrcnn_640.zip) \| [UNet-320](https://github.com/ciampluca/counting_perineuronal_nets/releases/download/v0.3/pnn_unet_320.zip) |
+| PNN Scoring  	| [OR](https://github.com/ciampluca/counting_perineuronal_nets/releases/download/v0.5/pnn_v2_scoring_ordinal_regression.zip) \| [RL](https://github.com/ciampluca/counting_perineuronal_nets/releases/download/v0.5/pnn_v2_scoring_rank_learning.zip) | [AC](https://github.com/ciampluca/counting_perineuronal_nets/releases/download/v0.3/pnn_scoring_classification.zip) \| [OR](https://github.com/ciampluca/counting_perineuronal_nets/releases/download/v0.3/pnn_scoring_ordinal_regression.zip) \| [RL](https://github.com/ciampluca/counting_perineuronal_nets/releases/download/v0.3/pnn_scoring_rank_learning.zip) |
+| PV Localization 	| [FRCNN-640](https://github.com/ciampluca/counting_perineuronal_nets/releases/download/v0.5/pv_v2_fasterrcnn_640.zip)   | - |
+| PV Scoring  	| [OR](https://github.com/ciampluca/counting_perineuronal_nets/releases/download/v0.5/pv_v2_scoring_ordinal_regression.zip) \| [RL](https://github.com/ciampluca/counting_perineuronal_nets/releases/download/v0.5/pv_v2_scoring_rank_learning.zip)| - |
+
+
+| :exclamation:  Ensure you have checked out the correct code version (`v0.5` or `v0.3`) for the model you want to use. |
+|-----------------------------------------|
+
 ## How to do predictions
 
-Download and extract a pretrained model from the Release page of this repo. E.g.:
-```bash
-# localization model
-wget https://github.com/ciampluca/counting_perineuronal_nets/releases/download/v0.3/pnn_fasterrcnn_640.zip
-unzip pnn_fasterrcnn_640.zip
-
-# scoring model
-wget https://github.com/ciampluca/counting_perineuronal_nets/releases/download/v0.3/pnn_scoring_rank_learning.zip
-unzip pnn_scoring_rank_learning.zip
-```
-
-Alternatively, you can train your own models (see next section).
-
+Download and unzip a localization and a scoring model. Alternatively, you can train your own models (see next section).
 Then, you can do predictions using the `predict.py` script by passing the extracted run folders and the paths to data to process. E.g.:
 
 ```bash
 # use both localization and scoring models (tip: set a low localization threshold for high-recall localization)
-python predict.py pnn_fasterrcnn_640/ -r pnn_scoring_rank_learning/ -t 0.0 my_images_*.tiff
+python predict.py pnn_v2_fasterrcnn_640/ -r pnn_v2_scoring_rank_learning/ -t 0.0 my_images_*.tiff
 
 # use only the localization model (uses default threshold)
-python predict.py pnn_fasterrcnn_640/ my_images_*.tiff
+python predict.py pnn_v2_fasterrcnn_640/ my_images_*.tiff
 
 # check python predict.py -h for more options
 ```
