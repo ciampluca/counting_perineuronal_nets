@@ -1,6 +1,7 @@
 tqdm
 Pillow==8.4.0
 torch==1.11.0
+torchsort
 torchvision==0.12.0
 tensorboard
 matplotlib
