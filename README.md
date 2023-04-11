@@ -13,11 +13,13 @@ We provide pretrained models for counting **perineuronal nets (PNN)** and **parv
 ## Getting Started
 
 You'll need:
-- Python >= 3.8
+- Python 3.8
 - torch 1.7.1 (torchvision 0.8.2)
 - other packages in requirements.txt
 
 We provide a [`Dockerfile`](Dockerfile) to build the environment.
+
+**NOTE for Windows users**: you may need to install Microsoft C++ Build Tools to install requirements with pip. Installation using conda environments might be convenient, but we did not test it yet. (PRs are welcome :)).
 
 ## Trained models
 
@@ -50,6 +52,18 @@ python predict.py pnn_v2_fasterrcnn_640/ my_images_*.tiff
 ```
 
 Accepted formats for input data are image formats (TIFF, PNG, JPEG, etc.) and the HDF5 format. We assume a sigle 1-channel (bidimensional) image per input file. For HDF5, we assume the image is stored in the `/data` dataset.
+
+### Visualize predictions
+We provide a utility script to visualize the predictions of the network on the input images.
+```bash
+# by default, the script looks for input images in the current folder
+python draw_predictions.py localizations.csv
+
+#  if you want to read/write images in folders different from the current one, use:
+python draw_predictions.py --root path/to/input_images_dir/ --output path/to/output_dir/ localizations.csv
+
+# check python draw_predictions.py -h for all options
+```
 
 ## How to train
 
