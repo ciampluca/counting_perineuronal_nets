@@ -14,12 +14,33 @@ We provide pretrained models for counting **perineuronal nets (PNN)** and **parv
 
 You'll need:
 - Python 3.8
-- torch 1.7.1 (torchvision 0.8.2)
+- torch 1.11.0 (torchvision 0.12.0)
 - other packages in requirements.txt
 
-We provide a [`Dockerfile`](Dockerfile) to build the environment.
+### Installation via conda
+This is the suggested installation for Windows users. [Install Anaconda or miniconda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html) and then run the following commands.
 
-**NOTE for Windows users**: you may need to install Microsoft C++ Build Tools to install requirements with pip. Installation using conda environments might be convenient, but we did not test it yet. (PRs are welcome :)).
+```bash
+# create and activate conda environment
+conda create -n cpn python=3.8
+conda activate cpn
+
+# for CPU-only
+pip install torch==1.11.0+cpu torchvision==0.12.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+
+# for GPU-accelerated prediction, run this instead:
+#
+# pip install torch==1.11.0+cu113 torchvision==0.12.0+cu113 --extra-index-url https://download.pytorch.org/whl/cu113
+#
+# or see https://pytorch.org/get-started/previous-versions/ for other CUDA versions.
+
+# install other requirements
+pip install -r requirements.txt
+```
+
+### Installation via Docker
+We also provide a [`Dockerfile`](Dockerfile) to build the environment.
+
 
 ## Trained models
 
